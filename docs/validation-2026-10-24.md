@@ -1,6 +1,19 @@
 # 2026-10-24 核心验证记录
 
-本记录针对 PVF 核心、持久化工作区和 CLI。IntelliJ 界面的构建与运行验证单独记录；本轮没有更换运行现场的 PVF 或启动游戏客户端。
+## 后续修正：下文为 0.1.0 历史结果
+
+**0.1.0 的修改导出存在格式缺陷，须从有效原包和草稿重新导出。** 当时“始终保留原 key”“所有未修改条目密文原样”只满足不校验 CRC 的 reader，不能满足原生客户端。现已由原生加载器及两份原包确认：`entryKey = zlib.crc32(paddedPlaintext, relativeOffset)`，`treeKey = zlib.crc32(paddedPlainTree, fileCount)`。移动未改条目也必须重算 CRC/key 并重加密；应保留的是其明文与补齐，而非所有密文。
+
+`build/client-validation/recon/seeded-crc-audit.json` 对两份原包合计 96,669 个条目和两个目录的 CRC 公式检查全部通过；对本记录下列旧修改产物的复查则为：
+
+| 0.1.0 旧修改包 | 目录 CRC | 失败条目数 | 条目总数 |
+| --- | --- | ---: | ---: |
+| 仓库样本 `c0a28bd4…` | 失败 | 30,756 | 48,326 |
+| 客户端目录样本 `bd326b32…` | 失败 | 48,313 | 48,343 |
+
+以下历史测试、计时、reader 回读及 GUI 交互记录原样保留其观察范围，**不能据此宣称旧修改包通过客户端格式或加载验证**。无修改输出与原包逐字节一致的结论仍有效。0.1.1 的新导出和隔离实机结果由 [客户端验证记录](client-validation-2026-10-24.md) 单独记录。
+
+本轮历史记录针对 0.1.0 PVF 核心、持久化工作区和 CLI。IntelliJ 界面的构建与运行验证单独记录；该历史轮次没有更换运行现场的 PVF 或启动游戏客户端。
 
 ## 环境与方法
 
@@ -8,7 +21,7 @@
 - Gradle 9.5.0；`gradlew check :pvf-cli:installDist` 成功，22 项核心测试与 5 项工作区测试全部通过。
 - `python -B -m unittest discover -s validation -p 'test_*.py'`：7 项校验器自测全部通过。
 - 真实导出由 `validation/run_real_pvf.py` 调用 CLI 完成，JVM 设置 `-Xmx256m`。这表示验证在该堆上限下成功，不代表进程实际峰值内存测量。
-- Python 校验器有独立的位移解密实现，不导入 JVM 或服务端实现；逐项对比全部明文、未修改密文及补齐、路径原字节、fileNumber、key、目录填充、间隙与尾部数据。
+- 0.1.0 Python 校验器有独立的位移解密实现，不导入 JVM 或服务端实现；逐项对比全部明文、未修改密文及补齐、路径原字节、fileNumber、key、目录填充、间隙与尾部数据，但当时没有检查原生带初值 CRC。
 - 另建只读 C# 验证宿主，链接 `../DFLegacy/src/DFLegacy.Protocol/PvfArchiveReader.cs` 原源码，对每个条目进行回读。所用 reader 源文件 SHA-256：`3325ae84da448af3c09b4d6b2bb969bcfed262dc653f24fa998e59af0b496b0b`。
 - 运行结果保存在 `build/validation/20261024T063846Z-d7877ded/summary.json` 及其子目录；时间戳为 UTC，对应北京时间 2026-10-24 14:38:46 开始。
 
@@ -38,7 +51,7 @@
 
 合成夹具覆盖不同目录/物理顺序、非零补齐、间隙和尾部数据、同长/变长/变短/清空及四字节边界修改、多个空条目共享偏移、二次无修改重建、损坏输入、源包变化与禁止覆盖。工作区测试覆盖重启恢复、草稿损坏、独占锁、不同源包拒绝和严格编码转换。
 
-以上证明当前 ACT1 格式与现有 reader 的读写兼容性。未证明官方客户端会接受修改后的包，也未验证其他 PVF 格式、新增/删除/重命名条目或客户端的额外完整性校验。
+以上历史结果仅说明 0.1.0 修改包能被使用旧 key 解密、但不检查 CRC 的对应 reader 回读，不能概括为符合 ACT1 客户端格式。后续复查已发现修改包的 CRC 失败；其他 PVF 格式、新增/删除/重命名条目和客户端实机行为也不在该历史轮次的证明范围内。
 
 ## IntelliJ Community 运行时集成
 
@@ -51,7 +64,7 @@
 - 独立 Python 验证导出包全部 48,326 项，预期仅 `creature/script/creature.lst` 一项变化，另 48,325 项密文原样保留；目录与布局校验通过。
 - 同级服务端的原 C# reader 对该导出包全量回读通过。
 
-该集成冒烟不等同于图形界面的按键和文件选择器交互验收。独立装配还需要显式通过 `plugin.path` 加载产品插件；将插件放进原厂 `runtime/plugins` 不能自动加入平台预生成的 bundled-plugin 清单。发行目录保留原厂运行时，将 PVF 插件放在自己的 `plugins/` 下。
+该 0.1.0 集成冒烟不等同于图形界面的按键和文件选择器交互验收，也未检查原生客户端 CRC。独立装配还需要显式通过 `plugin.path` 加载产品插件；将插件放进原厂 `runtime/plugins` 不能自动加入平台预生成的 bundled-plugin 清单。发行目录保留原厂运行时，将 PVF 插件放在自己的 `plugins/` 下。
 
 ## 独立程序手动交互验收
 
@@ -60,7 +73,7 @@
 1. 读取 48,326 条目，按路径搜索并打开 `stackable/recipe/nrcp_tra_rudechantre.stk`；GBK 中文和语法高亮显示正常。
 2. 在原文末尾输入 `// 界面保真验证` 并保留 CRLF，编辑器有未保存标记；Ctrl+S 后标记消失，工作区显示一份草稿。
 3. 通过实际文件选择器导出 `build/validation/ui-interactive/interactive-export.pvf`，界面报告生成成功。
-4. 该手工导出经独立 Python 检查全部 48,326 条目，只有预期一项变化，48,325 项未修改密文原样保留，源副本 SHA-256 未变；原 C# reader 也全量回读通过。报告为 `build/validation/ui-interactive/independent-report.json`。
+4. 该手工导出经当时的 0.1.0 Python 检查全部 48,326 条目，只有预期一项明文变化，48,325 项未修改密文原样保留，源副本 SHA-256 未变；原 C# reader 也全量回读通过。报告为 `build/validation/ui-interactive/independent-report.json`。这两个 reader 当时均未检查原生带初值 CRC，该观察不代表导出包符合客户端格式。
 5. 正常关闭并重新启动独立程序，已保存的中文草稿成功恢复。
 6. 修复自有窗口的项目上下文后，重新输入 `// UNDO_CHECK`，Ctrl+Z 能撤销，Ctrl+Shift+Z 能重做，再次撤销能精确回到已保存内容。
 7. 自有差异窗口正常显示原始 PVF 与当前草稿的左右比较，预期中文注释为唯一一处差异；关闭差异窗口后主编辑器保持可用。

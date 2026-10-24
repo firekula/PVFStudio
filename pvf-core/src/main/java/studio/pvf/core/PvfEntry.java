@@ -1,6 +1,6 @@
 package studio.pvf.core;
 
-/** An immutable directory entry. Keys are opaque bit patterns, not calculated CRCs. */
+/** An immutable entry; key is CRC32 of padded plaintext seeded by its relative data offset. */
 public final class PvfEntry {
     private final Object owner;
     private final int index;

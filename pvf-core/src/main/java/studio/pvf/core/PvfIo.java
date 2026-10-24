@@ -12,9 +12,27 @@ import java.util.HexFormat;
 
 final class PvfIo {
     static final int BUFFER_SIZE = 128 * 1024;
+    private static final int[] CRC32_TABLE = crc32Table();
     private PvfIo() { }
 
     static long align4(int length) { return ((long) length + 3L) & ~3L; }
+
+    /** Equivalent to zlib.crc32(bytes, seed), including initial/final complements. */
+    static int crc32(byte[] bytes, long seed) {
+        int crc = ~(int) seed;
+        for (byte value : bytes) crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ value) & 0xff];
+        return ~crc;
+    }
+
+    private static int[] crc32Table() {
+        int[] table = new int[256];
+        for (int index = 0; index < table.length; index++) {
+            int value = index;
+            for (int bit = 0; bit < 8; bit++) value = (value >>> 1) ^ ((value & 1) != 0 ? 0xedb88320 : 0);
+            table[index] = value;
+        }
+        return table;
+    }
 
     static void checkCancelled() throws InterruptedIOException {
         if (Thread.currentThread().isInterrupted()) {

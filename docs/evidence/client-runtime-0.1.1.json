@@ -1,0 +1,105 @@
+{
+  "format": 1,
+  "status": "PASS_specific_modified_export",
+  "version": "0.1.1",
+  "sampled_utc": "2026-10-24T07:48:24.819467+00:00",
+  "client_pvf_sha256": "86dcab829d769e19aedb7d7d71d1746155291499cb7b99daaa71ceb5381c2b68",
+  "matches_fixed_modified_case": true,
+  "native_runtime": {
+    "channel_selection": "PASS",
+    "character_selection": "PASS",
+    "town": "PASS",
+    "item_tooltip": "PASS",
+    "source": "parent CUA observation",
+    "item_id": 5642,
+    "display_name": "傲凰护腿  设计图_PVF验证",
+    "image": "docs/evidence/client-item-name-0.1.1.jpg",
+    "image_sha256": "e2435505e6b146875d25d0907b7c8cea8240fefc8d7c38c5cad817108b32e35f"
+  },
+  "isolation": {
+    "independent_client_server_copies": true,
+    "new_test_account_and_store": true,
+    "observed_network_within_loopback_endpoints": true,
+    "observed_peer_endpoints": [
+      "TCP 127.0.0.1:42311",
+      "TCP 127.0.0.1:47001",
+      "UDP 127.0.0.1:47002",
+      "UDP 127.0.0.1:47003"
+    ],
+    "critical_source_hashes": {
+      "client_dnf": {
+        "sha256": "6b4850beaf67ec61adb04ae17f119f16278dd05e97b8ffca871a9bdb547de0d5",
+        "unchanged": true
+      },
+      "client_pvf": {
+        "sha256": "5fcd4b94dfb081294701f7288345fff6ca5586d780fcc7130e4614c237eb6ad1",
+        "unchanged": true
+      },
+      "client_ijl15": {
+        "sha256": "bf205e0fdc59a8cfb71791141ab3b4de80adb25e69d4d4d3c77dc699c4854a40",
+        "unchanged": true
+      },
+      "client_config": {
+        "sha256": "f8e67ff8c588d82b077e34160201724aa8874e07bbc81577a053263e29d217d9",
+        "unchanged": true
+      },
+      "private_client_config": {
+        "sha256": "033d88a28223eb94663b2934f673d77e37a851fc65b79d6ef0385bb9cbeae17a",
+        "unchanged": true
+      },
+      "external_strings": {
+        "sha256": "85450377b78394674e819e8f7f42d47d038f030f745b9b970edab29eca8c4891",
+        "unchanged": true
+      },
+      "server_config": {
+        "sha256": "76412ef55ce343695e901c7c96b241bd71dc411d88c90bb66db00ba27accd217",
+        "unchanged": true
+      },
+      "server_executable": {
+        "sha256": "baa6fa55ef25735fb6d59f352e6457287e54bf5e915f63ecc20fb018c4d78418",
+        "unchanged": true
+      },
+      "server_assembly": {
+        "sha256": "71c94f549e797fe2b2173e0aaa467ac943b314a8965bbc595901530181aba22a",
+        "unchanged": true
+      }
+    },
+    "all_critical_source_hashes_unchanged": true,
+    "original_server_checks": {
+      "pid_unchanged": true,
+      "path_unchanged": true,
+      "start_time_unchanged": true,
+      "tcp_listeners_unchanged": true,
+      "udp_bindings_unchanged": true
+    },
+    "original_server_pid": 47176,
+    "original_server_started_at_utc": "2026-10-24T05:39:38.2122140Z"
+  },
+  "runtime_retained_at_sampling": true,
+  "retained_processes": {
+    "client": {
+      "ProcessId": 53872,
+      "Name": "DNF.exe",
+      "ExecutablePath": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\client-validation\\runtime-20261024-01\\client\\DNF.exe",
+      "CreationDate": "2026-10-24T15:41:56.683442+08:00"
+    },
+    "server": {
+      "ProcessId": 77444,
+      "Name": "DFLegacy.Server.exe",
+      "ExecutablePath": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\client-validation\\runtime-20261024-01\\server\\DFLegacy.Server.exe",
+      "CreationDate": "2026-10-24T15:40:51.073694+08:00"
+    }
+  },
+  "unexecuted_native_cases": [
+    "original",
+    "noop",
+    "legacy-modified",
+    "invalid-directory-padding-crc",
+    "fixed-repository"
+  ],
+  "scope": "This ACT1 client and this modified export only. The user also interacted with the test client. Retained processes and network are observations at the recorded sampling time, not a guarantee of future state.",
+  "full_ignored_audits": [
+    "build/client-validation/runtime-20261024-01/postflight.json",
+    "build/client-validation/runtime-20261024-01/runtime-network-audit.json"
+  ]
+}

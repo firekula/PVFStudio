@@ -2,6 +2,8 @@
 
 本模块将 PVF 核心与工作区接入 IntelliJ 的真实文本编辑器，不依赖服务端进程。
 
+**版本修正：0.1.0 独立原型的 writer 漏做原生带初值 CRC，旧修改包必须重新导出。** 0.1.1 修正条目重定位、内容变化和目录更新后的 CRC/key；不能继续使用旧 0.1.0 ZIP 或仍在运行的旧编辑器生成客户端包。下面的历史 UI 交互验收不等于客户端格式验收；新包的客户端实机结果见 [客户端验证记录](client-validation-2026-10-24.md)。
+
 ## 构建边界
 
 - 默认核心构建不包含本模块，避免下载 IntelliJ 发行包。
@@ -27,7 +29,7 @@
 
 生成目录：`intellij-workbench/build/standalone/PVFStudio/`。
 
-Windows 完整原型 ZIP：`intellij-workbench/build/distributions/PVFStudio-0.1.0-windows-prototype.zip`。解压后双击其中的 `PVFStudio/PVFStudio.bat`，或用下面的命令传入 PVF 路径。ZIP 自带平台与 JBR，不包含游戏 PVF。
+已生成的 Windows 完整原型 ZIP 为 `intellij-workbench/build/distributions/PVFStudio-0.1.1-windows-prototype.zip`，摘要和检查结果见下文。0.1.0 ZIP 已不适合继续导出修改包。解压新版完整包后双击其中的 `PVFStudio/PVFStudio.bat`，或用下面的命令传入 PVF 路径。ZIP 自带平台与 JBR，不包含游戏 PVF。
 
 ```powershell
 .\intellij-workbench\build\standalone\PVFStudio\PVFStudio.bat 'G:\path\Script.pvf'
@@ -46,7 +48,7 @@ Windows 完整原型 ZIP：`intellij-workbench/build/distributions/PVFStudio-0.1
 3. Ctrl+S 或“保存草稿”将修改保存到用户目录下 `.pvf-studio/workspaces/`。工作区按源路径分隔，并由 workspace 模块校验原包内容身份；原包不写入。
 4. 文本送入 IntelliJ Document 前规范为 LF，保存时恢复原有 CRLF、LF 或 CR 风格，保留是否有文件末尾换行。混合换行文件暂只读，避免插入或删除行后意外改动其他行的行尾。未改文档不会被重新编码或 stage。
 5. “查看差异”比较原始 PVF 内容和当前编辑文档，包含已存草稿与未存编辑。
-6. “导出新 PVF”先持久化当前文档快照，再导出到新文件并由核心回读校验。导出期间继续输入的内容留为未保存编辑，不混入正在生成的包。
+6. “导出新 PVF”先持久化当前文档快照，再导出到新文件；0.1.1 核心还须校验目录和全部条目的带初值 CRC32。长度变化导致未改条目移动时，其明文和补齐保真，但 CRC/key 与密文需要随新 offset 更新。导出期间继续输入的内容留为未保存编辑，不混入正在生成的包。
 7. 关闭或切包时处理未保存编辑。关闭标签会释放对应 IntelliJ Editor，避免保留不再使用的文档。
 
 编辑器使用平台的 defaultProject 作为命令上下文，不创建或打开普通 IDEA 项目。Ctrl+Z 撤销，Ctrl+Shift+Z / Ctrl+Y 重做；它们使用 IntelliJ 原生 UndoManager，不保存每次按键的全文快照。撤销历史属于当前编辑会话，重启后恢复的是已保存草稿。
@@ -59,7 +61,9 @@ Windows 完整原型 ZIP：`intellij-workbench/build/distributions/PVFStudio-0.1
 
 当前原型尚未提供正文搜索、完整可写 PVF VFS、PSI/ID 引用跳转、可视化表单或正式安装器。包含 NUL 的条目暂拒绝文本编辑，不将未知二进制当作文本改写。编码失败保留原内容并显示错误，用户可用其他编码重新打开。
 
-## 2026-10-24 实际验收
+## 2026-10-24 的 0.1.0 历史界面验收
+
+本节保留原型交互与装配的实际观察。后续已发现 0.1.0 writer 的 CRC 缺陷；本节旧导出产物不可作为客户端兼容证据，也不是 0.1.1 的新验收结果。
 
 最终平台为官方 IC 2025.2.6.3 / build 252.28539.97，使用发行包自带 JBR 21。SDK ZIP 的 SHA-256 已与官方核对：`ee3bb2bf315298da0758f5d72ee97a9c5e017f22d129c12db80b69a392f4673e`。本机名称带 Community 的旧安装目录实际已升级为 IU 2026.2.3，仅用于早期开发验证，没有复制进最终独立包。
 
@@ -68,9 +72,15 @@ Windows 完整原型 ZIP：`intellij-workbench/build/distributions/PVFStudio-0.1
 - Windows 实际图形交互通过：路径搜索、打开 GBK 中文脚本、语法高亮、输入中文注释、Ctrl+S 保存草稿、导出新包；重启后恢复已存中文草稿。
 - 修复版实际键盘交互通过：新输入 `// UNDO_CHECK`，Ctrl+Z 删除，Ctrl+Shift+Z 恢复，再 Ctrl+Z 返回已保存草稿，未保存标记消失。
 - 修复版 Diff 实际显示左右两栏，显示预期中文注释造成的 1 处差异；关闭 Diff 子窗后主编辑器仍正常。Diff 使用自有 JDialog 和显式释放的 DiffRequestPanel，避免普通 IDEA 窗口包装器依赖 IdeFrame。
-- 图形导出的 `build/validation/ui-interactive/interactive-export.pvf` 已由独立 Python 验证器与原 C# reader 全量回读：48,326 个条目、1 项预期 GBK 中文注释修改，48,325 个未改条目的密文原样；源副本 SHA-256 未变。
+- 图形导出的 `build/validation/ui-interactive/interactive-export.pvf` 曾由 0.1.0 Python 验证器与原 C# reader 全量回读：48,326 个条目、1 项预期 GBK 中文注释修改，48,325 个未改条目的密文原样；源副本 SHA-256 未变。这两个旧 reader 没有检查原生带初值 CRC，因此该项不能证明客户端兼容。
 
 交互测试使用 `build/validation/ui-interactive/Script.pvf` 的独立副本。没有替换运行现场的服务端/客户端 PVF；这些验证不代表官方客户端加载验收。
+
+## 0.1.1 修复与客户端实机验收
+
+0.1.1 已重新构建正式 IC/JBR21 的编辑器、插件和完整 Windows 独立包，包含带偏移初值 CRC32 的核心修复。真实编辑器冒烟的 Undo/Redo、Diff、行尾、草稿及严格 CRC 导出均通过。指定修改包随后由独立游戏客户端实际加载、进城，并显示修改后的物品名；具体范围和截图见 [客户端验证记录](client-validation-2026-10-24.md)。
+
+完整包为 `intellij-workbench/build/distributions/PVFStudio-0.1.1-windows-prototype.zip`，SHA-256 为 `77ccaa6e196f0eb93ca2490799bb8d249ae235242f94efe94c31594f5b54326a`。2,849 条目 CRC 和关键文件一致性检查通过；发行包不包含游戏 PVF。
 
 ## 后续正式产品装配
 

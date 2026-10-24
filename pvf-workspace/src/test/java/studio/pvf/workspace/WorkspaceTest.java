@@ -86,14 +86,16 @@ class WorkspaceTest {
         byte[] path = "test/item.stk".getBytes(StandardCharsets.US_ASCII);
         int treeSize = (20 + path.length + 3) & ~3;
         ByteBuffer tree = ByteBuffer.allocate(treeSize).order(ByteOrder.LITTLE_ENDIAN);
-        tree.putInt(11).putInt(0).putInt(content.length).putInt(0x19ec0041).putInt(path.length).put(path);
         ByteBuffer body = ByteBuffer.allocate((content.length + 3) & ~3).order(ByteOrder.LITTLE_ENDIAN);
         body.put(content);
-        encrypt(tree.array(), 0x37fc1101);
-        encrypt(body.array(), 0x19ec0041);
+        int entryKey = crc32(body.array(), 0);
+        tree.putInt(11).putInt(0).putInt(content.length).putInt(entryKey).putInt(path.length).put(path);
+        int treeKey = crc32(tree.array(), 1);
+        encrypt(tree.array(), treeKey);
+        encrypt(body.array(), entryKey);
         ByteBuffer archive = ByteBuffer.allocate(27 + treeSize + body.capacity()).order(ByteOrder.LITTLE_ENDIAN);
         archive.put("DNF_SCRIPT_PACK".getBytes(StandardCharsets.US_ASCII));
-        archive.putInt(treeSize).putInt(0x37fc1101).putInt(1).put(tree.array()).put(body.array());
+        archive.putInt(treeSize).putInt(treeKey).putInt(1).put(tree.array()).put(body.array());
         Path result = Files.createTempFile(temporary, "source-", ".pvf");
         Files.write(result, archive.array());
         return result;
@@ -104,5 +106,14 @@ class WorkspaceTest {
         for (int offset = 0; offset < bytes.length; offset += 4) {
             buffer.putInt(offset, Integer.rotateLeft(buffer.getInt(offset), 6) ^ key);
         }
+    }
+
+    private static int crc32(byte[] bytes, int seed) {
+        int state = ~seed;
+        for (byte value : bytes) {
+            state ^= value & 0xff;
+            for (int bit = 0; bit < 8; bit++) state = (state >>> 1) ^ ((state & 1) != 0 ? 0xedb88320 : 0);
+        }
+        return ~state;
     }
 }

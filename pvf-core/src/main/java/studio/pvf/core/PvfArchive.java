@@ -70,6 +70,9 @@ public final class PvfArchive implements AutoCloseable {
         bodyOffset = (long) HEADER_LENGTH + treeLength;
         plainTree = PvfIo.read(channel, HEADER_LENGTH, treeLength);
         PvfIo.decrypt(plainTree, treeKey);
+        if (PvfIo.crc32(plainTree, fileCount) != treeKey) {
+            throw invalid("Directory CRC32 mismatch (seed = file count)");
+        }
         ByteBuffer tree = ByteBuffer.wrap(plainTree).order(ByteOrder.LITTLE_ENDIAN);
         List<PvfEntry> parsed = new ArrayList<>((int) fileCount);
         Map<String, PvfEntry> paths = new HashMap<>();
@@ -164,8 +167,7 @@ public final class PvfArchive implements AutoCloseable {
     public byte[] readBytes(String virtualPath) throws IOException { return readBytes(entry(virtualPath)); }
 
     public byte[] readBytes(PvfEntry entry) throws IOException {
-        byte[] padded = readPadded(entry);
-        PvfIo.decrypt(padded, entry.key());
+        byte[] padded = readPlainPadded(entry);
         return padded.length == entry.length() ? padded : Arrays.copyOf(padded, entry.length());
     }
 
@@ -234,6 +236,15 @@ public final class PvfArchive implements AutoCloseable {
         if (entry == null || !entry.belongsTo(owner)) throw new IOException("Entry belongs to another archive");
         if (entry.paddedLength() > Integer.MAX_VALUE) throw invalid("Padded entry exceeds array capacity");
         return PvfIo.read(channel, bodyOffset + entry.offset(), (int) entry.paddedLength());
+    }
+
+    byte[] readPlainPadded(PvfEntry entry) throws IOException {
+        byte[] padded = readPadded(entry);
+        PvfIo.decrypt(padded, entry.key());
+        if (PvfIo.crc32(padded, entry.offset()) != entry.key()) {
+            throw invalid("Entry CRC32 mismatch (seed = relative offset): " + entry.path());
+        }
+        return padded;
     }
 
     byte[] header() { return header.clone(); }

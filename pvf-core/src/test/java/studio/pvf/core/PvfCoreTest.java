@@ -28,7 +28,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class PvfCoreTest {
     private static final int HEADER_SIZE = 27;
     private static final byte[] MAGIC = "DNF_SCRIPT_PACK".getBytes(StandardCharsets.US_ASCII);
-    private static final int TREE_KEY = 0x87654321;
     private static final String TARGET = "config/a.etc";
 
     @TempDir Path temporary;
@@ -48,7 +47,7 @@ class PvfCoreTest {
                 PvfEntry entry = archive.entries().get(index);
                 assertEquals(index, entry.index());
                 assertEquals(definition.number, entry.fileNumber());
-                assertEquals(definition.key, entry.key());
+                assertEquals(referenceCrc(decrypt(ciphertext(fixture.bytes, entry), entry.key()), entry.offset()), entry.key());
                 assertArrayEquals(definition.content, archive.readBytes(entry));
             }
         }
@@ -79,7 +78,7 @@ class PvfCoreTest {
 
     @ParameterizedTest
     @ValueSource(ints = {0, 1, 3, 4, 5, 7, 8, 9, 16, 257})
-    void editsPreserveAllOtherPlaintextCiphertextAndMetadata(int replacementLength) throws Exception {
+    void editsPreserveUnchangedPlaintextAndUnmovedCiphertext(int replacementLength) throws Exception {
         Fixture fixture = fixture(false);
         Path source = fixture.write(temporary.resolve("source.pvf"));
         Path output = temporary.resolve("edited.pvf");
@@ -95,12 +94,15 @@ class PvfCoreTest {
                     PvfEntry after = edited.entry(before.path());
                     assertEquals(before.index(), after.index());
                     assertEquals(before.fileNumber(), after.fileNumber());
-                    assertEquals(before.key(), after.key());
+                    assertEquals(referenceCrc(decrypt(ciphertext(outputBytes, after), after.key()), after.offset()), after.key());
                     assertArrayEquals(rawPath(fixture.bytes, before.index()), rawPath(outputBytes, after.index()));
                     if (!before.path().equals(TARGET)) {
                         assertEquals(before.length(), after.length());
                         assertArrayEquals(original.readBytes(before), edited.readBytes(after));
-                        assertArrayEquals(ciphertext(fixture.bytes, before), ciphertext(outputBytes, after));
+                        assertArrayEquals(decrypt(ciphertext(fixture.bytes, before), before.key()),
+                                decrypt(ciphertext(outputBytes, after), after.key()));
+                        if (before.offset() == after.offset())
+                            assertArrayEquals(ciphertext(fixture.bytes, before), ciphertext(outputBytes, after));
                     }
                 }
             }
@@ -142,10 +144,10 @@ class PvfCoreTest {
     @Test
     void zeroLengthEntriesSharingOffsetsCanGrowShrinkAndRoundTripAgain() throws Exception {
         Fixture fixture = fixture(List.of(
-                new Definition("empty/first.etc", new byte[0], 101, 0x12345678),
-                new Definition("config/b.etc", replacement(8), 102, 0x87654321),
-                new Definition("empty/second.etc", new byte[0], 103, 0x10203040),
-                new Definition("config/final.etc", replacement(3), 104, 0xfedcba98)),
+                new Definition("empty/first.etc", new byte[0], 101),
+                new Definition("config/b.etc", replacement(8), 102),
+                new Definition("empty/second.etc", new byte[0], 103),
+                new Definition("config/final.etc", replacement(3), 104)),
                 new int[]{2, 0, 1, 3}, false);
         Path source = fixture.write(temporary.resolve("zero-entries.pvf"));
         List<Map<String, byte[]>> cases = List.of(
@@ -166,10 +168,13 @@ class PvfCoreTest {
                     for (PvfEntry before : original.entries()) {
                         PvfEntry after = edited.entry(before.path());
                         assertEquals(before.fileNumber(), after.fileNumber());
-                        assertEquals(before.key(), after.key());
+                        assertEquals(referenceCrc(decrypt(ciphertext(editedBytes, after), after.key()), after.offset()), after.key());
                         assertArrayEquals(changes.getOrDefault(before.path(), original.readBytes(before)), edited.readBytes(after));
                         if (!changes.containsKey(before.path())) {
-                            assertArrayEquals(ciphertext(fixture.bytes, before), ciphertext(editedBytes, after));
+                            assertArrayEquals(decrypt(ciphertext(fixture.bytes, before), before.key()),
+                                    decrypt(ciphertext(editedBytes, after), after.key()));
+                            if (before.offset() == after.offset())
+                                assertArrayEquals(ciphertext(fixture.bytes, before), ciphertext(editedBytes, after));
                         }
                     }
                     PvfWriter.export(edited, Map.of(), secondRoundTrip);
@@ -240,8 +245,8 @@ class PvfCoreTest {
             }, "tree mutation " + index);
         }
         Fixture duplicatePath = fixture(List.of(
-                new Definition("CONFIG\\A.ETC", new byte[]{1}, 1, 1),
-                new Definition("config/a.etc", new byte[]{2}, 2, 2)), new int[]{1, 0}, false);
+                new Definition("CONFIG\\A.ETC", new byte[]{1}, 1),
+                new Definition("config/a.etc", new byte[]{2}, 2)), new int[]{1, 0}, false);
         Path path = duplicatePath.write(temporary.resolve("duplicate-path.pvf"));
         assertThrows(IOException.class, () -> {
             try (PvfArchive ignored = PvfArchive.open(path)) { /* must fail during open */ }
@@ -316,17 +321,124 @@ class PvfCoreTest {
         assertFalse(Files.exists(destination));
     }
 
+    @Test
+    void seededCrcMatchesKnownZlibVectors() {
+        byte[] input = "123456789".getBytes(StandardCharsets.US_ASCII);
+        assertEquals(0xcbf43926, PvfIo.crc32(input, 0));
+        assertEquals(0x01f4807b, PvfIo.crc32(input, 0x12345678L));
+        assertEquals(0xffffffff, PvfIo.crc32(new byte[0], 0xffffffffL));
+    }
+
+    @Test
+    void sameLengthEditUpdatesEntryAndDirectoryCrcWhilePreservingPadding() throws Exception {
+        Fixture fixture = fixture(false);
+        Path source = fixture.write(temporary.resolve("same-length-source.pvf"));
+        Path output = temporary.resolve("same-length-edited.pvf");
+        try (PvfArchive archive = PvfArchive.open(source)) {
+            PvfEntry before = archive.entry(TARGET);
+            byte[] paddedBefore = decrypt(ciphertext(fixture.bytes, before), before.key());
+            PvfWriter.export(archive, Map.of(TARGET, replacement(before.length())), output);
+            byte[] written = Files.readAllBytes(output);
+            assertClientChecksums(written);
+            try (PvfArchive edited = PvfArchive.open(output)) {
+                PvfEntry after = edited.entry(TARGET);
+                assertEquals(before.offset(), after.offset());
+                assertNotEquals(before.key(), after.key());
+                byte[] paddedAfter = decrypt(ciphertext(written, after), after.key());
+                assertArrayEquals(Arrays.copyOfRange(paddedBefore, before.length(), paddedBefore.length),
+                        Arrays.copyOfRange(paddedAfter, after.length(), paddedAfter.length));
+                assertNotEquals(little(fixture.bytes).getInt(19), little(written).getInt(19));
+                for (PvfEntry entry : archive.entries()) {
+                    if (!entry.path().equals(TARGET))
+                        assertArrayEquals(ciphertext(fixture.bytes, entry), ciphertext(written, edited.entry(entry.path())));
+                }
+            }
+        }
+    }
+
+    @Test
+    void resizingFirstPhysicalEntryRekeysMovedUnchangedEntries() throws Exception {
+        Fixture fixture = fixture(false);
+        Path source = fixture.write(temporary.resolve("shift-source.pvf"));
+        Path output = temporary.resolve("shift-output.pvf");
+        Path secondRoundTrip = temporary.resolve("shift-roundtrip.pvf");
+        String firstPhysical = "config/b.etc";
+        try (PvfArchive original = PvfArchive.open(source)) {
+            assertEquals(0, original.entry(firstPhysical).offset());
+            PvfWriter.export(original, Map.of(firstPhysical, replacement(13)), output);
+            byte[] written = Files.readAllBytes(output);
+            assertClientChecksums(written);
+            try (PvfArchive edited = PvfArchive.open(output)) {
+                for (PvfEntry before : original.entries()) {
+                    PvfEntry after = edited.entry(before.path());
+                    if (before.path().equals(firstPhysical)) continue;
+                    assertEquals(before.offset() + 8, after.offset());
+                    assertNotEquals(before.key(), after.key());
+                    assertArrayEquals(original.readBytes(before), edited.readBytes(after));
+                    assertArrayEquals(decrypt(ciphertext(fixture.bytes, before), before.key()),
+                            decrypt(ciphertext(written, after), after.key()));
+                    assertFalse(Arrays.equals(ciphertext(fixture.bytes, before), ciphertext(written, after)),
+                            "Offset-dependent ciphertext must change when an untouched entry moves");
+                }
+                PvfWriter.export(edited, Map.of(), secondRoundTrip);
+            }
+            assertArrayEquals(written, Files.readAllBytes(secondRoundTrip));
+        }
+    }
+
+    @Test
+    void rejectsDirectoryChecksumCorruption() throws Exception {
+        Fixture fixture = fixture(false);
+        byte[] corrupt = fixture.bytes.clone();
+        // Alter opaque tree padding so the directory fields still have their old shape.
+        corrupt[bodyOffset(corrupt) - 1] ^= 1;
+        Path path = temporary.resolve("bad-tree-checksum.pvf");
+        Files.write(path, corrupt);
+        IOException failure = assertThrows(IOException.class, () -> {
+            try (PvfArchive ignored = PvfArchive.open(path)) { /* CRC must reject it */ }
+        });
+        assertTrue(failure.getMessage().contains("Directory CRC32 mismatch"));
+    }
+
+    @Test
+    void rejectsLegacyPreservedEntryKeyOnReadAndNoOpExport() throws Exception {
+        Fixture fixture = fixture(false);
+        Path originalPath = fixture.write(temporary.resolve("legacy-source.pvf"));
+        byte[] legacy = fixture.bytes.clone();
+        try (PvfArchive original = PvfArchive.open(originalPath)) {
+            PvfEntry entry = original.entry(TARGET);
+            byte[] plaintext = decrypt(ciphertext(fixture.bytes, entry), entry.key());
+            plaintext[0] ^= 0x40;
+            byte[] oldKeyCiphertext = encrypt(plaintext, entry.key());
+            System.arraycopy(oldKeyCiphertext, 0, legacy,
+                    Math.toIntExact(bodyOffset(legacy) + entry.offset()), oldKeyCiphertext.length);
+        }
+        Path legacyPath = temporary.resolve("legacy-preserved-key.pvf");
+        Path output = temporary.resolve("must-not-exist.pvf");
+        Files.write(legacyPath, legacy);
+        try (PvfArchive archive = PvfArchive.open(legacyPath)) {
+            IOException failure = assertThrows(IOException.class, () -> archive.readBytes(TARGET));
+            assertTrue(failure.getMessage().contains("Entry CRC32 mismatch"));
+            assertThrows(IOException.class, () -> PvfWriter.export(archive, Map.of(), output));
+        }
+        assertFalse(Files.exists(output));
+        try (var paths = Files.list(temporary)) {
+            assertTrue(paths.noneMatch(path -> path.getFileName().toString().startsWith(".pvf-export-")));
+        }
+    }
+
     private static Fixture fixture(boolean gaps) throws IOException {
         return fixture(List.of(
-                new Definition("CONFIG\\A.ETC\0", new byte[]{1, 2, 3, 4, 5}, 0x00006a15L, 0xe9e2f76b),
-                new Definition("config/b.etc", "eight!!!".getBytes(StandardCharsets.US_ASCII), 0xf1234567L, 0x12345678),
-                new Definition("config/c.etc", new byte[]{9, 8, 7}, 13L, 0x0badcafe)),
+                new Definition("CONFIG\\A.ETC\0", new byte[]{1, 2, 3, 4, 5}, 0x00006a15L),
+                new Definition("config/b.etc", "eight!!!".getBytes(StandardCharsets.US_ASCII), 0xf1234567L),
+                new Definition("config/c.etc", new byte[]{9, 8, 7}, 13L)),
                 new int[]{1, 2, 0}, gaps);
     }
 
     private static Fixture fixture(List<Definition> definitions, int[] physicalOrder, boolean gaps) throws IOException {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         int[] offsets = new int[definitions.size()];
+        int[] keys = new int[definitions.size()];
         for (int physical = 0; physical < physicalOrder.length; physical++) {
             int index = physicalOrder[physical];
             if (gaps) {
@@ -340,7 +452,8 @@ class PvfCoreTest {
             for (int position = definition.content.length; position < padded.length; position++) {
                 padded[position] = (byte) (0xb0 + position);
             }
-            body.write(encrypt(padded, definition.key));
+            keys[index] = referenceCrc(padded, offsets[index]);
+            body.write(encrypt(padded, keys[index]));
         }
         if (gaps) body.write(new byte[]{0x55, 0x44, 0x33, 0x22, 0x11, 0x66, 0x77});
         ByteArrayOutputStream tree = new ByteArrayOutputStream();
@@ -351,7 +464,7 @@ class PvfCoreTest {
             recordPositions.add(tree.size());
             ByteBuffer record = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN);
             record.putInt((int) definition.number).putInt(offsets[index]).putInt(definition.content.length)
-                    .putInt(definition.key).putInt(rawPath.length);
+                    .putInt(keys[index]).putInt(rawPath.length);
             tree.write(record.array());
             tree.write(rawPath);
         }
@@ -361,9 +474,10 @@ class PvfCoreTest {
         } while (tree.size() % 4 != 0);
         ByteArrayOutputStream archive = new ByteArrayOutputStream();
         archive.write(MAGIC);
+        int treeKey = referenceCrc(tree.toByteArray(), definitions.size());
         archive.write(ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
-                .putInt(tree.size()).putInt(TREE_KEY).putInt(definitions.size()).array());
-        archive.write(encrypt(tree.toByteArray(), TREE_KEY));
+                .putInt(tree.size()).putInt(treeKey).putInt(definitions.size()).array());
+        archive.write(encrypt(tree.toByteArray(), treeKey));
         archive.write(body.toByteArray());
         return new Fixture(archive.toByteArray(), definitions, recordPositions);
     }
@@ -432,7 +546,35 @@ class PvfCoreTest {
     private static int padded(int length) { return (length + 3) & ~3; }
     private static ByteBuffer little(byte[] bytes) { return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN); }
 
-    private record Definition(String rawPath, byte[] content, long number, int key) { }
+    /** Bit-at-a-time oracle; intentionally does not reuse the production CRC table. */
+    private static int referenceCrc(byte[] plaintext, long seed) {
+        int crc = ~(int) seed;
+        for (byte value : plaintext) {
+            crc ^= value & 0xff;
+            for (int bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) != 0 ? 0xedb88320 : 0);
+        }
+        return ~crc;
+    }
+
+    private static void assertClientChecksums(byte[] archive) {
+        int count = little(archive).getInt(23);
+        byte[] tree = decryptedTree(archive);
+        assertEquals(referenceCrc(tree, Integer.toUnsignedLong(count)), little(archive).getInt(19));
+        ByteBuffer fields = little(tree);
+        int cursor = 0;
+        for (int index = 0; index < count; index++) {
+            long offset = Integer.toUnsignedLong(fields.getInt(cursor + 4));
+            int length = fields.getInt(cursor + 8);
+            int key = fields.getInt(cursor + 12);
+            int pathLength = fields.getInt(cursor + 16);
+            int start = Math.toIntExact(bodyOffset(archive) + offset);
+            byte[] plaintext = decrypt(Arrays.copyOfRange(archive, start, start + padded(length)), key);
+            assertEquals(referenceCrc(plaintext, offset), key, "Client checksum for directory entry " + index);
+            cursor += 20 + pathLength;
+        }
+    }
+
+    private record Definition(String rawPath, byte[] content, long number) { }
 
     private record Fixture(byte[] bytes, List<Definition> definitions, List<Integer> recordPositions) {
         Path write(Path path) throws IOException { return Files.write(path, bytes); }
@@ -441,7 +583,9 @@ class PvfCoreTest {
             byte[] result = bytes.clone();
             byte[] tree = decryptedTree(result);
             mutation.accept(little(tree));
-            byte[] encrypted = encrypt(tree, TREE_KEY);
+            int treeKey = referenceCrc(tree, Integer.toUnsignedLong(little(result).getInt(23)));
+            little(result).putInt(19, treeKey);
+            byte[] encrypted = encrypt(tree, treeKey);
             System.arraycopy(encrypted, 0, result, HEADER_SIZE, encrypted.length);
             return result;
         }

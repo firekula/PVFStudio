@@ -137,7 +137,7 @@ public final class Main {
     private static IllegalArgumentException usage(String text) { return new IllegalArgumentException(text); }
 
     private static void help(PrintStream out) {
-        out.println("PVF Studio 0.1.0 — DNF_SCRIPT_PACK reader and lossless exporter");
+        out.println("PVF Studio 0.1.1 — DNF_SCRIPT_PACK reader and lossless exporter");
         out.println("info <archive>");
         out.println("list <archive> [path-filter]");
         out.println("extract <archive> <virtual-path> <new-file>");
@@ -147,6 +147,6 @@ public final class Main {
         out.println("status <archive> <workspace-dir>");
         out.println("revert <archive> <workspace-dir> <virtual-path>");
         out.println("workspace-export <archive> <workspace-dir> <new.pvf>");
-        out.println("All outputs must be new files. Original archive keys are preserved; client acceptance is unverified.");
+        out.println("All outputs must be new files. Offset-seeded client CRCs are verified and rebuilt; validate edited scripts in a test client.");
     }
 }

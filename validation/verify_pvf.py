@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import struct
 import sys
+import zlib
 from typing import Any
 
 
@@ -82,6 +83,7 @@ class Archive:
         require(body_offset <= len(data), f"{path}: tree extends beyond archive")
         require(count <= tree_length // 21, f"{path}: impossible entry count")
         tree = decrypt(data[HEADER_SIZE:body_offset], tree_key)
+        require(zlib.crc32(tree, count) == tree_key, f"{path}: client directory CRC mismatch")
         entries = []
         paths = set()
         numbers = set()
@@ -119,8 +121,14 @@ class Archive:
         start = self.body_offset + entry.offset
         return self.data[start:start + entry.padded_length]
 
+    def padded_plaintext(self, entry: Entry) -> bytes:
+        plaintext = decrypt(self.ciphertext(entry), entry.key)
+        require(zlib.crc32(plaintext, entry.offset) == entry.key,
+                f"{self.path}: client entry CRC mismatch: {entry.path}")
+        return plaintext
+
     def plaintext(self, entry: Entry) -> bytes:
-        return decrypt(self.ciphertext(entry), entry.key)[:entry.length]
+        return self.padded_plaintext(entry)[:entry.length]
 
 
 def read_changes(manifest: Path | None) -> dict[str, bytes]:
@@ -143,7 +151,6 @@ def read_changes(manifest: Path | None) -> dict[str, bytes]:
 
 def verify(source: Archive, output: Archive, expected: dict[str, bytes]) -> dict[str, Any]:
     require(len(source.entries) == len(output.entries), "entry count changed")
-    require(source.tree_key == output.tree_key, "directory encryption key changed")
     require(len(source.tree) == len(output.tree), "directory length changed")
     source_paths = {entry.path for entry in source.entries}
     require(not (set(expected) - source_paths), f"unknown expected paths: {sorted(set(expected) - source_paths)}")
@@ -151,24 +158,33 @@ def verify(source: Archive, output: Archive, expected: dict[str, bytes]) -> dict
     normalized_tree = bytearray(output.tree)
     changed_entries = 0
     preserved_ciphertext_entries = 0
+    rekeyed_unchanged_entries = 0
     for before, after in zip(source.entries, output.entries):
         require(before.path == after.path, "directory entry order or path changed")
         require(before.raw_path == after.raw_path, f"raw path bytes changed: {before.path}")
         require(before.number == after.number, f"file number changed: {before.path}")
-        require(before.key == after.key, f"entry encryption key changed: {before.path}")
         require(before.tree_offset == after.tree_offset, f"entry directory layout changed: {before.path}")
-        original_content = source.plaintext(before)
+        original_padded = source.padded_plaintext(before)
+        exported_padded = output.padded_plaintext(after)
+        original_content = original_padded[:before.length]
         expected_content = expected.get(before.path, original_content)
-        require(output.plaintext(after) == expected_content, f"plaintext mismatch: {before.path}")
+        require(exported_padded[:after.length] == expected_content, f"plaintext mismatch: {before.path}")
         if expected_content != original_content:
             changed_entries += 1
+            if before.length == after.length:
+                require(exported_padded[after.length:] == original_padded[before.length:],
+                        f"same-length edit padding changed: {before.path}")
         else:
-            require(source.ciphertext(before) == output.ciphertext(after),
-                    f"unmodified ciphertext or padding changed: {before.path}")
-            preserved_ciphertext_entries += 1
-        # Only offset and logical length are permitted to differ in a directory record.
+            require(original_padded == exported_padded, f"unmodified padding changed: {before.path}")
+            if before.offset == after.offset:
+                require(before.key == after.key and source.ciphertext(before) == output.ciphertext(after),
+                        f"unmodified ciphertext changed without relocation: {before.path}")
+                preserved_ciphertext_entries += 1
+            else:
+                rekeyed_unchanged_entries += 1
+        # Relocation changes the CRC seed/key; opaque bytes, names and IDs stay exact.
         start = before.tree_offset + 4
-        normalized_tree[start:start + 8] = source.tree[start:start + 8]
+        normalized_tree[start:start + 12] = source.tree[start:start + 12]
     require(bytes(normalized_tree) == source.tree, "opaque directory bytes or tail changed")
 
     # Check opaque bytes around entries using the original physical order. A resized
@@ -199,10 +215,12 @@ def verify(source: Archive, output: Archive, expected: dict[str, bytes]) -> dict
         "entries_checked": len(source.entries),
         "changed_entries": changed_entries,
         "preserved_ciphertext_entries": preserved_ciphertext_entries,
+        "rekeyed_unchanged_entries": rekeyed_unchanged_entries,
+        "seeded_client_crc_verified": True,
         "byte_exact": byte_exact,
         "directory_metadata_preserved": True,
         "opaque_gaps_and_trailer_preserved": True,
-        "client_compatibility": "not_verified",
+        "client_compatibility": "binary_crc_rules_verified; runtime_validation_separate",
     }
 
 

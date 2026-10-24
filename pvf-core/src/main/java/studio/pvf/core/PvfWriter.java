@@ -13,7 +13,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
-/** Rebuilds existing-entry archives with original keys, untouched ciphertext and layout metadata preserved. */
+/** Rebuilds existing-entry archives with client-compatible seeded CRCs and preserved opaque layout bytes. */
 public final class PvfWriter {
     private static final long MAX_UNSIGNED_INT = 0xffff_ffffL;
     private PvfWriter() { }
@@ -39,26 +39,28 @@ public final class PvfWriter {
         archive.verifyUnchanged();
         long[] offsets = new long[archive.fileCount()];
         int[] lengths = new int[archive.fileCount()];
+        int[] keys = new int[archive.fileCount()];
         long newBodyLength = calculateLayout(archive, replacements, offsets, lengths);
-        byte[] tree = archive.plainTree();
-        ByteBuffer treeFields = ByteBuffer.wrap(tree).order(ByteOrder.LITTLE_ENDIAN);
-        for (PvfEntry entry : archive.entries()) {
-            treeFields.putInt(entry.treePosition() + 4, (int) offsets[entry.index()]);
-            treeFields.putInt(entry.treePosition() + 8, lengths[entry.index()]);
-        }
-        PvfIo.encrypt(tree, archive.treeKey());
         Path temporary = Files.createTempFile(target.getParent(), ".pvf-export-", ".tmp");
         try {
             try (FileChannel destination = FileChannel.open(temporary, StandardOpenOption.WRITE,
                     StandardOpenOption.TRUNCATE_EXISTING)) {
-                PvfIo.writeFully(destination, ByteBuffer.wrap(archive.header()), 0);
+                // Body offsets determine each CRC/key. Calculate them while streaming
+                // the body, then publish its matching directory and header in the temp file.
+                writeBody(archive, replacements, destination, offsets, keys);
+                byte[] tree = updatedTree(archive, offsets, lengths, keys);
+                int treeKey = PvfIo.crc32(tree, archive.fileCount());
+                byte[] header = archive.header();
+                ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+                        .putInt(PvfArchive.MAGIC.length + 4, treeKey);
+                PvfIo.encrypt(tree, treeKey);
+                PvfIo.writeFully(destination, ByteBuffer.wrap(header), 0);
                 PvfIo.writeFully(destination, ByteBuffer.wrap(tree), PvfArchive.HEADER_LENGTH);
-                writeBody(archive, replacements, destination, offsets);
                 destination.truncate(Math.addExact(archive.bodyOffset(), newBodyLength));
                 destination.force(true);
             }
             archive.verifyUnchanged();
-            verifyOutput(archive, replacements, temporary, offsets, lengths, newBodyLength);
+            verifyOutput(archive, replacements, temporary, offsets, lengths, keys, newBodyLength);
             archive.verifyUnchanged();
             PvfIo.checkCancelled();
             // No ATOMIC_MOVE: its specification permits replacing an existing destination.
@@ -116,7 +118,7 @@ public final class PvfWriter {
     }
 
     private static void writeBody(PvfArchive archive, Map<String, byte[]> changes,
-                                   FileChannel destination, long[] offsets) throws IOException {
+                                   FileChannel destination, long[] offsets, int[] keys) throws IOException {
         long oldCursor = 0;
         long newCursor = 0;
         for (PvfEntry entry : archive.physicalEntries()) {
@@ -125,23 +127,28 @@ public final class PvfWriter {
                     archive.bodyOffset() + newCursor, gapLength);
             newCursor = offsets[entry.index()];
             byte[] replacement = changes.get(entry.path());
+            // Validate even entries whose ciphertext can be copied unchanged. A no-op
+            // export must not silently republish payloads the client would reject.
+            byte[] originalPlain = archive.readPlainPadded(entry);
             long newPaddedLength;
-            if (replacement == null) {
+            if (replacement == null && newCursor == entry.offset()) {
                 newPaddedLength = entry.paddedLength();
+                keys[entry.index()] = entry.key();
                 PvfIo.copy(archive.channel(), archive.bodyOffset() + entry.offset(), destination,
                         archive.bodyOffset() + newCursor, newPaddedLength);
             } else {
-                newPaddedLength = PvfIo.align4(replacement.length);
+                newPaddedLength = replacement == null ? entry.paddedLength() : PvfIo.align4(replacement.length);
                 if (newPaddedLength > Integer.MAX_VALUE) throw new IOException("Replacement exceeds array capacity");
                 byte[] padded;
-                if (replacement.length == entry.length()) {
-                    padded = archive.readPadded(entry);
-                    PvfIo.decrypt(padded, entry.key());
+                if (replacement == null || replacement.length == entry.length()) {
+                    padded = originalPlain;
                 } else {
                     padded = new byte[(int) newPaddedLength];
                 }
-                System.arraycopy(replacement, 0, padded, 0, replacement.length);
-                PvfIo.encrypt(padded, entry.key());
+                if (replacement != null) System.arraycopy(replacement, 0, padded, 0, replacement.length);
+                int key = PvfIo.crc32(padded, newCursor);
+                keys[entry.index()] = key;
+                PvfIo.encrypt(padded, key);
                 PvfIo.writeFully(destination, ByteBuffer.wrap(padded), archive.bodyOffset() + newCursor);
             }
             oldCursor = entry.offset() + entry.paddedLength();
@@ -153,37 +160,44 @@ public final class PvfWriter {
     }
 
     private static void verifyOutput(PvfArchive source, Map<String, byte[]> changes, Path path,
-                                      long[] offsets, int[] lengths, long newBodyLength) throws IOException {
+                                      long[] offsets, int[] lengths, int[] keys, long newBodyLength) throws IOException {
         try (PvfArchive exported = PvfArchive.open(path)) {
+            byte[] expectedTree = updatedTree(source, offsets, lengths, keys);
+            byte[] expectedHeader = source.header();
+            ByteBuffer.wrap(expectedHeader).order(ByteOrder.LITTLE_ENDIAN)
+                    .putInt(PvfArchive.MAGIC.length + 4, PvfIo.crc32(expectedTree, source.fileCount()));
             if (exported.fileCount() != source.fileCount()
                     || exported.archiveSize() != source.bodyOffset() + newBodyLength
-                    || !Arrays.equals(source.header(), exported.header())) {
+                    || !Arrays.equals(expectedHeader, exported.header())) {
                 throw new IOException("Export validation failed: header, file count or total size");
             }
             for (PvfEntry original : source.entries()) {
                 PvfEntry actual = exported.entries().get(original.index());
                 if (actual.offset() != offsets[original.index()] || actual.length() != lengths[original.index()]
-                        || actual.fileNumber() != original.fileNumber() || actual.key() != original.key()
+                        || actual.fileNumber() != original.fileNumber() || actual.key() != keys[original.index()]
                         || !Arrays.equals(actual.rawPath(), original.rawPath())) {
                     throw new IOException("Export metadata validation failed: " + original.path());
                 }
                 byte[] replacement = changes.get(original.path());
                 if (replacement != null) {
-                    if (!Arrays.equals(replacement, exported.readBytes(actual))) {
-                        throw new IOException("Export content validation failed: " + original.path());
+                    byte[] expected = replacement.length == original.length()
+                            ? source.readPlainPadded(original) : new byte[(int) PvfIo.align4(replacement.length)];
+                    System.arraycopy(replacement, 0, expected, 0, replacement.length);
+                    if (!Arrays.equals(expected, exported.readPlainPadded(actual))) {
+                        throw new IOException("Export content or padding validation failed: " + original.path());
                     }
-                } else if (!PvfIo.equalRange(source.channel(), source.bodyOffset() + original.offset(),
-                        exported.channel(), exported.bodyOffset() + actual.offset(), original.paddedLength())) {
-                    throw new IOException("Untouched ciphertext changed: " + original.path());
+                } else {
+                    if (!Arrays.equals(source.readPlainPadded(original), exported.readPlainPadded(actual))) {
+                        throw new IOException("Untouched plaintext or padding changed: " + original.path());
+                    }
+                    if (actual.offset() == original.offset() && !PvfIo.equalRange(
+                            source.channel(), source.bodyOffset() + original.offset(),
+                            exported.channel(), exported.bodyOffset() + actual.offset(), original.paddedLength())) {
+                        throw new IOException("Unmoved untouched ciphertext changed: " + original.path());
+                    }
                 }
             }
             // Also validates directory padding, non-entry gaps and trailing opaque data.
-            byte[] expectedTree = source.plainTree();
-            ByteBuffer fields = ByteBuffer.wrap(expectedTree).order(ByteOrder.LITTLE_ENDIAN);
-            for (PvfEntry entry : source.entries()) {
-                fields.putInt(entry.treePosition() + 4, (int) offsets[entry.index()]);
-                fields.putInt(entry.treePosition() + 8, lengths[entry.index()]);
-            }
             if (!Arrays.equals(expectedTree, exported.plainTree())) {
                 throw new IOException("Export directory preservation validation failed");
             }
@@ -204,5 +218,16 @@ public final class PvfWriter {
                 throw new IOException("Export trailer preservation failed");
             }
         }
+    }
+
+    private static byte[] updatedTree(PvfArchive archive, long[] offsets, int[] lengths, int[] keys) {
+        byte[] tree = archive.plainTree();
+        ByteBuffer fields = ByteBuffer.wrap(tree).order(ByteOrder.LITTLE_ENDIAN);
+        for (PvfEntry entry : archive.entries()) {
+            fields.putInt(entry.treePosition() + 4, (int) offsets[entry.index()]);
+            fields.putInt(entry.treePosition() + 8, lengths[entry.index()]);
+            fields.putInt(entry.treePosition() + 12, keys[entry.index()]);
+        }
+        return tree;
     }
 }
