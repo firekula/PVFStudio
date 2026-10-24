@@ -1,49 +1,81 @@
 # PVF Studio
 
-**0.1.0 → 0.1.1 格式修正：0.1.0 导出的修改包必须从有效原包和草稿重新导出。** 旧 writer 误把加密 key 当作不透明字段保留，遗漏了客户端的带初值 CRC32 校验；旧修改包即使被服务端 reader 回读，也不能作为客户端兼容包使用。无修改、逐字节一致的旧重建包不受此错误影响。客户端实机状态以 [客户端验证记录](docs/client-validation-2026-10-24.md) 为准。
+基于 IntelliJ 平台的独立 PVF 编辑器，面向 DNF ACT1 `DNF_SCRIPT_PACK` 配置包，提供目录浏览、脚本编辑、草稿恢复、差异比较和保真导出。核心与 CLI 可独立使用。
 
-面向 DNF ACT1 `DNF_SCRIPT_PACK` 的 PVF 读取、脚本修改与保真导出工具。纯 JVM 核心与工作区可单独使用；IntelliJ 编辑器作为可选模块接入。
+当前版本为 **0.1.1**，Windows 独立原型自带 IntelliJ Community 2025.2.6.3 与 JBR 21，无需另装 IDEA。版本变化见 [Changelog](CHANGELOG.md)。
 
-**0.1.1 已完成指定导出包的客户端实机验证**：使用独立客户端和服务端进入城镇，物品 5642 正常显示“傲凰护腿  设计图_PVF验证”。[验证结果与画面](docs/client-validation-2026-10-24.md)记录了包摘要、测试范围、隔离端点及原环境复核。
+## 已有功能
 
-从 F 盘原包经界面修改并导出的 `Script-ui-edited.pvf` 也已在新的独立副本中进入游戏，物品名“傲凰护腿  设计图_外部包测试”完整显示。该包的实机截图、测试配置修复和原环境复核同样记录在上述文档中。
+- 目录树按需展开，按虚拟路径搜索，按需读取条目内容。
+- 使用 IntelliJ 文本编辑器，支持脚本着色、撤销/重做及原文差异比较。
+- 手动选择 GBK/CP936、MS949/CP949 或 UTF-8，严格转换编码并保持支持的原始换行。
+- Ctrl+S 保存独立草稿，重新打开同一原包时恢复已保存的修改。
+- 导出到新 PVF，校验源包一致性、目录与全部条目 CRC，并回读检查内容和布局。
+- CLI 支持查询、提取、字节替换、草稿管理及无修改重建。
 
-这是独立的 Git 项目，位于 `G:\Game\DNF_ACT1\PVFStudio`，与 `DFLegacy` 服务端仓库为同级目录。构建、草稿、验证输出均保存在本项目或用户指定的新目录中。
+这是独立 Git 项目，与 `DFLegacy` 服务端仓库分开。编辑器不依赖运行中的服务端，构建与测试输出默认写入本项目的 `build/`。
 
-当前实现针对已有 ACT1 包中现有条目的修改，保留未修改明文及补齐、fileNumber、路径原字节、条目顺序和无关布局数据。条目 key 是以相对数据偏移为初值的 CRC32，目录 key 是以条目数为初值的 CRC32；修改或移动条目时必须重新计算并加密，只有内容和偏移都未变化时才保持原密文。它不覆盖源包。其他 PVF 变体、新增、删除及重命名条目不在当前支持范围内。
+## 快速开始
 
-## 打开已构建的独立原型
+使用完整的 `PVFStudio-0.1.1-windows-prototype.zip`，解压后双击其中的 `PVFStudio/PVFStudio.bat`。保留同目录中的 `runtime/`、`plugins/` 和启动配置；发行包自带运行时，不包含游戏 PVF。
 
-独立原型构建完成后，以下目录自带 IntelliJ Community 与 JBR，无需安装 IDEA 或另行配置 Java：
+在源码目录中已经构建独立原型时，也可以这样启动：
 
 ```powershell
 .\intellij-workbench\build\standalone\PVFStudio\PVFStudio.bat
-# 也可以传入一个 PVF 的绝对路径：
+# 直接打开一个外部 PVF，带空格的路径加引号。
 .\intellij-workbench\build\standalone\PVFStudio\PVFStudio.bat 'G:\path\Script.pvf'
 ```
 
-界面已通过真实包的搜索、中文编辑、Ctrl+S、撤销/重做、差异比较、重启恢复和新包导出检查。完整运行时尚未裁剪，当前交付为独立原型；正文搜索、智能补全、引用跳转和专用配置表单后续再加。
+1. 点击“打开 PVF”，选择原包；左侧显示目录树，也可输入路径片段搜索。
+2. 选择“打开编码”，双击条目进行编辑。使用 Ctrl+Z 撤销，Ctrl+Shift+Z / Ctrl+Y 重做。
+3. 用“查看差异”核对修改，按 Ctrl+S 或点击“保存草稿”。**保存草稿不会改写原包。**
+4. 点击“导出新 PVF”，选择尚不存在的新文件名；完成导出和回读校验后，才会得到新包。
 
-0.1.0 的历史交互检查不代表其修改包符合客户端校验。当前已构建的独立目录和 `PVFStudio-0.1.1-windows-prototype.zip` 已包含修复；使用旧目录或旧 ZIP 的用户应升级，并从有效原包与草稿重新导出，不能把旧修改包当作有效原包继续编辑。
+默认草稿保存在用户目录下 `.pvf-studio/workspaces/`，平台配置、缓存和日志保存在 `.pvf-studio/platform/`，与现有 IDEA 配置分开。草稿绑定源路径及内容 SHA-256；重启恢复已保存草稿，撤销历史仅属于当前编辑会话。
 
-## 构建与运行
+### 从 0.1.0 升级
 
-核心和 CLI 编译为 Java 17，运行要求 Java 17 或更高版本。项目固定 Gradle Wrapper 9.5.0；当前开发构建使用 JDK 25。可选 IntelliJ 模块的编译与运行环境见 [IntelliJ 独立程序说明](docs/intellij-product.md)。
+**0.1.0 导出的修改包必须从有效原包和既有草稿重新导出。** 旧版本遗漏了客户端的带初值 CRC32 校验；仅服务端 reader 回读成功不能证明旧修改包可被客户端接受。请使用完整的 0.1.1 编辑器目录；无修改且逐字节一致的旧重建包不受该错误影响。详细原因见 [Changelog](CHANGELOG.md) 和 [格式说明](docs/pvf-format.md)。
 
-在 PowerShell 中进入本项目，选择本机已安装的 JDK 后执行：
+## 支持范围与限制
+
+当前支持已验证的 ACT1 `DNF_SCRIPT_PACK` 样本，仅修改现有条目，不支持新增、删除、重命名条目或其他未经验证的 PVF 变体。F 盘腾讯目录中的原包与已有仓库样本逐字节相同，不代表新增了另一种格式版本支持。
+
+导出保留未修改明文及补齐、原始路径字节、fileNumber、条目顺序、间隙和尾部数据。内容或物理偏移变化时重新计算 CRC/key 并加密；无修改重建要求整包逐字节一致。原包及已有导出目标均不会被覆盖。
+
+文本编辑保持 CRLF、LF、CR 及是否有文件末尾换行；混合换行条目暂只读，含 NUL 的内容拒绝文本编辑。编码由用户明确选择，不能无损解码或编码时报告错误。
+
+当前为完整 Community 宿主上的独立原型，平台尚未裁剪，未提供正式安装器、正文搜索、智能补全、引用跳转或专用配置表单。脚本可读写不代表客户端已实现其中引用的所有职业或技能。
+
+## 从源码构建
+
+核心与 CLI 编译目标为 Java 17，运行要求 Java 17+；IntelliJ 模块的编译目标为 Java 21。项目固定 Gradle Wrapper 9.5.0；以下开发构建使用已验证的 JDK 25。只构建核心和 CLI 时不下载 IntelliJ 宿主。
+
+在 PowerShell 中进入本项目，将 `JAVA_HOME` 设置为本机 JDK：
 
 ```powershell
-Set-Location 'G:\Game\DNF_ACT1\PVFStudio'
-$env:JAVA_HOME = "$env:USERPROFILE\.jdks\ms-25.0.4"
+$env:JAVA_HOME = 'C:\path\to\jdk-25'
 .\gradlew.bat check :pvf-cli:installDist
+python -B -m unittest discover -s validation -p 'test_*.py'
 
 $cli = '.\pvf-cli\build\install\pvf-studio\bin\pvf-studio.bat'
 & $cli --help
+
+# 可选：启动 IntelliJ 编辑器，或生成自带运行时的完整 Windows ZIP。
+.\gradlew.bat -PwithIntellij=true :intellij-workbench:runIde
+.\gradlew.bat -PwithIntellij=true :intellij-workbench:standaloneZip
 ```
 
-只构建核心和 CLI 时不下载 IntelliJ 发行包。`check` 覆盖独立加密夹具、读写边界、编码及草稿持久化；CLI 的真实资产验证通过下面的单独命令执行。
+Python 验证脚本要求 Python 3.11+；核心与 CLI 构建不依赖 Python。首次 IntelliJ 构建需要下载较大的平台依赖。开发宿主和产物区别见 [IntelliJ 独立程序说明](docs/intellij-product.md)。
 
-2026-10-24 的 0.1.0 首轮历史检查包括 22 项核心测试、5 项工作区测试、7 项独立 Python 校验器自测及原 C# reader 全量回读。该轮检查遗漏了带初值 CRC32，不能证明修改包符合客户端要求。两份原始 PVF 的 96,669 个条目现已全部通过客户端 CRC 公式核验。历史记录及其更正见 [验证记录](docs/validation-2026-10-24.md)，新版回写和客户端实机结果见 [客户端验证记录](docs/client-validation-2026-10-24.md)。
+## 验证状态
+
+0.1.1 已通过 46 项自动测试：27 项核心、5 项工作区、10 项独立 Python 校验器和 4 项隔离准备测试。两份原始 PVF 共 96,669 个条目的 CRC 关系均已核验，无修改重建、修改导出和草稿跨进程恢复也通过全量对照。
+
+两份指定修改导出包已分别在独立 ACT1 客户端和服务端副本中进入游戏，物品 5642 显示了 `_PVF验证` 和 `_外部包测试` 后缀。真实界面中的编辑、保存、撤销/重做、差异比较及导出也已验证。包摘要、截图与原环境复核见 [客户端验证记录](docs/client-validation-2026-10-24.md)；这些结果限于所记录的客户端与导出包。
+
+0.1.0 的历史检查及其更正保留在 [初轮验证记录](docs/validation-2026-10-24.md)，不能用其旧 reader 回读结果代替修复后的客户端验收。
 
 ## 常用操作
 
@@ -128,3 +160,7 @@ python .\validation\run_real_pvf.py `
 | `docs/pvf-format.md` | 已实现格式、保真边界和提交语义 |
 
 不把 PVF、提取的游戏资源、草稿或生成的验证包提交到 Git；它们不属于本项目源码。`.gitignore` 已排除 PVF、构建输出及默认工作区目录。将自定义草稿与导出文件放在 `build/` 或仓库外目录。
+
+## 许可证
+
+本项目源码采用 [BSD Zero Clause License（BSD-0-Clause）](LICENSE)。随独立包提供的 IntelliJ Community、JBR 及第三方组件继续适用各自的许可证和声明，完整原型保留宿主中的相关文件。
