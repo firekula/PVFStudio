@@ -1,0 +1,24 @@
+#include <windows.h>
+1 RT_MANIFEST "PVFStudio.manifest"
+1 VERSIONINFO
+FILEVERSION @VERSION_COMMAS@
+PRODUCTVERSION @VERSION_COMMAS@
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "PVF Studio\0"
+      VALUE "FileVersion", "@VERSION@\0"
+      VALUE "ProductName", "PVF Studio\0"
+      VALUE "ProductVersion", "@VERSION@\0"
+      VALUE "OriginalFilename", "PVFStudio.exe\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END

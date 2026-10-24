@@ -1,0 +1,10 @@
+<idea-plugin xmlns:xi="http://www.w3.org/2001/XInclude">
+    <xi:include href="/META-INF/PlatformLangPlugin.xml"/>
+    <xi:include href="/META-INF/PvfStudioEssential.xml"/>
+    <module value="studio.pvf.product"/>
+    <extensions defaultExtensionNs="com.intellij">
+        <appStarter id="pvf-studio" implementation="studio.pvf.intellij.PvfStudioStarter"/>
+        <appStarter id="pvf-studio-smoke" implementation="studio.pvf.intellij.PvfStudioSmokeStarter"/>
+        <appStarter id="pvf-product-check" implementation="studio.pvf.product.PvfProductCheckStarter"/>
+    </extensions>
+</idea-plugin>

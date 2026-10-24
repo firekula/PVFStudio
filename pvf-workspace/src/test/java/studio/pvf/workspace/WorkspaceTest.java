@@ -82,6 +82,103 @@ class WorkspaceTest {
         assertThrows(CharacterCodingException.class, () -> TextCodec.encode("\u00a5", Charset.forName("windows-31j")));
     }
 
+    @Test void firstBackupExportPreservesAnIndependentOriginalAndVerifiedOutput() throws Exception {
+        Path source = fixture("original".getBytes(StandardCharsets.UTF_8));
+        byte[] original = Files.readAllBytes(source);
+        Path target = temporary.resolve("中文 导出.pvf");
+        try (PvfWorkspace workspace = PvfWorkspace.open(source, temporary.resolve("drafts"))) {
+            workspace.stageText("test/item.stk", "first version", StandardCharsets.UTF_8);
+            PvfBackupExport.Result result = PvfBackupExport.export(workspace, target);
+            assertEquals(target, result.output());
+            assertEquals(temporary.resolve("backups"), result.backup().getParent());
+            assertArrayEquals(original, Files.readAllBytes(result.backup()));
+            assertFalse(Files.isSameFile(source, result.backup()));
+            try (var exported = studio.pvf.core.PvfArchive.open(target)) {
+                assertEquals("first version", TextCodec.decode(exported.readBytes("test/item.stk"), StandardCharsets.UTF_8));
+            }
+            Files.write(target, new byte[]{0});
+            assertArrayEquals(original, Files.readAllBytes(result.backup()));
+        }
+        assertArrayEquals(original, Files.readAllBytes(source));
+    }
+
+    @Test void updatingAnExportKeepsEveryPriorVersionRecoverable() throws Exception {
+        Path source = fixture("original".getBytes(StandardCharsets.UTF_8));
+        byte[] original = Files.readAllBytes(source);
+        Path target = temporary.resolve("export.pvf");
+        try (PvfWorkspace workspace = PvfWorkspace.open(source, temporary.resolve("drafts"))) {
+            workspace.stageText("test/item.stk", "version one", StandardCharsets.UTF_8);
+            PvfBackupExport.Result first = PvfBackupExport.export(workspace, target);
+            byte[] versionOne = Files.readAllBytes(target);
+            workspace.stageText("test/item.stk", "version two", StandardCharsets.UTF_8);
+            PvfBackupExport.Result second = PvfBackupExport.export(workspace, target);
+            assertNotEquals(first.backup(), second.backup());
+            assertArrayEquals(original, Files.readAllBytes(first.backup()));
+            assertArrayEquals(versionOne, Files.readAllBytes(second.backup()));
+            assertFalse(Files.isSameFile(target, second.backup()));
+            try (var backup = studio.pvf.core.PvfArchive.open(second.backup());
+                 var exported = studio.pvf.core.PvfArchive.open(target)) {
+                assertEquals("version one", TextCodec.decode(backup.readBytes("test/item.stk"), StandardCharsets.UTF_8));
+                assertEquals("version two", TextCodec.decode(exported.readBytes("test/item.stk"), StandardCharsets.UTF_8));
+            }
+        }
+        assertArrayEquals(original, Files.readAllBytes(source));
+    }
+
+    @Test void backupFailureNeverChangesAnExistingOrNewDestination() throws Exception {
+        Path source = fixture(new byte[]{1, 2, 3});
+        Path target = temporary.resolve("export.pvf");
+        byte[] old = new byte[]{9, 8, 7};
+        Files.write(target, old);
+        Files.writeString(temporary.resolve("backups"), "not a directory");
+        try (PvfWorkspace workspace = PvfWorkspace.open(source, temporary.resolve("drafts"))) {
+            assertThrows(IOException.class, () -> PvfBackupExport.export(workspace, target));
+            assertArrayEquals(old, Files.readAllBytes(target));
+            Path newTarget = temporary.resolve("new.pvf");
+            assertThrows(IOException.class, () -> PvfBackupExport.export(workspace, newTarget));
+            assertFalse(Files.exists(newTarget));
+        }
+    }
+
+    @Test void backupExportStillRejectsTheSourceAndItsHardLinkAlias() throws Exception {
+        Path source = fixture(new byte[]{1, 2, 3});
+        byte[] original = Files.readAllBytes(source);
+        Path alias = temporary.resolve("source-alias.pvf");
+        Files.createLink(alias, source);
+        try (PvfWorkspace workspace = PvfWorkspace.open(source, temporary.resolve("drafts"))) {
+            assertThrows(IOException.class, () -> PvfBackupExport.export(workspace, source));
+            assertThrows(IOException.class, () -> PvfBackupExport.export(workspace, alias));
+            assertFalse(Files.exists(temporary.resolve("backups")));
+        }
+        assertArrayEquals(original, Files.readAllBytes(source));
+    }
+
+    @Test void failedExportRetainsTheDestinationAndCompletedBackup() throws Exception {
+        Path source = fixture(new byte[]{1, 2, 3});
+        Path target = temporary.resolve("export.pvf");
+        byte[] old = new byte[]{9, 8, 7};
+        Files.write(target, old);
+        Path drafts = temporary.resolve("drafts");
+        try (PvfWorkspace workspace = PvfWorkspace.open(source, drafts)) {
+            workspace.stageText("test/item.stk", "changed", StandardCharsets.UTF_8);
+            Path blob;
+            try (var files = Files.list(drafts)) {
+                blob = files.filter(path -> path.toString().endsWith(".bin")).findFirst().orElseThrow();
+            }
+            Files.write(blob, new byte[]{0});
+            assertThrows(IOException.class, () -> PvfBackupExport.export(workspace, target));
+            assertArrayEquals(old, Files.readAllBytes(target));
+            try (var backups = Files.list(temporary.resolve("backups"))) {
+                var saved = backups.toList();
+                assertEquals(1, saved.size());
+                assertArrayEquals(old, Files.readAllBytes(saved.get(0)));
+            }
+            try (var files = Files.list(temporary)) {
+                assertTrue(files.noneMatch(path -> path.getFileName().toString().startsWith(".pvf-version-export-")));
+            }
+        }
+    }
+
     private Path fixture(byte[] content) throws IOException {
         byte[] path = "test/item.stk".getBytes(StandardCharsets.US_ASCII);
         int treeSize = (20 + path.length + 3) & ~3;

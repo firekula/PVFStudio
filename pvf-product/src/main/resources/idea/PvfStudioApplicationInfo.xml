@@ -1,0 +1,7 @@
+<component xmlns="http://jetbrains.org/intellij/schema/application-info">
+    <version major="@MAJOR@" minor="@MINOR@" micro="@MICRO@"/>
+    <company name="PVF Studio"/>
+    <build number="PVS-252.28539.97" date="202610240000"/>
+    <icon svg="/icons/pvf/archive.svg" svg-small="/icons/pvf/archive.svg"/>
+    <names product="PVFStudio" fullname="PVF Studio" script="pvfstudio"/>
+</component>

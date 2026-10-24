@@ -1,0 +1,7 @@
+# IntelliJ Platform 252.28539.97 roots. Their complete declared dependency closure is packaged.
+intellij.platform.bootstrap
+intellij.platform.ide.impl
+intellij.platform.lang.impl
+intellij.platform.diff.impl
+intellij.platform.bookmarks
+intellij.platform.todo

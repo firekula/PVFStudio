@@ -1,6 +1,7 @@
 .gradle/
 .intellijPlatform/
 **/build/
+!pvf-product/src/assembler/java/studio/pvf/build/
 **/bin/
 **/obj/
 out/

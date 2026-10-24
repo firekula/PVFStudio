@@ -1,0 +1,19 @@
+{
+  "sdk": {
+    "version": "2025.2.6.3",
+    "build": "252.28539.97",
+    "url": "https://download.jetbrains.com/idea/ideaIC-2025.2.6.3.win.zip",
+    "sha256": "ee3bb2bf315298da0758f5d72ee97a9c5e017f22d129c12db80b69a392f4673e"
+  },
+  "source": {
+    "repository": "https://github.com/JetBrains/intellij-community.git",
+    "tag": "idea/252.28539.97",
+    "commit": "f1f8a8138997550afd4620495187e3e259253310"
+  },
+  "runtime": {
+    "version": "21.0.9-b1038.78",
+    "flavour": "vanilla",
+    "url": "https://cache-redirector.jetbrains.com/intellij-jbr/jbr-21.0.9-windows-x64-b1038.78.zip",
+    "sha512": "2d7a3423d7dff070790493d0dd2ddf3da6b7f554acfbacd736f3316aee0c9b767337ce7dd66fa7a8c6d8f5116af4b98dfffd70347f66ac4adb5345fdd2099b57"
+  }
+}

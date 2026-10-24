@@ -28,6 +28,7 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.editor.colors.EditorColorsManager;
 import studio.pvf.core.PvfEntry;
 import studio.pvf.workspace.PvfWorkspace;
+import studio.pvf.workspace.PvfBackupExport;
 import studio.pvf.workspace.TextCodec;
 
 import javax.swing.*;
@@ -35,6 +36,8 @@ import javax.swing.event.TreeExpansionEvent;
 import javax.swing.event.TreeWillExpandListener;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
+import com.intellij.ui.render.LabelBasedRenderer;
+import com.intellij.util.ui.JBUI;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.IOException;
@@ -58,6 +61,7 @@ final class PvfStudioFrame extends JFrame {
     private final JButton diff = new JButton("查看差异");
     private final JButton closeTab = new JButton("关闭标签");
     private final JButton export = new JButton("导出新 PVF");
+    private final JCheckBox backupOnExport = new JCheckBox("导出前自动备份", true);
     private final JComboBox<String> encoding = new JComboBox<>(new String[]{"GBK / CP936", "MS949 / CP949", "UTF-8"});
     private final JTextField pathSearch = new JTextField();
     private final JTree tree = new JTree(new DefaultMutableTreeNode("请打开 Script.pvf"));
@@ -80,14 +84,21 @@ final class PvfStudioFrame extends JFrame {
         setLocationRelativeTo(null);
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         toolbar.add(open); toolbar.add(save); toolbar.add(diff); toolbar.add(closeTab); toolbar.add(export);
+        backupOnExport.setToolTipText("首次导出备份原包；更新已有导出文件前备份旧版本。备份位于导出目录的 backups/，保留所有版本。");
+        toolbar.add(backupOnExport);
         toolbar.add(new JLabel("打开编码：")); toolbar.add(encoding);
         JPanel left = new JPanel(new BorderLayout(0, 6));
         pathSearch.setToolTipText("按路径搜索；清空后显示目录树");
         JPanel search = new JPanel(new BorderLayout(5, 0));
         search.add(new JLabel("路径"), BorderLayout.WEST); search.add(pathSearch);
         left.add(search, BorderLayout.NORTH);
-        navigation.add(new JScrollPane(tree), "tree");
-        navigation.add(new JScrollPane(resultList), "results");
+        configureNavigation();
+        JScrollPane treeScroll = new JScrollPane(tree);
+        treeScroll.getViewport().setBackground(tree.getBackground());
+        navigation.add(treeScroll, "tree");
+        JScrollPane resultScroll = new JScrollPane(resultList);
+        resultScroll.getViewport().setBackground(tree.getBackground());
+        navigation.add(resultScroll, "results");
         left.add(navigation);
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, tabs);
         split.setDividerLocation(350); split.setResizeWeight(0.25);
@@ -139,6 +150,46 @@ final class PvfStudioFrame extends JFrame {
         });
         tabs.addChangeListener(e -> updateButtons());
         updateButtons();
+    }
+
+    private void configureNavigation() {
+        configureFileTree(tree);
+        ToolTipManager.sharedInstance().registerComponent(tree);
+        resultList.setBackground(tree.getBackground());
+        resultList.setFixedCellHeight(JBUI.scale(24));
+        resultList.setCellRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> view, Object value,
+                    int index, boolean selected, boolean focused) {
+                super.getListCellRendererComponent(view, value, index, selected, focused);
+                setIcon(PvfFileIcons.forEntry(String.valueOf(value), false, false));
+                setIconTextGap(JBUI.scale(6));
+                setBorder(JBUI.Borders.empty(0, 4));
+                return this;
+            }
+        });
+    }
+
+    static void configureFileTree(JTree tree) {
+        tree.setRowHeight(JBUI.scale(24));
+        tree.setLargeModel(true);
+        tree.setShowsRootHandles(true);
+        tree.setCellRenderer(new LabelBasedRenderer.Tree() {
+            @Override public Component getTreeCellRendererComponent(JTree view, Object value, boolean selected,
+                    boolean expanded, boolean leaf, int row, boolean focused) {
+                super.getTreeCellRendererComponent(view, value, selected, expanded, leaf, row, focused);
+                // The platform paints row backgrounds. A label renderer avoids Swing's
+                // DefaultTreeCellRenderer fallback to a previously selected row's background.
+                setOpaque(false);
+                setIconTextGap(JBUI.scale(6));
+                setToolTipText(null);
+                if (value instanceof DefaultMutableTreeNode node && node.getUserObject() instanceof Item item) {
+                    setText(item.label());
+                    setIcon(PvfFileIcons.forEntry(item.label(), item.directory() && !node.isRoot(), expanded));
+                    setToolTipText(item.path().isEmpty() ? item.label() : item.path());
+                }
+                return this;
+            }
+        });
     }
 
     private Charset selectedCharset() {
@@ -381,18 +432,28 @@ final class PvfStudioFrame extends JFrame {
 
     private void chooseExport() {
         if (workspace == null || busy) return;
-        JFileChooser chooser = new JFileChooser(); chooser.setDialogTitle("导出到新 PVF 文件（不覆盖既有文件）");
+        boolean backup = backupOnExport.isSelected();
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle(backup ? "导出 PVF（自动备份旧版本）" : "导出到新 PVF 文件（不覆盖既有文件）");
         chooser.setSelectedFile(new java.io.File("Script-edited.pvf"));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         Path target = chooser.getSelectedFile().toPath();
+        if (backup && Files.exists(target) && JOptionPane.showConfirmDialog(this,
+                "将先把旧版本保存到导出目录的 backups 文件夹，\n再用校验后的新版本更新：\n" + target.toAbsolutePath(),
+                "备份并更新导出文件", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE) != JOptionPane.OK_OPTION) return;
         List<Snapshot> snapshots = snapshots(); PvfWorkspace current = workspace;
-        runTask("保存草稿并导出、校验 PVF…", () -> {
-            persistSnapshots(current, snapshots); current.export(target); return snapshots;
-        }, saved -> {
-            markSaved(saved);
-            status.setText("导出并回读校验完成：" + target.toAbsolutePath());
-            JOptionPane.showMessageDialog(this, "已生成新 PVF：\n" + target.toAbsolutePath()
-                    + "\n\n原包未被修改。客户端加载兼容性仍需在测试副本中验证。", "导出完成", JOptionPane.INFORMATION_MESSAGE);
+        runTask(backup ? "保存草稿、备份旧版本并导出校验 PVF…" : "保存草稿并导出、校验 PVF…", () -> {
+            persistSnapshots(current, snapshots);
+            if (backup) return PvfBackupExport.export(current, target);
+            current.export(target);
+            return new PvfBackupExport.Result(target.toAbsolutePath(), null);
+        }, result -> {
+            markSaved(snapshots);
+            status.setText("导出完成：" + result.output() + (result.backup() == null ? "" : " | 旧版本备份：" + result.backup()));
+            JOptionPane.showMessageDialog(this, "已导出并通过回读校验：\n" + result.output()
+                    + (result.backup() == null ? "" : "\n\n旧版本备份：\n" + result.backup()
+                        + "\n\n需要恢复时，可直接打开备份 PVF，或将它复制回所需位置。")
+                    + "\n\n原包未被修改。", "导出完成", JOptionPane.INFORMATION_MESSAGE);
         });
     }
 
@@ -507,6 +568,7 @@ final class PvfStudioFrame extends JFrame {
     private void updateButtons() {
         open.setEnabled(!busy); save.setEnabled(!busy && workspace != null);
         export.setEnabled(!busy && workspace != null); diff.setEnabled(!busy && selectedSession() != null);
+        backupOnExport.setEnabled(!busy && workspace != null);
         closeTab.setEnabled(!busy && selectedSession() != null);
         encoding.setEnabled(!busy); pathSearch.setEnabled(!busy && workspace != null);
     }

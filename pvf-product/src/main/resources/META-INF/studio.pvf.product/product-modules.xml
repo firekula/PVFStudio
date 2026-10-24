@@ -1,0 +1,5 @@
+<product-modules>
+    <main-root-modules>
+        <module loading="embedded">studio.pvf.product</module>
+    </main-root-modules>
+</product-modules>

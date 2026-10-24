@@ -21,9 +21,18 @@ import com.intellij.openapi.editor.EditorFactory;
 import com.intellij.openapi.editor.colors.EditorColorsManager;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.editor.ex.util.LexerEditorHighlighter;
+import com.intellij.ui.render.RenderingUtil;
 import studio.pvf.workspace.PvfWorkspace;
+import studio.pvf.workspace.PvfBackupExport;
 
 import java.io.OutputStream;
+import java.awt.Graphics2D;
+import java.awt.Rectangle;
+import java.awt.image.BufferedImage;
+import javax.imageio.ImageIO;
+import javax.swing.JTree;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreePath;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -59,6 +68,8 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
                 ApplicationManager.getApplication().invokeLater(() -> {
                     Editor editor = null;
                     try {
+                        verifyNavigationRendering(output);
+                        report.setProperty("navigationRendering", "PASS");
                         UndoManager manager = UndoManager.getGlobalInstance();
                         Project editorProject = ProjectManager.getInstance().getDefaultProject();
                         Document document = EditorFactory.getInstance().createDocument(normalized);
@@ -97,6 +108,21 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
                 String edited = newlines.restore(edit.get());
                 workspace.stageText(entry, edited, charset);
                 workspace.export(exported);
+                Path backedUp = output.resolve("with-backup.pvf");
+                PvfBackupExport.Result initial = PvfBackupExport.export(workspace, backedUp);
+                if (Files.mismatch(archivePath, initial.backup()) != -1)
+                    throw new AssertionError("First export backup did not preserve the source archive");
+                workspace.stageText(entry, edited + newlines.restore("// backup version two\n"), charset);
+                PvfBackupExport.Result updated = PvfBackupExport.export(workspace, backedUp);
+                if (Files.mismatch(exported, updated.backup()) != -1)
+                    throw new AssertionError("Update backup did not preserve the previous export");
+                try (var recovered = studio.pvf.core.PvfArchive.open(updated.backup())) {
+                    if (!java.util.Arrays.equals(recovered.readBytes(entry), edited.getBytes(charset)))
+                        throw new AssertionError("Previous version cannot be recovered from its backup");
+                }
+                report.setProperty("sourceBackup", initial.backup().toString());
+                report.setProperty("previousExportBackup", updated.backup().toString());
+                report.setProperty("backupRecovery", "PASS");
                 report.setProperty("status", "PASS");
                 report.setProperty("archive", archivePath.toAbsolutePath().toString());
                 report.setProperty("sourceSha256", workspace.archive().sha256());
@@ -128,5 +154,59 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
         }
         if (!new PvfStudioFrame.Newlines("a\r\nb\nc\r").isMixed())
             throw new AssertionError("Mixed newline files must be opened read-only");
+    }
+
+    /** Render real platform rows, including renderer reuse after a selected row. No window or user input. */
+    private static void verifyNavigationRendering(Path output) throws Exception {
+        DefaultMutableTreeNode root = new DefaultMutableTreeNode("Script.pvf");
+        DefaultMutableTreeNode character = new DefaultMutableTreeNode("aicharacter");
+        DefaultMutableTreeNode cuwaki = new DefaultMutableTreeNode("cuwaki");
+        DefaultMutableTreeNode scripts = new DefaultMutableTreeNode("ai");
+        scripts.add(new DefaultMutableTreeNode("action.ai"));
+        scripts.add(new DefaultMutableTreeNode("event.ai"));
+        cuwaki.add(scripts);
+        cuwaki.add(new DefaultMutableTreeNode("cuwaki.aic"));
+        character.add(cuwaki);
+        character.add(new DefaultMutableTreeNode("aicharacter.lst"));
+        root.add(character);
+        root.add(new DefaultMutableTreeNode("character"));
+        root.add(new DefaultMutableTreeNode("common"));
+        JTree tree = new JTree(root);
+        PvfStudioFrame.configureFileTree(tree);
+        tree.setSize(360, 440);
+        TreePath scriptsPath = new TreePath(scripts.getPath());
+        tree.expandPath(scriptsPath);
+        int state = 0;
+        for (boolean focused : List.of(true, false)) {
+            tree.putClientProperty(RenderingUtil.ALWAYS_PAINT_SELECTION_AS_FOCUSED, focused);
+            for (DefaultMutableTreeNode selected : List.of(root, scripts, (DefaultMutableTreeNode)scripts.getChildAt(0), character)) {
+                tree.setSelectionPath(new TreePath(selected.getPath()));
+                verifyTreePixels(tree, output.resolve("navigation-" + state++ + ".png"));
+            }
+            tree.collapsePath(scriptsPath);
+            tree.expandPath(scriptsPath);
+            verifyTreePixels(tree, output.resolve("navigation-" + state++ + ".png"));
+            tree.clearSelection();
+            verifyTreePixels(tree, output.resolve("navigation-" + state++ + ".png"));
+        }
+    }
+
+    private static void verifyTreePixels(JTree tree, Path imagePath) throws Exception {
+        BufferedImage image = new BufferedImage(tree.getWidth(), tree.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = image.createGraphics();
+        try { tree.paint(graphics); }
+        finally { graphics.dispose(); }
+        ImageIO.write(image, "png", imagePath.toFile());
+        for (int row = 0; row < tree.getRowCount(); row++) {
+            Rectangle bounds = tree.getRowBounds(row);
+            int expected = (tree.isRowSelected(row) ? RenderingUtil.getSelectionBackground(tree) : tree.getBackground()).getRGB();
+            // Sample beyond the text, within both the reused renderer and the platform's whole-row highlight.
+            for (int x : new int[]{tree.getWidth() - 80, tree.getWidth() - 40}) {
+                if (image.getRGB(x, bounds.y + bounds.height / 2) != expected)
+                    throw new AssertionError("Tree row " + row + " has a stale selection background; image=" + imagePath);
+            }
+        }
+        if (image.getRGB(tree.getWidth() - 40, tree.getHeight() - 5) != tree.getBackground().getRGB())
+            throw new AssertionError("Empty tree area changed background; image=" + imagePath);
     }
 }
