@@ -1,0 +1,15 @@
+.gradle/
+.intellijPlatform/
+**/build/
+**/bin/
+**/obj/
+out/
+dist/
+.idea/
+*.iml
+*.pvf
+*.PVF
+.pvf-workspace/
+*.log
+__pycache__/
+*.pyc
