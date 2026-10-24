@@ -1,0 +1,200 @@
+{
+  "format": 1,
+  "status": "PASS_native_runtime_for_specific_F_drive_UI_export",
+  "editor_version": "0.1.1",
+  "sampled_utc": "2026-10-24T08:12:41.900915+00:00",
+  "source_export": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\external-pvf-validation\\ui-20261024T080207Z\\Script-ui-edited.pvf",
+  "tested_pvf_sha256": "055d7b0270ca6dbf32e1203f70dc13e28b01eb871799d4cf0c4f3cc16ff2445c",
+  "entry_count": 48326,
+  "directory_and_all_entry_seeded_crcs_verified": true,
+  "native_runtime": {
+    "channel_selection": "PASS",
+    "character_selection": "PASS",
+    "seria_town_room": "PASS",
+    "changed_item_tooltip": "PASS",
+    "source": "Parent CUA observation",
+    "client_executable_scope": "True copied G drive known ACT1 client; F drive executable not tested.",
+    "visible_stage": "Seria town room after channel and character selection; no dungeon claim",
+    "item_id": 5642,
+    "display_name": "傲凰护腿  设计图_外部包测试",
+    "name_wrapped_to_two_lines": true,
+    "image": "docs/evidence/external-pvf-client-item-name-0.1.1.jpg",
+    "image_sha256": "5f27394476c33ce5d1c17fc7f1b6463639b20a92d23511c2edcd3d062c51deaf"
+  },
+  "test_fixture": {
+    "account": "pvfexternal20261024",
+    "character_id": "1fd34d12-913c-4c41-8645-657bfa9dcfe1",
+    "character_name": "Berserker",
+    "level": 60,
+    "test_item": 5642,
+    "slot": 3
+  },
+  "first_attempt": {
+    "stage": "channel_selection",
+    "result": "channel_metadata_error",
+    "cause": "Test channel display name exceeds the protocol fixed ASCII field width of 20 bytes",
+    "client": {
+      "pid": 68244,
+      "executable": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\client-validation\\runtime-external-20261024-01\\client\\DNF.exe",
+      "started_at_utc": "2026-10-24T08:09:03.5625134Z"
+    },
+    "server": {
+      "pid": 77984,
+      "executable": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\client-validation\\runtime-external-20261024-01\\server\\DFLegacy.Server.exe",
+      "started_at_utc": "2026-10-24T08:08:41.8281019Z"
+    },
+    "pvf_sha256": "055d7b0270ca6dbf32e1203f70dc13e28b01eb871799d4cf0c4f3cc16ff2445c",
+    "fix": {
+      "previous": "External PVF Validation",
+      "current": "External PVF",
+      "display_name": "External PVF 1",
+      "display_ascii_bytes": 14,
+      "server_config_sha256": "b62ed1bc0758747ff91cc8c9f33bdd83084e96853ea53f365c7e30bd50e1465c",
+      "only_first_attempt_owned_processes_stopped": true
+    }
+  },
+  "isolation": {
+    "private_client_and_server_true_copies": true,
+    "copied_files": 593,
+    "new_account_and_store": true,
+    "source_hashes": {
+      "client_dnf": {
+        "path": "G:\\Game\\DNF_ACT1\\DF\\DNF.exe",
+        "sha256": "6b4850beaf67ec61adb04ae17f119f16278dd05e97b8ffca871a9bdb547de0d5",
+        "unchanged": true
+      },
+      "client_pvf": {
+        "path": "G:\\Game\\DNF_ACT1\\DF\\Script.pvf",
+        "sha256": "5fcd4b94dfb081294701f7288345fff6ca5586d780fcc7130e4614c237eb6ad1",
+        "unchanged": true
+      },
+      "client_ijl15": {
+        "path": "G:\\Game\\DNF_ACT1\\DF\\ijl15.dll",
+        "sha256": "bf205e0fdc59a8cfb71791141ab3b4de80adb25e69d4d4d3c77dc699c4854a40",
+        "unchanged": true
+      },
+      "client_config": {
+        "path": "G:\\Game\\DNF_ACT1\\DF\\Config.ini",
+        "sha256": "f8e67ff8c588d82b077e34160201724aa8874e07bbc81577a053263e29d217d9",
+        "unchanged": true
+      },
+      "private_client_config": {
+        "path": "G:\\Game\\DNF_ACT1\\DF\\DFLConfig.ini",
+        "sha256": "033d88a28223eb94663b2934f673d77e37a851fc65b79d6ef0385bb9cbeae17a",
+        "unchanged": true
+      },
+      "external_strings": {
+        "path": "G:\\Game\\DNF_ACT1\\DF\\Plugin\\dnf.str",
+        "sha256": "85450377b78394674e819e8f7f42d47d038f030f745b9b970edab29eca8c4891",
+        "unchanged": true
+      },
+      "server_config": {
+        "path": "G:\\Game\\DNF_ACT1\\DF\\town-test\\server.json",
+        "sha256": "76412ef55ce343695e901c7c96b241bd71dc411d88c90bb66db00ba27accd217",
+        "unchanged": true
+      },
+      "server_executable": {
+        "path": "G:\\Game\\DNF_ACT1\\DF\\town-test\\DFLegacy.Server.exe",
+        "sha256": "baa6fa55ef25735fb6d59f352e6457287e54bf5e915f63ecc20fb018c4d78418",
+        "unchanged": true
+      },
+      "server_assembly": {
+        "path": "G:\\Game\\DNF_ACT1\\DF\\town-test\\DFLegacy.Server.dll",
+        "sha256": "71c94f549e797fe2b2173e0aaa467ac943b314a8965bbc595901530181aba22a",
+        "unchanged": true
+      },
+      "f_drive_pvf": {
+        "path": "F:\\Program Files\\Tencent\\DNF_2008\\Script.pvf",
+        "sha256": "bc397d1463f1f0f749bbd169400b640d0c8a5d1f6e6e97cfda797099f995ac27",
+        "unchanged": true
+      },
+      "tested_export": {
+        "path": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\external-pvf-validation\\ui-20261024T080207Z\\Script-ui-edited.pvf",
+        "sha256": "055d7b0270ca6dbf32e1203f70dc13e28b01eb871799d4cf0c4f3cc16ff2445c",
+        "unchanged": true
+      },
+      "prior_test_client_pvf": {
+        "path": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\client-validation\\runtime-20261024-01\\client\\Script.pvf",
+        "sha256": "86dcab829d769e19aedb7d7d71d1746155291499cb7b99daaa71ceb5381c2b68",
+        "unchanged": true
+      },
+      "prior_test_server_config": {
+        "path": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\client-validation\\runtime-20261024-01\\server\\server.json",
+        "sha256": "3d58f13dc2fcdf74e72618f21ad0400d812dd4a7099cb137a80151175d541f95",
+        "unchanged": true
+      }
+    },
+    "all_source_hashes_unchanged": true,
+    "existing_server_checks": {
+      "47176": {
+        "running": true,
+        "path_unchanged": true,
+        "started_at_utc_unchanged": true,
+        "tcp_listeners_unchanged": true,
+        "udp_bindings_unchanged": true
+      },
+      "77444": {
+        "running": true,
+        "path_unchanged": true,
+        "started_at_utc_unchanged": true,
+        "tcp_listeners_unchanged": true,
+        "udp_bindings_unchanged": true
+      }
+    },
+    "all_existing_servers_preserved": true,
+    "network_checks": {
+      "client_path_matches": true,
+      "server_path_matches": true,
+      "server_tcp_exactly_expected_loopback": true,
+      "server_udp_exactly_expected_loopback": true,
+      "client_live_peers_allowed": true,
+      "observed_packets_present": true,
+      "logged_peers_allowed": true,
+      "log_limit_not_reached": true
+    },
+    "live_client_peers": [
+      {
+        "protocol": "TCP",
+        "host": "127.0.0.1",
+        "port": 47101,
+        "state": "Established"
+      }
+    ],
+    "observed_packet_headers": 112,
+    "observed_tcp_connect_records": 2,
+    "observed_peer_endpoints": [
+      "TCP 127.0.0.1:42312",
+      "TCP 127.0.0.1:47101",
+      "UDP 127.0.0.1:47102",
+      "UDP 127.0.0.1:47103"
+    ],
+    "server_listeners": [
+      "TCP 127.0.0.1:42312",
+      "TCP 127.0.0.1:47101",
+      "TCP 127.0.0.1:48180",
+      "TCP 127.0.0.1:48181",
+      "UDP 127.0.0.1:47102",
+      "UDP 127.0.0.1:47103"
+    ]
+  },
+  "runtime_retained_at_sampling": true,
+  "retained_processes": {
+    "client": {
+      "pid": 44320,
+      "path": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\client-validation\\runtime-external-20261024-01\\client\\DNF.exe",
+      "started_at_utc": "2026-10-24T08:10:49.2034406Z"
+    },
+    "server": {
+      "pid": 24016,
+      "path": "G:\\Game\\DNF_ACT1\\PVFStudio\\build\\client-validation\\runtime-external-20261024-01\\server\\DFLegacy.Server.exe",
+      "started_at_utc": "2026-10-24T08:10:23.4140393Z"
+    }
+  },
+  "scope": "This exact export and the true copy of the known G drive ACT1 client only. Channel/character selection, Seria town room and modified item tooltip were observed. No F drive executable, other exports or dungeon gameplay claim. Endpoint/process claims apply at the sampling time.",
+  "full_ignored_reports": [
+    "build/client-validation/runtime-external-20261024-01/postflight.json",
+    "build/client-validation/runtime-external-20261024-01/runtime-network-audit.json",
+    "build/client-validation/runtime-external-20261024-01/first-attempt-netdump-audit-final.json",
+    "build/client-validation/runtime-external-20261024-01/external-preflight.json"
+  ]
+}

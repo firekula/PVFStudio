@@ -26,7 +26,7 @@
       "workspace": "傲凰护腿  设计图_PVF验证"
     },
     "run_summary": "summary.json",
-    "runtime_validation": "not performed for this export; offline format and saved-draft verification only"
+    "runtime_validation": "Not performed at the time of the offline record; subsequent native verification is linked by follow_up_native_runtime."
   },
   "ui_export": {
     "status": "passed",
@@ -144,11 +144,17 @@
     "docs/evidence/external-pvf-export-0.1.1.jpg": "f822dd727e9c927f2c091c93727adf36e525db10dcde47049058b47648c29609",
     "docs/evidence/external-pvf-reopened-0.1.1.jpg": "4eb4e254712affd5fe3393b0818474dea30b48a9b3a3561def9629495ce640c6"
   },
-  "scope": "External-path editor and binary format validation only; this exact source matches the existing repository sample, not an additional format version. No native game launch or service requests were performed for these exports.",
+  "scope": "Original offline record: external-path editor and binary format validation only. The source matches the existing ACT1 sample. Subsequent native verification applies only to the specific UI export linked by follow_up_native_runtime; other CLI exports remain without native runtime verification.",
   "editor_retained": "Exported Script-ui-edited.pvf remains open, showing the changed name with no unsaved edits. The external-source draft is retained separately under the normal source-bound workspace.",
   "ignored_full_reports": [
     "build\\external-pvf-validation\\ui-20261024T080207Z\\ui-export-report.json",
     "build\\validation\\20261024T080121Z-e7f0bc6d\\summary.json",
     "build\\validation\\20261024T080121Z-e7f0bc6d\\external-source-info.json"
-  ]
+  ],
+  "follow_up_native_runtime": {
+    "status": "PASS_native_runtime_for_specific_F_drive_UI_export",
+    "report": "docs/evidence/external-pvf-runtime-0.1.1.json",
+    "pvf_sha256": "055d7b0270ca6dbf32e1203f70dc13e28b01eb871799d4cf0c4f3cc16ff2445c",
+    "image": "docs/evidence/external-pvf-client-item-name-0.1.1.jpg"
+  }
 }
