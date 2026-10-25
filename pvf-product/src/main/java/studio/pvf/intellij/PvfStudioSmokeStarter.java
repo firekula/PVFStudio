@@ -60,6 +60,17 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
             String entry = "creature/script/creature.lst";
             Path exported = output.resolve("IntelliJ-edited.pvf");
             Properties report = new Properties();
+            TabWorkbenchSmoke.run(archivePath, output);
+            report.setProperty("tabWorkbench", "PASS: stable single row, context menu, close scopes, MRU/move/reopen actions, draft isolation and cancellation");
+            EditorSessionSmoke.run(archivePath, output);
+            report.setProperty("editorSession", "PASS: persistent order, active tab, encoding, caret, horizontal/vertical scroll, hidden tabs, archive isolation, empty session, missing entries and draft/discard separation");
+            MenuWorkbenchSmoke.run(archivePath, output);
+            report.setProperty("menuWorkbench", "PASS: native menu groups and commands, recent archives persistence/promotion/clear, reopening restores editor session");
+            String npkDirectory = System.getProperty("pvf.preview.npk");
+            if (npkDirectory != null) {
+                ResourcePreviewSmoke.run(archivePath, Path.of(npkDirectory), output);
+                report.setProperty("resourcePreview", "PASS: animation, item, ANI reference, unsaved overlay, missing resource, stale callbacks, preferences, MAP/TIL composition, collision toggle, scene playback/pause/step, minute boundary, unsaved TIL, NPC/monster/passive idle, facing, conditional toggle, markers, unsaved OBJ");
+            }
             try (PvfWorkspace workspace = PvfWorkspace.open(archivePath, output.resolve("drafts"))) {
                 String raw = workspace.readText(entry, charset);
                 PvfStudioFrame.Newlines newlines = new PvfStudioFrame.Newlines(raw);

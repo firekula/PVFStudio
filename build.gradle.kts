@@ -2,7 +2,7 @@ plugins { base }
 
 allprojects {
     group = "studio.pvf"
-    version = "0.2.1"
+    version = "0.10.0"
     repositories { mavenCentral() }
 }
 
@@ -24,5 +24,5 @@ subprojects {
 }
 
 tasks.named("check") {
-    dependsOn(":pvf-core:check", ":pvf-workspace:check", ":pvf-cli:check")
+    dependsOn(":pvf-core:check", ":pvf-workspace:check", ":pvf-cli:check", ":pvf-preview:check")
 }

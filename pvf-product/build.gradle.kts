@@ -14,7 +14,11 @@ val productDirectory = layout.dir(providers.provider {
 dependencies {
     implementation(project(":pvf-core"))
     implementation(project(":pvf-workspace"))
+    implementation(project(":pvf-preview"))
     compileOnly(files(sdkDirectory.map { fileTree("$it/lib") { include("**/*.jar") } }))
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 java {
     sourceCompatibility = JavaVersion.VERSION_21
@@ -24,7 +28,7 @@ tasks.withType<JavaCompile>().configureEach { options.release.set(21) }
 tasks.jar {
     archiveFileName.set("pvf-studio.jar")
     manifest { attributes("Main-Class" to "studio.pvf.product.PvfStudioMain", "Implementation-Version" to project.version) }
-    for (module in listOf(":pvf-core", ":pvf-workspace")) {
+    for (module in listOf(":pvf-core", ":pvf-workspace", ":pvf-preview")) {
         from(project(module).extensions.getByType<SourceSetContainer>().named("main").map { it.output })
     }
 }

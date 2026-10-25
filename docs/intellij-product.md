@@ -1,8 +1,8 @@
 # PVF Studio 独立产品
 
-## 0.2.1 当前架构
+## 0.10.0 当前架构
 
-`pvf-product` 是普通 Java/Gradle 产品模块，不再使用 IntelliJ 插件 Gradle 构建。它将自己的界面代码、`pvf-core` 和 `pvf-workspace` 合并为 `pvf-studio.jar`，用自有 `PvfStudioMain`、`PvfStudioApplicationInfo.xml`、PVS 产品代码和 `product-modules.xml` 定义独立产品。PVF 代码与平台共用核心类加载器；发行包不含 PVF 插件目录、插件 ZIP、完整 IDEA 或 `idea64.exe`。
+`pvf-product` 是普通 Java/Gradle 产品模块，不再使用 IntelliJ 插件 Gradle 构建。它将自己的界面代码、`pvf-core`、`pvf-workspace` 和 `pvf-preview` 合并为 `pvf-studio.jar`，用自有 `PvfStudioMain`、`PvfStudioApplicationInfo.xml`、PVS 产品代码和 `product-modules.xml` 定义独立产品。PVF 代码与平台共用核心类加载器；发行包不含 PVF 插件目录、插件 ZIP、完整 IDEA 或 `idea64.exe`。
 
 平台本身通过 XML 描述组件和服务，这也是 IntelliJ 自己的核心注册机制。`PvfStudioPlugin.xml` 是产品核心描述，不是单独安装的插件；加载检查要求只有框架自身的 `com.intellij` 核心项，PVF 类必须与平台类处于同一核心类加载器。
 
@@ -10,7 +10,7 @@
 
 上游发布包把 IDEA 的 ApplicationInfo 注入了字节码，因此产品启动必须启用 `intellij.platform.load.app.info.from.resources` 并从 JVM 启动阶段指定自己的平台前缀；否则仍会要求 Java/JSON 必需插件。基础内容模块的服务描述由装配器从同一固定 SDK 的已嵌入描述中生成，避免遗漏 `SettingsController` 等基础注册。
 
-源码文档和验证证据仅保留在仓库。发行目录只有原生 EXE 和 `app/`，其中为 `lib/`、`jbr/`、`bin/`、`modules/`、产品信息及必要许可证。配置与缓存位于 `.pvf-studio/platform/product/`；既有 `.pvf-studio/workspaces/` 草稿继续使用。
+源码文档和验证证据仅保留在仓库。发行目录只有原生 EXE 和 `app/`，其中为 `lib/`、`jbr/`、`bin/`、`modules/`、产品信息及必要许可证。配置与缓存位于 `.pvf-studio/platform/product/`；既有 `.pvf-studio/workspaces/` 草稿继续使用，标签及编辑位置会话也保存在各 PVF 的工作区。
 
 ## 产品开发与构建
 
@@ -23,11 +23,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build-release.ps1 -Z
 .\gradlew.bat -PwithIntellij=true -PpvfPath='G:\path\Script.pvf' :pvf-product:runProduct
 ```
 
-产品目录为 `pvf-product/build/product/PVFStudio-0.2.1/`，发行产物位于 `pvf-product/build/distributions/`。不带 `-ZipOnly` 时还需要 Inno Setup。`verifyProduct` 是发行前置检查，使用独立测试目录和无窗口模式，不更改用户配置。
+产品目录为 `pvf-product/build/product/PVFStudio-0.10.0/`，发行产物位于 `pvf-product/build/distributions/`。不带 `-ZipOnly` 时还需要 Inno Setup。`verifyProduct` 是发行前置检查，使用独立测试目录和无窗口模式，不更改用户配置。
 
 ```powershell
 python -B .\tools\check_product.py `
-  --product .\pvf-product\build\product\PVFStudio-0.2.1 `
+  --product .\pvf-product\build\product\PVFStudio-0.10.0 `
   --archive 'G:\path\Script.pvf'
 ```
 
