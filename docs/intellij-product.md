@@ -1,6 +1,6 @@
 # PVF Studio 独立产品
 
-## 0.10.0 当前架构
+## 当前架构（0.11.1）
 
 `pvf-product` 是普通 Java/Gradle 产品模块，不再使用 IntelliJ 插件 Gradle 构建。它将自己的界面代码、`pvf-core`、`pvf-workspace` 和 `pvf-preview` 合并为 `pvf-studio.jar`，用自有 `PvfStudioMain`、`PvfStudioApplicationInfo.xml`、PVS 产品代码和 `product-modules.xml` 定义独立产品。PVF 代码与平台共用核心类加载器；发行包不含 PVF 插件目录、插件 ZIP、完整 IDEA 或 `idea64.exe`。
 
@@ -23,11 +23,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build-release.ps1 -Z
 .\gradlew.bat -PwithIntellij=true -PpvfPath='G:\path\Script.pvf' :pvf-product:runProduct
 ```
 
-产品目录为 `pvf-product/build/product/PVFStudio-0.10.0/`，发行产物位于 `pvf-product/build/distributions/`。不带 `-ZipOnly` 时还需要 Inno Setup。`verifyProduct` 是发行前置检查，使用独立测试目录和无窗口模式，不更改用户配置。
+产品目录为 `pvf-product/build/product/PVFStudio-0.11.1/`，发行产物位于 `pvf-product/build/distributions/`。不带 `-ZipOnly` 时还需要 Inno Setup。`verifyProduct` 是发行前置检查，使用独立测试目录和无窗口模式，不更改用户配置。
 
 ```powershell
 python -B .\tools\check_product.py `
-  --product .\pvf-product\build\product\PVFStudio-0.10.0 `
+  --product .\pvf-product\build\product\PVFStudio-0.11.1 `
   --archive 'G:\path\Script.pvf'
 ```
 

@@ -29,6 +29,7 @@ SolidCompression=yes
 LZMANumBlockThreads=4
 DiskSpanning=no
 WizardStyle=modern
+SetupIconFile=launcher\PVFStudio.ico
 DisableProgramGroupPage=yes
 DisableDirPage=no
 UninstallDisplayName=PVF Studio

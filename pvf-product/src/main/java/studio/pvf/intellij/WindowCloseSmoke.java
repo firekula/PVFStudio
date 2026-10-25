@@ -13,6 +13,7 @@ final class WindowCloseSmoke {
         Path root = output.resolve("window-close-workspaces");
         var first = create(root, archive);
         try {
+            edt(() -> { check(!first.getIconImages().isEmpty(), "Window icon was not applied"); return null; });
             postClose(first); await(() -> !first.isDisplayable());
         } finally { cleanup(first); }
         var second = create(root, archive);

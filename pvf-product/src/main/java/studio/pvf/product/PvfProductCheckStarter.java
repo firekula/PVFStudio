@@ -18,6 +18,13 @@ public final class PvfProductCheckStarter implements ApplicationStarter {
         try {
             if (!"PVS".equals(ApplicationInfo.getInstance().getBuild().getProductCode()))
                 throw new AssertionError("An upstream IDEA product descriptor was loaded");
+            var icon = com.intellij.ui.AppUIUtil.loadApplicationIcon(com.intellij.ui.scale.ScaleContext.create(), 32);
+            if (icon == null || icon.getIconWidth() <= 0) throw new AssertionError("Product application icon is missing");
+            var iconImage = new java.awt.image.BufferedImage(icon.getIconWidth(), icon.getIconHeight(), java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            var iconGraphics = iconImage.createGraphics();
+            try { icon.paintIcon(null, iconGraphics, 0, 0); } finally { iconGraphics.dispose(); }
+            if ((iconImage.getRGB(iconImage.getWidth() / 2, iconImage.getHeight() / 2) >>> 24) < 200)
+                throw new AssertionError("Product application icon rendered blank");
             if (ApplicationManager.getApplication().getService(SettingsController.class) == null)
                 throw new AssertionError("Product settings service is missing");
             ManagingFS.getInstance();

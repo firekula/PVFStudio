@@ -175,3 +175,16 @@ DGN 可切换多套布局与起点/Boss，点击布局图切换房间，并选�
 | `PVFStudio-0.11.0-windows-x64-setup.exe` | 186174298 | `53a8a918f645ec30a9323087d5da164db84f422e538892d30b3be925eb5e9cd8` |
 
 发布入口为 [v0.11.0 Release](https://github.com/firekula/PVFStudio/releases/tag/v0.11.0)。
+
+## 2026-10-25：0.11.1 图标与软件文档发行
+
+0.11.1 将应用图标统一接入原生 EXE、窗口/任务栏、平台产品信息及安装器，并重整 README 的软件简介、下载、使用、构建和文档入口。历史 CLI 示例与详细验证记录保留在 [CLI 与开发验证](development-validation.md)。CLI 帮助页改为读取构建版本。
+
+130 项 JVM 测试、14 项 Python 测试和正式产品检查/完整冒烟通过，目录为 `build/product-checks/20261025-234206-c1edd44b/`。原生 EXE 与安装器版本均为 0.11.1，提取的图标一致且与 ICO 源图核对通过。便携包的 590 个条目 CRC、产品版本、JAR/EXE 一致性和发行内容检查通过；产品 JAR SHA-256 为 `e440ffcf6b7cbe0e2f45fc7a43aab7c519e013e7816a404431cf9323bbb58fa4`。
+
+| 发行文件 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `PVFStudio-0.11.1-windows-x64-portable.zip` | 243749861 | `f22ac81c9add8ce250c6a4d7f2c0d0aa8c47e000b049e9aae72f9c3ac7478aa0` |
+| `PVFStudio-0.11.1-windows-x64-setup.exe` | 186620717 | `731792ed208b4fd6317c98df20079c68d5992913c947927e306c303ecf47f2fa` |
+
+正式产品目录为 `pvf-product/build/product/PVFStudio-0.11.1/`。发布入口为 [v0.11.1 Release](https://github.com/firekula/PVFStudio/releases/tag/v0.11.1)，本地校验记录在 `build/release/package-validation-v0.11.1.json`。

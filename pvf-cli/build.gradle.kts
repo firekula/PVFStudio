@@ -11,3 +11,7 @@ application {
     mainClass.set("studio.pvf.cli.Main")
     applicationName = "pvf-studio"
 }
+
+tasks.jar {
+    manifest { attributes("Implementation-Version" to project.version) }
+}

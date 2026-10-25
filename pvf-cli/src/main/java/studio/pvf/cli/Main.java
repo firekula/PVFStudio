@@ -137,7 +137,8 @@ public final class Main {
     private static IllegalArgumentException usage(String text) { return new IllegalArgumentException(text); }
 
     private static void help(PrintStream out) {
-        out.println("PVF Studio 0.2.1 — DNF_SCRIPT_PACK reader and lossless exporter");
+        String version = Main.class.getPackage().getImplementationVersion();
+        out.println("PVF Studio " + (version == null ? "development" : version) + " — DNF_SCRIPT_PACK reader and lossless exporter");
         out.println("info <archive>");
         out.println("list <archive> [path-filter]");
         out.println("extract <archive> <virtual-path> <new-file>");

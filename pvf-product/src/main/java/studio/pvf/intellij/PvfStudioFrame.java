@@ -124,6 +124,7 @@ final class PvfStudioFrame extends JFrame {
 
     PvfStudioFrame(Path draftsRoot, boolean exitOnClose) {
         super("PVF Studio");
+        com.intellij.ui.AppUIUtilKt.updateAppWindowIcon(this);
         setGlassPane(new com.intellij.openapi.wm.impl.IdeGlassPaneImpl(getRootPane(), false));
         this.draftsRoot = draftsRoot; this.exitOnClose = exitOnClose;
         recentFile = (draftsRoot == null ? Path.of(System.getProperty("user.home"), ".pvf-studio") : draftsRoot)
