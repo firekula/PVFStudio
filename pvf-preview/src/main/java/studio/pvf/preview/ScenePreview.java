@@ -31,6 +31,8 @@ public final class ScenePreview {
     private final boolean expandBounds;
     private final List<Rectangle2D.Double> movable;
     private Rectangle2D bounds;
+    private SceneCamera.Limits cameraLimits;
+    private boolean town;
     private long cacheBytes;
     private int tileCount;
     private int particleDefinitions;
@@ -65,6 +67,8 @@ public final class ScenePreview {
             scene.addTile(path, parsed, 0, 0, parsed.extended() ? 0 : SceneCoordinates.ORIGIN_Y);
         }
         else {
+            scene.town = map.town();
+            scene.cameraLimits = SceneCamera.Limits.forMap(map.tiles().size(), map.extended().size());
             scene.scrolls.put("distantback", map.farScroll()); scene.scrolls.put("middleback", map.middleScroll()); scene.scrolls.put("close", map.nearScroll());
             double baseHeight = 480;
             for (int i = 0; i < map.tiles().size(); i++) {
@@ -101,6 +105,69 @@ public final class ScenePreview {
         return scene;
     }
 
+    /** DGN creates the four native path gates after loading the MAP (0x467190). */
+    public static ScenePreview loadRoom(String path, String text, TextLookup lookup, SpriteLookup sprites,
+                                        List<DungeonPreview.Gate> gates, int... variants) throws IOException {
+        ScenePreview scene = load(path, text, lookup, sprites, variants);
+        for (var gate : gates) scene.addGate(gate);
+        scene.tracks.sort(Comparator.comparingInt(Track::stage).thenComparingDouble(Track::depth).thenComparingInt(Track::order));
+        return scene;
+    }
+
+    private void addGate(DungeonPreview.Gate gate) {
+        int index = entities.size(); String path = "", problem = ""; List<String> animations = new ArrayList<>();
+        var spawn = new EntityScript.Spawn(EntityScript.Kind.PASSIVE, gate.objectId(), gate.position().x(), gate.position().y(), 0, false, false, false, 0);
+        try {
+            var catalog = catalogs.get(EntityScript.Kind.PASSIVE);
+            if (catalog == null) {
+                String list = lookup.read(EntityScript.Kind.PASSIVE.list());
+                if (list == null) throw new IOException("找不到 passiveobject/passiveobject.lst");
+                catalog = EntityScript.catalog(list); catalogs.put(EntityScript.Kind.PASSIVE, catalog);
+            }
+            String reference = catalog.get(gate.objectId());
+            if (reference == null) throw new IOException("passiveobject.lst 没有门对象 " + gate.objectId());
+            Resolved object = resolve(EntityScript.Kind.PASSIVE.list(), reference); path = object.path();
+            var definition = DungeonScript.gateObject(object.text());
+            int stage = SceneScript.stage(new SceneScript.Placement("", definition.layer(), false, false, 0, 0, 0));
+            double scroll = scrolls.getOrDefault(definition.layer(), 1.0);
+            for (var part : definition.parts()) {
+                if (part.path().toLowerCase(Locale.ROOT).endsWith(".til")) {
+                    Resolved tile = resolve(path, part.path()); mergeGatePasses(gate, part, tile.path(), SceneScript.tile(tile.text())); continue;
+                }
+                if (part.state() == 1 && gate.open() || part.state() == 2 && !gate.open()) continue;
+                try {
+                    List<IdlePart> parts = new ArrayList<>();
+                    addIdlePart(parts, path, part.path(), 0, part.variation() < 0 ? new int[0] : new int[]{0, part.variation()});
+                    for (var animation : parts) {
+                        animations.add(animation.path());
+                        addTrack(animation.path(), animation.animation(), spawn.x(), SceneCoordinates.screenY(spawn.y(), 0),
+                                stage, spawn.y(), scroll, false, false, index, 0);
+                    }
+                } catch (IOException failure) { warn(path + " " + part.path() + "：" + failure.getMessage()); problem = "部分门动画未加载"; }
+            }
+        } catch (IOException failure) { problem = failure.getMessage(); warn("门对象 #" + gate.objectId() + "：" + problem); }
+        entities.add(new EntityInfo(spawn, path, List.copyOf(animations), problem));
+    }
+
+    /** 0x57C480: max-merge gate TIL, extending edge columns to the left/right map boundary. */
+    private void mergeGatePasses(DungeonPreview.Gate gate, DungeonScript.GatePart anchor, String path, SceneScript.Tile tile) {
+        int left = gate.position().x() / 16 - anchor.state(), top = gate.position().y() / 12 - anchor.variation();
+        for (int i = 0; i < collisions.size(); i++) {
+            Collision base = collisions.get(i); var original = base.tile(); List<Integer> passes = new ArrayList<>(original.passes()); boolean changed = false;
+            for (int row = 0; row < original.rows(); row++) for (int col = 0; col < SceneScript.COLUMNS; col++) {
+                int gx = (int) (base.x() / 16) + col, gy = (int) ((base.y() - SceneCoordinates.ORIGIN_Y) / 12) + row;
+                int sourceX = gx - left, sourceY = gy - top;
+                if (gate.direction() == DungeonScript.Direction.LEFT && sourceX < 0) sourceX = 0;
+                if (gate.direction() == DungeonScript.Direction.RIGHT && sourceX > 13) sourceX = 13;
+                if (sourceX < 0 || sourceX > 13 || sourceY < 0 || sourceY >= tile.rows()) continue;
+                int offset = row * SceneScript.COLUMNS + col, pass = Math.max(passes.get(offset), tile.pass(sourceX, sourceY));
+                if (pass != passes.get(offset)) { passes.set(offset, pass); changed = true; }
+            }
+            if (changed) collisions.set(i, new Collision(base.path() + " + " + path, base.x(), base.y(),
+                    new SceneScript.Tile(original.images(), List.copyOf(passes), original.extended(), original.warnings())));
+        }
+    }
+
     private SceneScript.Tile loadTile(String source, String reference, double x, double y, double collisionY) {
         try {
             Resolved resolved = resolve(source, reference); var tile = SceneScript.tile(resolved.text());
@@ -111,7 +178,7 @@ public final class ScenePreview {
         tileCount++; tile.warnings().forEach(warning -> warn(path + "：" + warning));
         if (!tile.passes().isEmpty()) collisions.add(new Collision(path, x, collisionY, tile));
         for (ResourceScript.Frame image : tile.images()) addTrack(path,
-                new ResourceScript.Animation(false, List.of(image), List.of()), x, y, 10, 0, 1, false);
+                new ResourceScript.Animation(false, List.of(image), List.of()), x, y, SceneScript.FLOOR_STAGE, 0, 1, false);
     }
     private void addTrack(String path, ResourceScript.Animation animation, double x, double y, int stage,
                           double depth, double scroll, boolean repeat) {
@@ -119,9 +186,13 @@ public final class ScenePreview {
     }
     private void addTrack(String path, ResourceScript.Animation animation, double x, double y, int stage,
                           double depth, double scroll, boolean repeat, boolean mirrored, int entity) {
+        addTrack(path, animation, x, y, stage, depth, scroll, repeat, mirrored, entity, 0);
+    }
+    private void addTrack(String path, ResourceScript.Animation animation, double x, double y, int stage,
+                          double depth, double scroll, boolean repeat, boolean mirrored, int entity, double repeatPeriod) {
         if (tracks.size() >= 8192) { warn("场景超过 8192 个图层，后续图层未加载"); return; }
         animation.warnings().forEach(warning -> warn(path + "：" + warning));
-        tracks.add(new Track(path, animation, new AnimationTimeline(animation), x, y, stage, depth, scroll, repeat, tracks.size(), mirrored, entity));
+        tracks.add(new Track(path, animation, new AnimationTimeline(animation), x, y, stage, depth, scroll, repeat, tracks.size(), mirrored, entity, repeatPeriod));
         // MAP extent comes from its tile rows: decorative/backdrop ANI may intentionally extend far outside it.
         if (!repeat && expandBounds) for (ResourceScript.Frame frame : animation.frames()) {
             if (frame.image().isEmpty()) continue;
@@ -198,8 +269,12 @@ public final class ScenePreview {
             }
             parts.sort(Comparator.comparingInt(IdlePart::layer));
             int stage = SceneScript.stage(new SceneScript.Placement("", definition.layer(), false, false, 0, 0, 0));
-            for (IdlePart part : parts) addTrack(part.path(), part.animation(), spawn.x(), SceneCoordinates.screenY(spawn.y(), spawn.z()), stage,
-                    spawn.y(), 1, false, spawn.mirrored(), index);
+            int period = kind == EntityScript.Kind.PASSIVE ? EntityScript.sceneryPeriod(resolved.text(), spawn.id()) : 0;
+            double scroll = scrolls.getOrDefault(definition.layer(), 1.0);
+            // Native creates translated animation copies at int data[0] intervals. Tile at paint time
+            // to also cover an overview wider than the native camera, retaining the ANI phase and anchor.
+            for (IdlePart part : parts) addTrack(part.path(), part.animation(), spawn.x(),
+                    SceneCoordinates.screenY(spawn.y(), spawn.z()), stage, spawn.y(), scroll, false, spawn.mirrored(), index, period);
             if (parts.isEmpty() && !particle && problem.isEmpty()) problem = "待机动画为空";
         } catch (IOException failure) { problem = failure.getMessage(); }
         if (!problem.isEmpty()) warn(spawn.label() + "：" + problem);
@@ -298,8 +373,8 @@ public final class ScenePreview {
                 PreviewRenderer.Prepared prepared = prepare(frame);
                 if (images.add(prepared.image())) imageBytes += bytes(prepared);
                 if (imageBytes > FRAME_LIMIT) { warn("当前场景像素超过 96 MiB，部分图层未显示"); continue; }
-                draws.add(new Draw(prepared, track.x(), track.y(), track.scroll(), track.repeat(), frame.scaleX(), frame.scaleY(),
-                        track.mirrored(), 1, track.stage(), track.depth(), track.order()));
+                draws.add(new Draw(prepared, track.x(), track.y(), track.scroll(), track.repeat() || track.repeatPeriod() > 0, frame.scaleX(), frame.scaleY(),
+                        track.mirrored(), 1, track.stage(), track.depth(), track.order(), track.repeatPeriod()));
                 if (track.entity() >= 0) {
                     Rectangle2D b = prepared.bounds(track.mirrored());
                     Rectangle2D world = new Rectangle2D.Double(track.x() + b.getX(),
@@ -328,7 +403,7 @@ public final class ScenePreview {
         }
         return new Rendered(List.copyOf(draws), List.copyOf(collisions), movable, bounds, milliseconds,
                 Map.copyOf(active), List.copyOf(warnings), tileCount, tracks.size(), List.copyOf(views),
-                (int) entities.stream().filter(entity -> entity.spawn().conditional()).count(), List.copyOf(objectCollisions), emitters.size(), particles.count);
+                (int) entities.stream().filter(entity -> entity.spawn().conditional()).count(), List.copyOf(objectCollisions), emitters.size(), particles.count, cameraLimits, town);
     }
 
     private final class ParticleRender {
@@ -392,7 +467,25 @@ public final class ScenePreview {
     public record Rendered(List<Draw> draws, List<Collision> collisions, List<Rectangle2D.Double> movable,
                            Rectangle2D bounds, long milliseconds, Map<String, Integer> activeFrames,
                            List<String> warnings, int tileCount, int trackCount, List<EntityView> entities, int conditionalCount,
-                           List<ObjectCollision> objectCollisions, int emitterCount, int particleCount) {
+                           List<ObjectCollision> objectCollisions, int emitterCount, int particleCount, SceneCamera.Limits cameraLimits, boolean town) {
+        /** Native viewport: only screen clipping, including scenery extending outside the tile images. */
+        public void paintClient(Graphics2D graphics, Rectangle viewport, double zoom, Point requestedCamera, boolean overlay, boolean markers) {
+            if (cameraLimits == null) throw new IllegalStateException("Client viewport requires a MAP");
+            Point camera = cameraLimits.clamp(requestedCamera.x, requestedCamera.y);
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                g.clip(viewport); g.setColor(Color.BLACK); g.fill(viewport);
+                for (Draw draw : draws) {
+                    double x = viewport.x - SceneCamera.layerOffset(camera.x, draw.scroll()) * zoom,
+                            y = viewport.y - camera.y * zoom;
+                    if (draw.repeat()) paintRepeated(g, viewport, draw, x, y, zoom);
+                    else draw.prepared().paint(g, x + draw.x() * zoom, y + draw.y() * zoom, zoom, draw.mirrored(), draw.opacity());
+                }
+                double ox = viewport.x - camera.x * zoom, oy = viewport.y - camera.y * zoom;
+                if (overlay) paintCollisions(g, viewport, ox, oy, zoom);
+                paintEntities(g, viewport, ox, oy, zoom, markers);
+            } finally { g.dispose(); }
+        }
         public void paint(Graphics2D graphics, Rectangle viewport, double ox, double oy, double zoom,
                           double panX, double panY, boolean overlay) {
             paint(graphics, viewport, ox, oy, zoom, panX, panY, overlay, false);
@@ -404,8 +497,12 @@ public final class ScenePreview {
                 Rectangle2D area = new Rectangle2D.Double(ox + panX + bounds.getX() * zoom,
                         oy + panY + bounds.getY() * zoom, bounds.getWidth() * zoom, bounds.getHeight() * zoom);
                 g.clip(area); Rectangle visible = viewport.intersection(area.getBounds());
+                // A fitted overview still has a camera: use the centered native 640x480 viewport.
+                // Centering and drag must both participate in parallax (0x4C4F20 / 0x4C4F60).
+                double cameraX = cameraLimits == null ? 0 : cameraLimits.maxX() / 2.0;
                 for (Draw draw : draws) {
-                    double x = ox + panX * draw.scroll(), y = oy + panY * draw.scroll();
+                    double x = ox + panX * draw.scroll() - cameraX * (draw.scroll() - 1) * zoom,
+                            y = oy + panY;
                     if (!draw.repeat()) draw.prepared().paint(g, x + draw.x() * zoom, y + draw.y() * zoom, zoom, draw.mirrored(), draw.opacity());
                     else paintRepeated(g, visible, draw, x, y, zoom);
                 }
@@ -437,6 +534,11 @@ public final class ScenePreview {
             Graphics2D g = (Graphics2D) graphics.create();
             try {
                 g.translate(ox, oy); g.scale(zoom, zoom);
+                g.setColor(new Color(70, 225, 240)); g.setStroke(new BasicStroke((float) (1.5 / zoom)));
+                for (Rectangle2D rectangle : movable) g.draw(rectangle);
+                // CNRDVirtualCharacter uses the virtual-area union, not TIL or object pass data (0x479EF0).
+                if (town) return;
+                g.setStroke(new BasicStroke());
                 Rectangle2D visible = new Rectangle2D.Double((viewport.x - ox) / zoom, (viewport.y - oy) / zoom,
                         viewport.width / zoom, viewport.height / zoom);
                 for (Collision collision : collisions) {
@@ -449,8 +551,7 @@ public final class ScenePreview {
                         if (zoom >= .7) { g.setColor(type == 1 ? new Color(255, 185, 60, 170) : new Color(255, 100, 100, 130)); g.draw(cell); }
                     }
                 }
-                g.setColor(new Color(70, 225, 240)); g.setStroke(new BasicStroke((float) (1.5 / zoom)));
-                for (Rectangle2D rectangle : movable) g.draw(rectangle);
+                g.setStroke(new BasicStroke((float) (1.5 / zoom)));
                 Set<EntityScript.Spawn> visibleSpawns = new HashSet<>(); entities.forEach(view -> visibleSpawns.add(view.info().spawn()));
                 for (var object : objectCollisions) {
                     if (!visibleSpawns.contains(object.spawn())) continue;
@@ -461,11 +562,15 @@ public final class ScenePreview {
             } finally { g.dispose(); }
         }
         public String collisionAt(double x, double y) {
+            if (town) {
+                if (movable.isEmpty()) return "城镇未配置 [virtual movable area] 可移动区域";
+                return movable.stream().anyMatch(area -> area.contains(x, y))
+                        ? "城镇可移动区域 · [virtual movable area]（青框，范围为所有区域的并集）" : "城镇可移动区域外 · [virtual movable area]";
+            }
             String object = objectCollisions.stream().filter(c -> c.bounds().contains(x, y)
                     && entities.stream().anyMatch(view -> view.info().spawn() == c.spawn())).map(c -> c.spawn().label() + " · " + c.path()
                     + " · 碰撞范围 " + c.width() + "×" + c.depth() + " · " + (c.pass() == 1 ? "仅浮空可通行" : "不可通行")).findFirst().orElse("");
             if (!object.isEmpty()) return object;
-            if (movable.stream().anyMatch(area -> area.contains(x, y))) return "城镇可移动区域 · [virtual movable area]（蓝框）";
             for (Collision collision : collisions) {
                 int column = (int) Math.floor((x - collision.x()) / SceneCoordinates.CELL_WIDTH),
                         row = (int) Math.floor((y - collision.y()) / SceneCoordinates.CELL_HEIGHT);
@@ -479,16 +584,17 @@ public final class ScenePreview {
         }
     }
     private static void paintRepeated(Graphics2D g, Rectangle viewport, Draw draw, double ox, double oy, double zoom) {
-        var prepared = draw.prepared(); var bounds = prepared.bounds();
-        double width = prepared.source().canvasWidth() * Math.abs(draw.scaleX());
+        var prepared = draw.prepared(); var bounds = prepared.bounds(draw.mirrored());
+        double width = draw.repeatPeriod() > 0 ? draw.repeatPeriod() : prepared.source().canvasWidth() * Math.abs(draw.scaleX());
         if (width <= 0 || bounds.getWidth() == 0 || bounds.getHeight() == 0) return;
+        ox += draw.x() * zoom; oy += draw.y() * zoom;
         double left = (viewport.x - ox) / zoom, right = left + viewport.width / zoom;
         long startX = (long) Math.floor((left - bounds.getMaxX()) / width) + 1;
         long endX = (long) Math.ceil((right - bounds.getMinX()) / width) - 1;
         int count = 0;
         for (long x = startX; x <= endX; x++) {
             if (++count > 8192) return;
-            prepared.paint(g, ox + x * width * zoom, oy, zoom);
+            prepared.paint(g, ox + x * width * zoom, oy, zoom, draw.mirrored(), draw.opacity());
         }
     }
     public record Collision(String path, double x, double y, SceneScript.Tile tile) {}
@@ -496,7 +602,11 @@ public final class ScenePreview {
         public Rectangle2D.Double bounds() { return new Rectangle2D.Double(spawn.x() - width / 2, SceneCoordinates.screenY(spawn.y(), 0) - depth / 2, width, depth); }
     }
     public record Draw(PreviewRenderer.Prepared prepared, double x, double y, double scroll,
-                       boolean repeat, double scaleX, double scaleY, boolean mirrored, double opacity, int stage, double depth, int order) {
+                       boolean repeat, double scaleX, double scaleY, boolean mirrored, double opacity, int stage, double depth, int order, double repeatPeriod) {
+        public Draw(PreviewRenderer.Prepared prepared, double x, double y, double scroll, boolean repeat, double scaleX, double scaleY,
+                    boolean mirrored, double opacity, int stage, double depth, int order) {
+            this(prepared, x, y, scroll, repeat, scaleX, scaleY, mirrored, opacity, stage, depth, order, 0);
+        }
         public Draw(PreviewRenderer.Prepared prepared, double x, double y, double scroll, boolean repeat, double scaleX, double scaleY, boolean mirrored) {
             this(prepared, x, y, scroll, repeat, scaleX, scaleY, mirrored, 1, 0, 0, 0);
         }
@@ -504,7 +614,7 @@ public final class ScenePreview {
     public record EntityInfo(EntityScript.Spawn spawn, String definition, List<String> animations, String problem) {}
     public record EntityView(EntityInfo info, Rectangle2D bounds, String problem) {}
     private record Track(String path, ResourceScript.Animation animation, AnimationTimeline timeline, double x, double y,
-                         int stage, double depth, double scroll, boolean repeat, int order, boolean mirrored, int entity) {}
+                         int stage, double depth, double scroll, boolean repeat, int order, boolean mirrored, int entity, double repeatPeriod) {}
     private record IdlePart(String path, ResourceScript.Animation animation, int layer) {}
     private record Gear(String path, EntityScript.Part part, List<Integer> variation) {}
     private record ParticleVisual(List<IdlePart> parts, List<AnimationTimeline> timelines, int stage, double scroll, EmitterVisual child) {}

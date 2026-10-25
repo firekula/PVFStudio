@@ -101,13 +101,20 @@ class ParticlePreviewTest {
         Map<String, String> files = base(); files.put("passiveobject/passiveobject.lst", "40 `solid.obj`");
         files.put("passiveobject/solid.obj", "[width] 20 10 [pass type] `[do not pass]` [basic motion] `solid.ani`");
         files.put("passiveobject/solid.ani", "[FRAME000] [IMAGE] `dot.img` 0");
-        var f = ScenePreview.load("map/a.map", "[tile] `a.til` [/tile]\n[passive object]\n40 40 50 0\n[/passive object] "
-                + "[virtual movable area] 100 100 20 20 [/virtual movable area]", files::get, sprites()).render(0, false);
+        String map = "[tile] `a.til` [/tile]\n[passive object]\n40 40 50 0\n[/passive object] ";
+        var f = ScenePreview.load("map/a.map", map, files::get, sprites()).render(0, false);
         assertEquals(new java.awt.geom.Rectangle2D.Double(30, 165, 20, 10), f.objectCollisions().get(0).bounds());
-        assertTrue(f.collisionAt(35, 170).contains("被动对象 #40")); assertTrue(f.collisionAt(110, 230).contains("城镇可移动区域"));
+        assertTrue(f.collisionAt(35, 170).contains("被动对象 #40"));
         BufferedImage image = new BufferedImage(224, 480, BufferedImage.TYPE_INT_ARGB); var g = image.createGraphics();
         f.paint(g, new Rectangle(0, 0, 224, 480), 0, 0, 1, 0, 0, false); assertEquals(0, image.getRGB(32, 170));
         f.paint(g, new Rectangle(0, 0, 224, 480), 0, 0, 1, 0, 0, true); g.dispose(); assertNotEquals(0, image.getRGB(32, 170));
+        var town = ScenePreview.load("map/a.map", map + "[virtual movable area] 25 40 100 100 [/virtual movable area]",
+                files::get, sprites()).render(0, false);
+        assertTrue(town.collisionAt(35, 170).contains("城镇可移动区域 ·")); // footprint must not override the town area
+        image = new BufferedImage(224, 480, BufferedImage.TYPE_INT_ARGB); g = image.createGraphics();
+        town.paint(g, new Rectangle(0, 0, 224, 480), 0, 0, 1, 0, 0, true); g.dispose();
+        assertEquals(0, image.getRGB(32, 170));
+        assertNotEquals(0, image.getRGB(25, 180));
     }
     @Test void equipmentWaitingMotionKeepsItsOwnLayerAndSupportsSeveralWaitingLayers() throws Exception {
         var gear = EntityScript.equipment("[LAYER] -200 [waiting motion] `back.ani` [LAYER] 400 [attack motion] `hit.ani` [/attack motion]");

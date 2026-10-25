@@ -36,9 +36,11 @@ class SceneScriptTest {
         assertTrue(SceneScript.stage(map.animations().get(0)) < 10);
         assertTrue(SceneScript.stage(map.animations().get(1)) > SceneScript.stage(map.animations().get(2)));
     }
-    @Test void closeBelowBackgroundIsBeforeTileAndIncompleteMapEditsFailClearly() throws Exception {
+    @Test void nativeCloseForegroundStaysAfterFloorAndIncompleteMapEditsFailClearly() throws Exception {
         var placement = new SceneScript.Placement("fog.ani", "close", true, false, 0, 0, 0);
-        assertEquals(9, SceneScript.stage(placement));
+        assertTrue(SceneScript.stage(placement) > SceneScript.FLOOR_STAGE);
+        assertTrue(SceneScript.stage(new SceneScript.Placement("", "closeback", true, false, 0, 0, 0)) < SceneScript.FLOOR_STAGE);
+        assertTrue(SceneScript.stage(new SceneScript.Placement("", "closeback", false, false, 0, 0, 0)) > SceneScript.FLOOR_STAGE);
         assertThrows(IOException.class, () -> SceneScript.map("[tile] `a.til` [/tile] [animation] `a.ani` `[normal]` 2 3 [/animation]"));
         assertThrows(IOException.class, () -> SceneScript.map("[tile] `a.til` [/tile] [animation] `a.ani` `[bogus]` 1 2 3 [/animation]"));
     }

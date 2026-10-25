@@ -4,6 +4,7 @@ import com.intellij.diff.DiffContentFactory;
 import com.intellij.diff.DiffManager;
 import com.intellij.diff.DiffRequestPanel;
 import com.intellij.diff.requests.SimpleDiffRequest;
+import com.intellij.find.EditorSearchSession;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
@@ -117,11 +118,13 @@ final class PvfStudioFrame extends JFrame {
     private EditorSessionState lastQueuedState;
     private Path lastQueuedStateDirectory;
     private long searchVersion;
+    private PvfSearchDialog contentSearch;
 
     PvfStudioFrame() { this(null, true); }
 
     PvfStudioFrame(Path draftsRoot, boolean exitOnClose) {
         super("PVF Studio");
+        setGlassPane(new com.intellij.openapi.wm.impl.IdeGlassPaneImpl(getRootPane(), false));
         this.draftsRoot = draftsRoot; this.exitOnClose = exitOnClose;
         recentFile = (draftsRoot == null ? Path.of(System.getProperty("user.home"), ".pvf-studio") : draftsRoot)
                 .resolve("recent-files.properties");
@@ -193,7 +196,10 @@ final class PvfStudioFrame extends JFrame {
         configureMenuBar();
         loadRecentArchives();
         addWindowListener(new WindowAdapter() {
-            public void windowClosing(WindowEvent e) { requestClose(); }
+            public void windowClosing(WindowEvent e) {
+                // Native WINDOW_CLOSING is dispatched without the editor's read lock, unlike menu actions.
+                com.intellij.openapi.application.WriteIntentReadAction.run((Runnable) PvfStudioFrame.this::requestClose);
+            }
         });
         previewRefresh.setRepeats(false);
         sessionSave.setRepeats(false);
@@ -275,8 +281,12 @@ final class PvfStudioFrame extends JFrame {
         editorCommand(editMenu, "复制", IdeActions.ACTION_EDITOR_COPY, KeyEvent.VK_C, InputEvent.CTRL_DOWN_MASK, false);
         editorCommand(editMenu, "粘贴", IdeActions.ACTION_EDITOR_PASTE, KeyEvent.VK_V, InputEvent.CTRL_DOWN_MASK, true);
         editMenu.addSeparator();
-        editorCommand(editMenu, "查找", IdeActions.ACTION_FIND, KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK, false);
-        editorCommand(editMenu, "替换", IdeActions.ACTION_REPLACE, KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK, true);
+        bindWindowAction("find", () -> findInEditor(false), key(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK));
+        bindWindowAction("replace", () -> findInEditor(true), key(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK));
+        command(editMenu, "查找", "find", () -> selectedSession() != null, KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK));
+        command(editMenu, "替换", "replace", () -> selectedSession() != null && !selectedSession().editor.isViewer(), KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK));
+        bindWindowAction("global-search", this::showContentSearch, key(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+        command(editMenu, "全局搜索…", "global-search", () -> workspace != null, KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
 
         JMenu selectionMenu = menu(bar, "选择(S)", KeyEvent.VK_S);
         editorCommand(selectionMenu, "全选", IdeActions.ACTION_SELECT_ALL, KeyEvent.VK_A, InputEvent.CTRL_DOWN_MASK, false);
@@ -342,6 +352,45 @@ final class PvfStudioFrame extends JFrame {
                 DataManager.getInstance().getDataContext(selected.editor.getContentComponent()), null,
                 ActionPlaces.MAIN_MENU, ActionUiKind.MAIN_MENU, null);
         action.update(event); if (event.getPresentation().isEnabled()) action.actionPerformed(event);
+    }
+
+    private void findInEditor(boolean replace) {
+        Session selected = selectedSession(); if (selected == null || replace && selected.editor.isViewer()) return;
+        EditorSearchSession search = EditorSearchSession.get(selected.editor);
+        if (search == null) search = EditorSearchSession.start(selected.editor, selected.editor.getProject());
+        search.getFindModel().setReplaceState(replace);
+        search.getComponent().update(search.getFindModel().getStringToFind(), search.getFindModel().getStringToReplace(), replace, false);
+        search.getComponent().requestFocusInTheSearchFieldAndSelectContent(selected.editor.getProject());
+    }
+
+    private void showContentSearch() {
+        if (workspace == null) return;
+        if (contentSearch == null || !contentSearch.isDisplayable()) contentSearch = new PvfSearchDialog(this, io, workspace,
+                selectedCharset(), () -> {
+                    Map<String, PvfSearchDialog.Source> sources = new HashMap<>();
+                    sessions.forEach((path, session) -> sources.put(path, new PvfSearchDialog.Source(session.editor.getDocument().getText(), session.charset)));
+                    return sources;
+                }, this::openSearchHit);
+        contentSearch.setVisible(true); contentSearch.toFront();
+        Session selected = selectedSession(); contentSearch.focusQuery(selected == null ? null : selected.editor.getSelectionModel().getSelectedText());
+    }
+    private void openSearchHit(studio.pvf.workspace.PvfTextSearch.Hit hit, Charset charset, String query, boolean matchCase) {
+        if (workspace == null || busy) return;
+        Consumer<Session> navigate = session -> {
+            tabs.setSelectedComponent(session.editor.getComponent());
+            String text = session.editor.getDocument().getText();
+            if (hit.end() > text.length() || !text.regionMatches(!matchCase, hit.start(), query, 0, query.length())) {
+                status.setText("搜索后正文已变化，请重新搜索：" + hit.path()); return;
+            }
+            session.editor.getCaretModel().moveToOffset(hit.start()); session.editor.getSelectionModel().setSelection(hit.start(), hit.end());
+            session.editor.getScrollingModel().scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER);
+            toFront(); focusSelectedEditor();
+        };
+        Session existing = sessions.get(hit.path()); if (existing != null) { navigate.accept(existing); return; }
+        PvfWorkspace current = workspace;
+        runTask("读取搜索结果…", () -> readEditorText(current, hit.path(), charset), raw -> {
+            createSession(hit.path(), charset, raw, null); navigate.accept(sessions.get(hit.path()));
+        });
     }
     private boolean undoAvailable(boolean redo) {
         Session selected = selectedSession(); if (selected == null) return false;
@@ -512,6 +561,7 @@ final class PvfStudioFrame extends JFrame {
     }
 
     private void doOpenArchive(Path archive) {
+        if (contentSearch != null) { contentSearch.dispose(); contentSearch = null; }
         PvfWorkspace previous = workspace;
         EditorSessionState previousState = captureEditorState();
         pauseEditorState();
@@ -1008,6 +1058,7 @@ final class PvfStudioFrame extends JFrame {
     }
 
     private void closeNow() {
+        if (contentSearch != null) { contentSearch.dispose(); contentSearch = null; }
         EditorSessionState state = captureEditorState(); Path directory = workspace == null ? null : workspace.directory();
         RecentArchives history = recentArchives;
         pauseEditorState();
@@ -1016,6 +1067,7 @@ final class PvfStudioFrame extends JFrame {
     }
 
     private void finishClose() {
+        if (contentSearch != null) contentSearch.dispose();
         preview.close();
         releaseEditors();
         try { if (workspace != null) workspace.close(); } catch (IOException e) { showError(e); }
@@ -1035,6 +1087,7 @@ final class PvfStudioFrame extends JFrame {
     }
 
     private void releaseSession(Session session) {
+        EditorSearchSession search = EditorSearchSession.get(session.editor); if (search != null) search.close();
         tabShortcuts.keySet().forEach(action -> action.unregisterCustomShortcutSet(session.editor.getComponent()));
         if (session.saveAction != null) session.saveAction.unregisterCustomShortcutSet(session.editor.getComponent());
         if (session.undoAction != null) session.undoAction.unregisterCustomShortcutSet(session.editor.getComponent());

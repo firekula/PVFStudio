@@ -9,6 +9,7 @@ import java.util.Locale;
 /** ACT1 map/tile layout; pass cells are 16 by 12 world pixels, below the 120-pixel image header. */
 public final class SceneScript {
     public static final int CELL = 16, COLUMNS = 14, TILE_WIDTH = CELL * COLUMNS;
+    public static final int FLOOR_STAGE = 7;
     private SceneScript() {}
 
     public static Tile tile(String text) throws IOException {
@@ -48,7 +49,7 @@ public final class SceneScript {
     public static MapLayout map(String text) throws IOException {
         List<String> tiles = new ArrayList<>(), extended = new ArrayList<>();
         List<Placement> animations = new ArrayList<>(); List<Rectangle2D.Double> movable = new ArrayList<>();
-        double far = 1, middle = 1, near = 1;
+        double far = 1, middle = 1, near = 1; boolean town = false;
         for (var section : ResourceScript.sections(text)) {
             switch (section.tag()) {
                 case "tile", "extended tile" -> {
@@ -74,6 +75,7 @@ public final class SceneScript {
                     }
                 }
                 case "virtual movable area" -> {
+                    town |= !section.values().isEmpty();
                     if (section.values().size() % 4 != 0) throw error(section, "移动区域需要 x、y、宽、高");
                     for (int i = 0; i < section.values().size(); i += 4) {
                         double width = number(section, i + 2), height = number(section, i + 3);
@@ -81,6 +83,7 @@ public final class SceneScript {
                         movable.add(new Rectangle2D.Double(number(section, i), number(section, i + 1), width, height));
                     }
                 }
+                case "town movable area" -> town |= !section.values().isEmpty();
                 case "far sight scroll" -> far = number(section, 0) / 100;
                 case "middle sight scroll" -> middle = number(section, 0) / 100;
                 case "near sight scroll" -> near = number(section, 0) / 100;
@@ -92,7 +95,7 @@ public final class SceneScript {
         if (tiles.isEmpty()) throw new IOException("MAP 没有基础地块，无法确定扩展地块的行宽");
         if (far < 0 || middle < 0 || near < 0 || far > 10 || middle > 10 || near > 10)
             throw new IOException("地图滚动比例超出预览范围 0–1000%");
-        return new MapLayout(List.copyOf(tiles), List.copyOf(extended), List.copyOf(animations), List.copyOf(movable), far, middle, near);
+        return new MapLayout(List.copyOf(tiles), List.copyOf(extended), List.copyOf(animations), List.copyOf(movable), far, middle, near, town);
     }
 
     public static int stage(Placement placement) {
@@ -105,8 +108,9 @@ public final class SceneScript {
             case "close" -> 17;
             default -> throw new IllegalArgumentException(placement.layer());
         };
-        // The map sample explicitly places close/below backgrounds before the tile floor.
-        if (placement.repeat() && placement.layer().equals("close") && !placement.upper()) return 9;
+        // 0x463940 draws the floor in closeback/below, before closeback objects and upper backgrounds.
+        if (placement.layer().equals("closeback"))
+            return base + (placement.repeat() ? (placement.upper() ? 3 : 0) : 2);
         return placement.repeat() ? base + (placement.upper() ? 2 : 0) : base + 1;
     }
     public static String flag(String value) { return value.replace("[", "").replace("]", "").toLowerCase(Locale.ROOT).trim(); }
@@ -136,5 +140,5 @@ public final class SceneScript {
     }
     public record Placement(String path, String layer, boolean repeat, boolean upper, double x, double y, double z) {}
     public record MapLayout(List<String> tiles, List<String> extended, List<Placement> animations,
-                            List<Rectangle2D.Double> movable, double farScroll, double middleScroll, double nearScroll) {}
+                            List<Rectangle2D.Double> movable, double farScroll, double middleScroll, double nearScroll, boolean town) {}
 }

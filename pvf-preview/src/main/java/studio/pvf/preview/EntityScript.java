@@ -144,6 +144,16 @@ public final class EntityScript {
         if (initial < 0) throw new IOException("粒子初始时间不能为负数");
         return new Factory(path, initial, integers.size() > 2 && integer(integers, 2) == 1);
     }
+    /** 0x56E6A0 -> 0x56DBC0 / 0x578AF0: native scrolling scenery, not a particle emitter. */
+    public static int sceneryPeriod(String text, int id) throws IOException {
+        if (id < 333 || id > 337) return 0;
+        for (var section : ResourceScript.sections(text)) if (section.tag().equals("int data")) {
+            int period = integer(section.values(), 0);
+            if (period < 0 || period > 1_000_000) throw new IOException("背景平铺间距超出范围");
+            return period;
+        }
+        return 0;
+    }
     static int integer(List<String> fields, int index) throws IOException {
         try { return Integer.parseInt(fields.get(index)); }
         catch (NumberFormatException | IndexOutOfBoundsException failure) { throw new IOException("需要整数参数"); }

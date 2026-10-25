@@ -2,7 +2,7 @@
 
 基于 IntelliJ 平台的独立 PVF 编辑器，面向 DNF ACT1 `DNF_SCRIPT_PACK` 配置包，提供目录浏览、脚本编辑、草稿恢复、差异比较和保真导出。核心与 CLI 可独立使用。
 
-当前发布版本为 **[v0.10.0](https://github.com/firekula/PVFStudio/releases/tag/v0.10.0)**，支持 NPK 图片与动画、MAP/TIL 完整场景、实体和粒子预览，以及菜单、最近文件和标签会话恢复。产品基于 IntelliJ Platform，使用自己的产品描述、入口和主模块，随包提供按依赖选取的平台库与无 JCEF 的 JBR 21。无需安装 IDEA，也不再加载单独的 PVF 插件。版本变化见 [Changelog](CHANGELOG.md)。
+当前发布版本为 **[v0.11.0](https://github.com/firekula/PVFStudio/releases/tag/v0.11.0)**，增加 DGN 副本布局与房间门预览、文件内及全局搜索，并修正地图层级、背景平铺、客户端视口和城镇通行范围。已有 NPK 图片与动画、MAP/TIL 场景、实体和粒子预览、菜单、最近文件及标签会话功能继续保留。产品基于 IntelliJ Platform，使用自己的产品描述、入口和主模块，随包提供按依赖选取的平台库与无 JCEF 的 JBR 21。无需安装 IDEA。版本变化见 [Changelog](CHANGELOG.md)。
 
 ## 已有功能
 
@@ -10,13 +10,16 @@
 - 目录树按需展开，按虚拟路径搜索，按需读取条目内容。
 - 文件树按文件夹、脚本、列表、文本、配置及资源类型显示矢量图标；仅选中行显示选中高亮，其余行与空白区域背景一致。
 - 使用 IntelliJ 文本编辑器，支持脚本着色、撤销/重做及原文差异比较。
+- Ctrl+F / Ctrl+H 打开文件内查找/替换；Ctrl+Shift+F 后台搜索整个 PVF 正文，包含草稿和未保存编辑，支持路径过滤、编码、取消和结果定位。
 - 选择客户端或 ImagePacks2 目录，按配置中的 IMG 路径、帧号渲染资源；支持 ANI 播放、暂停、逐帧、时间轴、倍速、循环及缩放。
 - 图标、场景图片及 ANI 引用共用资源预览面板；编辑尚未保存的配置或被引用 ANI 时自动刷新，支持装备外观路径的数字占位符。
 - MAP 组合基础/扩展 TIL、分层 ANI 及重复背景；TIL 通行格可手动叠加，区分禁行与仅浮空可通行，并显示城镇移动区域。
+- DGN 副本预览提供布局图、起点/Boss 与房间 MAP 候选选择；按实际连接创建普通门、Boss 门和墙体，支持清房状态、原生门动画与通行格合并。详见 [副本预览](docs/dungeon-preview.md)。
 - 地图动画使用持续前进的公共时钟，各自按 DELAY/LOOP 独立播放；支持暂停、定位、倍速、拖动平移、滚轮缩放和滚动视差。
+- MAP 客户端视口按 640×480 显示，带边框、外围遮罩与相机坐标；按原生地块范围限制滚动，缩放及调整窗口大小保持相机位置。
 - NPC、怪物和被动对象按 MAP 中的位置播放待机，支持 NPC 朝向、原生多部位装配、装备层级、对象标记及条件怪物开关；无待机或缺资源时保留位置与诊断。
 - 地图粒子和独立 PTL 可直接预览，支持 ANI、IMG 和被动对象粒子、运动/寿命/透明度及稳定时间采样。
-- 碰撞叠加层同时标记 TIL 通行格、被动物品占用范围与城镇蓝框可移动区域。
+- 地下城碰撞层显示 TIL 通行格与被动对象占用范围；城镇只显示青色可移动区域。
 - 标签固定单行顺序，提供右键菜单与 VS Code 快捷键；同一 PVF 重开时恢复标签、排列、编码、光标和横纵滚动位置。
 - 手动选择 GBK/CP936、MS949/CP949 或 UTF-8，严格转换编码并保持支持的原始换行。
 - Ctrl+S 保存独立草稿，重新打开同一原包时恢复已保存的修改。
@@ -28,10 +31,11 @@
 
 ## 近期迭代
 
-0.10.0 是自 0.2.1 后的集中发布，包含以下开发迭代；逐项变化见 [Changelog](CHANGELOG.md)。
+0.11.0 增加副本预览和搜索，修正客户端地图显示与窗口关闭。0.10.0 是自 0.2.1 后的集中发布，包含 0.3.0～0.9.0 的开发迭代；逐项变化见 [Changelog](CHANGELOG.md)。
 
 | 版本 | 主要变化 |
 | --- | --- |
+| 0.11.0 | DGN 布局与原生门、全文搜索、地图修正和带边界的客户端视口 |
 | 0.10.0 | 顶部菜单、持久化最近 PVF 列表、编辑与导航命令 |
 | 0.9.0 | 按 PVF 恢复标签顺序、当前标签、编码、光标与滚动 |
 | 0.8.0 | 固定单行标签、右键菜单、拖动与 VS Code 快捷键 |
@@ -45,9 +49,9 @@
 
 ## 快速开始
 
-Windows 10/11 x64 用户可从 [v0.10.0 Release](https://github.com/firekula/PVFStudio/releases/tag/v0.10.0) 下载 [EXE 安装包](https://github.com/firekula/PVFStudio/releases/download/v0.10.0/PVFStudio-0.10.0-windows-x64-setup.exe)，按向导安装后从开始菜单启动；安装器默认仅安装到当前用户目录，无需管理员权限，可选创建桌面快捷方式。
+Windows 10/11 x64 用户可从 [v0.11.0 Release](https://github.com/firekula/PVFStudio/releases/tag/v0.11.0) 下载 [EXE 安装包](https://github.com/firekula/PVFStudio/releases/download/v0.11.0/PVFStudio-0.11.0-windows-x64-setup.exe)，按向导安装后从开始菜单启动；安装器默认仅安装到当前用户目录，无需管理员权限，可选创建桌面快捷方式。
 
-也可使用完整的 [便携 ZIP](https://github.com/firekula/PVFStudio/releases/download/v0.10.0/PVFStudio-0.10.0-windows-x64-portable.zip)，解压后双击其中的 `PVFStudio/PVFStudio.exe`，直接打开编辑器，不会弹出命令行窗口。便携目录只包含以下两项，请一起保留、移动：
+也可使用完整的 [便携 ZIP](https://github.com/firekula/PVFStudio/releases/download/v0.11.0/PVFStudio-0.11.0-windows-x64-portable.zip)，解压后双击其中的 `PVFStudio/PVFStudio.exe`，直接打开编辑器，不会弹出命令行窗口。便携目录只包含以下两项，请一起保留、移动：
 
 ```text
 PVFStudio/
@@ -57,14 +61,14 @@ PVFStudio/
 
 两种发行包均自带运行时，不需要另装 Java、IDEA 或 Visual C++ 运行库，不包含游戏 PVF。开发文档、验证记录、截图、README 和 Changelog 仅保留在源码仓库，发行包中保留必要的许可证及第三方声明。
 
-下载后的文件可用 [SHA-256 校验文件](https://github.com/firekula/PVFStudio/releases/download/v0.10.0/PVFStudio-0.10.0-SHA256SUMS.txt) 核对。
+下载后的文件可用 [SHA-256 校验文件](https://github.com/firekula/PVFStudio/releases/download/v0.11.0/PVFStudio-0.11.0-SHA256SUMS.txt) 核对。
 
 在源码目录中已经构建产品时，也可以这样启动：
 
 ```powershell
-.\pvf-product\build\product\PVFStudio-0.10.0\PVFStudio.exe
+.\pvf-product\build\product\PVFStudio-0.11.0\PVFStudio.exe
 # 直接打开一个外部 PVF，带空格的路径加引号。
-.\pvf-product\build\product\PVFStudio-0.10.0\PVFStudio.exe 'G:\path\Script.pvf'
+.\pvf-product\build\product\PVFStudio-0.11.0\PVFStudio.exe 'G:\path\Script.pvf'
 ```
 
 1. 选择“文件 → 打开 PVF…”（Ctrl+O），或“文件 → 打开最近的文件”（Ctrl+R）；左侧显示目录树，也可输入路径片段搜索。
@@ -85,11 +89,21 @@ PVFStudio/
 
 ### MAP/TIL 场景与碰撞层（0.4.0）
 
-打开 `.map` 或 `.til` 后，下拉框默认选择“完整场景”。MAP 将基础地块横向拼接，扩展地块接在下方并换行，同时加载 `[animation]` 与 `[background animation]`；保留层顺序、坐标、Z 高度和重复背景。点“碰撞区域”可开关 TIL 通行格：红色为 2（禁行），橙色为 1（仅浮空单位可通行），0 保持透明；悬停查看来源文件和格坐标。蓝框显示城镇 `[virtual movable area]` 的可移动区域；同一叠加层还会标记带碰撞属性的被动对象。
+打开 `.map` 或 `.til` 后，下拉框默认选择“完整场景”。MAP 将基础地块横向拼接，扩展地块接在下方并换行，同时加载 `[animation]` 与 `[background animation]`；保留层顺序、坐标、Z 高度和重复背景。点“碰撞区域”可开关 TIL 通行格：红色为 2（禁行），橙色为 1（仅浮空单位可通行），0 保持透明；悬停查看来源文件和格坐标，同一叠加层还会标记带碰撞属性的被动对象。城镇只显示 `[virtual movable area]` 的青色边框。需要副本排列和门状态时打开 `.dgn`，使用 [副本预览](docs/dungeon-preview.md)。
 
 点击播放后场景时间持续前进，各 ANI 根据自己的帧延时和循环属性采样；非循环动画结束后停在末帧。“强制循环”可让它们也分别循环。时间轴以滚动的 60 秒窗口定位，跨分钟继续播放；箭头按 16 ms 步进。支持拖动平移、滚轮围绕鼠标缩放，以及 25%–400% 缩放。地图中的远/中/近景滚动比例在拖动时生效。修改未保存的引用 TIL 或 ANI 后，场景重新读取编辑器快照。
 
 此模式展示 MAP/TIL/ANI 中定义的场景与通行数据；0.5.0 增加下述实体待机预览，尚未执行实体的 AI 和动态碰撞逻辑。0.6.0 的地图坐标和部件装配依据原生客户端函数修正，细节见 [地图场景说明](docs/map-scene-preview.md)。
+
+### DGN 副本与房间（0.11.0）
+
+打开 `.dgn` 后默认显示副本布局。切换 DGN 中的不同布局，选择起点和 Boss，点击布局图查看对应房间；下拉框可逐个检查该房间的 MAP 候选。“换一组房间”生成另一套可复现方案，不改变当前布局和起点/Boss。
+
+预览按连接方向加入普通门、Boss 门及墙体，并合并门自带的通行格。“房间已清理”和“Boss 条件已满足”控制门状态，点击播放或拖动时间轴可检查原生开闭动画。清房、入口条件是手动预览状态，不执行 AI、战斗，也不恢复某次在线会话的随机结果。详见 [副本预览](docs/dungeon-preview.md)。
+
+### 文件内与全局搜索（0.11.0）
+
+Ctrl+F / Ctrl+H 打开当前文件的查找/替换栏；Ctrl+Shift+F 搜索整个 PVF 的正文，包含草稿和未保存内容。全局搜索支持路径包含、大小写和编码选择，结果显示文件及行列位置，双击可精确跳转；支持取消，最多显示 5000 个结果。
 
 ### NPC、怪物与被动对象（0.5.0）
 
@@ -113,6 +127,8 @@ PVFStudio/
 
 从 0.2.x 或本地 0.3.0～0.9.0 升级到 0.10.0 前，请先关闭旧版。便携版解压到新目录，安装版运行新版安装器；用户目录中的草稿、资源目录关联和已有标签会话继续保留。0.3.0～0.9.0 为本轮开发迭代，本次统一收入 0.10.0，未单独发布二进制版本。
 
+升级到 0.11.0 时同样先关闭旧版。便携版解压到新目录，安装版运行 0.11.0 安装器；继续使用原有用户目录中的草稿、资源目录关联和标签会话，无需重新导入。
+
 ## 支持范围与限制
 
 当前支持已验证的 ACT1 `DNF_SCRIPT_PACK` 样本，仅修改现有条目，不支持新增、删除、重命名条目或其他未经验证的 PVF 变体。F 盘腾讯目录中的原包与已有仓库样本逐字节相同，不代表新增了另一种格式版本支持。
@@ -121,7 +137,7 @@ PVFStudio/
 
 文本编辑保持 CRLF、LF、CR 及是否有文件末尾换行；混合换行条目暂只读，含 NUL 的内容拒绝文本编辑。编码由用户明确选择，不能无损解码或编码时报告错误。
 
-当前按固定平台版本的模块依赖和基础服务声明组装，不包含 Java/Kotlin/Gradle/Git 等语言及工程插件。上游公共 JAR 内仍有共用基础实现，没有做逐类裁剪，也没有重编全部上游源码。支持当前编辑器内的查找/替换；尚未提供跨条目的全文搜索、智能补全、引用跳转或专用配置表单。脚本可读写不代表客户端已实现其中引用的所有职业或技能。
+当前按固定平台版本的模块依赖和基础服务声明组装，不包含 Java/Kotlin/Gradle/Git 等语言及工程插件。上游公共 JAR 内仍有共用基础实现，没有做逐类裁剪，也没有重编全部上游源码。支持文件内查找/替换和跨条目的全文搜索；尚未提供智能补全、引用跳转或专用配置表单。脚本可读写不代表客户端已实现其中引用的所有职业或技能。
 
 ## 从源码构建
 
@@ -162,17 +178,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build-release.ps1 -Z
 
 脚本先准备固定平台与 vanilla JBR，执行 JVM 检查并构建原生 EXE 和产品主模块。产品通过身份、核心类加载器、基础设置服务及无额外插件的启动检查后，才生成 ZIP、安装器与校验文件。可用 `-IntellijLocalPath` 复用固定基线的 Community SDK，不能使用 IU 宿主分发。
 
-默认产品目录包含版本号。也可用 `-StandaloneDirectory 'G:\path\PVFStudio-0.10.0'` 将新便携目录装配到独立位置，避免更新正在使用的程序文件。
+默认产品目录包含版本号。也可用 `-StandaloneDirectory 'G:\path\PVFStudio-0.11.0'` 将新便携目录装配到独立位置，避免更新正在使用的程序文件。
 
 将 `pvf-product/build/distributions/` 中本次生成的以下文件添加到同一 Release，版本号随根项目的 `version` 更新：
 
-- `PVFStudio-0.10.0-windows-x64-setup.exe`：单文件安装器，安装、开始菜单入口、可选桌面入口和卸载。
-- `PVFStudio-0.10.0-windows-x64-portable.zip`：解压运行的完整便携包。
-- `PVFStudio-0.10.0-SHA256SUMS.txt`：本次构建的 SHA-256 摘要；用 `Get-FileHash <文件> -Algorithm SHA256` 核对。
+- `PVFStudio-0.11.0-windows-x64-setup.exe`：单文件安装器，安装、开始菜单入口、可选桌面入口和卸载。
+- `PVFStudio-0.11.0-windows-x64-portable.zip`：解压运行的完整便携包。
+- `PVFStudio-0.11.0-SHA256SUMS.txt`：本次构建的 SHA-256 摘要；用 `Get-FileHash <文件> -Algorithm SHA256` 核对。
 
 安装器是单个下载文件；便携版为原生 EXE 加一个 `app/` 目录，启动过程不依赖批处理或 PowerShell，也不会每次自解压。产品代码合并为 `app/lib/pvf-studio.jar`，随平台模块加载器进入核心类加载器；不再提供插件 ZIP 或完整 IDEA 宿主。当前 EXE 和安装器未配置代码签名。卸载保留用户目录中的 `.pvf-studio/` 草稿与设置。
 
 ## 验证状态
+
+0.11.0 通过 130 项 JVM 测试、14 项独立 Python 测试和完整产品检查。副本预览覆盖 43 个真实 DGN、49 套布局、178 组起点/Boss 组合及 242 个房间开闭状态；产品界面验证布局与 Boss 房切换、原生开闭门动画、清房状态保持相机、文件内和全局搜索、客户端视口边界及原生窗口关闭的保存/放弃/取消。发行 ZIP 完成全部 CRC 和内容检查，安装器与便携包提供 SHA-256。
 
 0.10.0 通过 110 项 JVM 测试和 14 项独立 Python 测试。完整产品检查验证资源与场景预览、粒子/碰撞、多部件怪物、标签操作、会话重开、菜单与最近文件，以及 48,326 条目 PVF 的编辑、导出、备份和恢复；普通 EXE 窗口验证了菜单及 Ctrl+O/Ctrl+R。安装器、便携 ZIP 和 SHA-256 文件随同发布，ZIP 的全部 CRC 与打包内容已检查。
 

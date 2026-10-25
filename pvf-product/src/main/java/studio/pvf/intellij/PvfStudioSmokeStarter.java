@@ -60,11 +60,15 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
             String entry = "creature/script/creature.lst";
             Path exported = output.resolve("IntelliJ-edited.pvf");
             Properties report = new Properties();
+            WindowCloseSmoke.run(archivePath, output);
+            report.setProperty("nativeWindowClose", "PASS: AWT native close, cancel, save/restore and discard");
             TabWorkbenchSmoke.run(archivePath, output);
             report.setProperty("tabWorkbench", "PASS: stable single row, context menu, close scopes, MRU/move/reopen actions, draft isolation and cancellation");
             EditorSessionSmoke.run(archivePath, output);
             report.setProperty("editorSession", "PASS: persistent order, active tab, encoding, caret, horizontal/vertical scroll, hidden tabs, archive isolation, empty session, missing entries and draft/discard separation");
             MenuWorkbenchSmoke.run(archivePath, output);
+            SearchWorkbenchSmoke.run(archivePath, output);
+            report.setProperty("contentSearch", "PASS: editor find/replace, Ctrl+F, draft/unsaved global scan and exact result navigation");
             report.setProperty("menuWorkbench", "PASS: native menu groups and commands, recent archives persistence/promotion/clear, reopening restores editor session");
             String npkDirectory = System.getProperty("pvf.preview.npk");
             if (npkDirectory != null) {

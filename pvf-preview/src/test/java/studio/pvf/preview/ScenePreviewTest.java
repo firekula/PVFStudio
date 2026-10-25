@@ -10,19 +10,100 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ScenePreviewTest {
+    @Test void clientVerticalLimitIsIndependentOfShorterBaseImageHeight() throws Exception {
+        var frame = ScenePreview.load("map/test.map", "[tile] `a.til` `a.til` [/tile] [extended tile] `e.til` `e.til` `e.til` [/extended tile]",
+                Map.of("map/a.til", "[pass type] " + "0 ".repeat(280), "map/e.til", tile("ext.img", true, 0))::get, new Images()).render(0, false);
+        assertEquals(480, frame.bounds().getHeight());
+        assertEquals(120, frame.cameraLimits().maxY()); assertEquals(0, frame.cameraLimits().maxX());
+    }
+    @Test void clientClipsToScreenInsteadOfTileExtentAndUsesIntegerHorizontalParallaxOnly() throws Exception {
+        var frame = ScenePreview.load("map/test.map", "[tile] `a.til` `a.til` `a.til` `a.til` [/tile] "
+                + "[extended tile] `a.til` `a.til` `a.til` `a.til` [/extended tile] [far sight scroll] 58 "
+                + "[animation] `a.ani` `[distantback]` 100 0 0 [/animation]",
+                Map.of("map/a.til", tile("", false, 0), "map/a.ani", ani("front.img", false, 100))::get, new Images()).render(0, false);
+        var image = new BufferedImage(680, 520, BufferedImage.TYPE_INT_RGB); var g = image.createGraphics();
+        g.setColor(Color.MAGENTA); g.fillRect(0, 0, 680, 520);
+        frame.paintClient(g, new Rectangle(20, 20, 640, 480), 1, new Point(50, 60), false, false); g.dispose();
+        assertEquals(Color.GREEN.getRGB(), image.getRGB(91, 80)); // 20 + 100 - (50*58/100), 20 + 120 - 60
+        assertEquals(Color.BLACK.getRGB(), image.getRGB(90, 80));
+        assertEquals(Color.MAGENTA.getRGB(), image.getRGB(19, 80));
+        var narrow = ScenePreview.load("map/test.map", "[tile] `a.til` [/tile] [animation] `a.ani` `[normal]` 300 0 0 [/animation]",
+                Map.of("map/a.til", tile("", false, 0), "map/a.ani", ani("front.img", false, 100))::get, new Images()).render(0, false);
+        g = image.createGraphics(); narrow.paintClient(g, new Rectangle(0, 0, 640, 480), 1, new Point(1000, 1000), false, false); g.dispose();
+        assertEquals(Color.GREEN.getRGB(), image.getRGB(300, 120)); // scenery beyond a 224-wide floor remains visible
+        assertEquals(Color.BLACK.getRGB(), image.getRGB(600, 400));
+    }
+    @Test void centeredCameraAndDragBothAffectForegroundParallaxButKeepWorldOverlayFixed() throws Exception {
+        Map<String, String> scripts = Map.of("map/a.til", tile("", false, 0), "map/gate.ani", ani("front.img", false, 100));
+        var frame = ScenePreview.load("map/test.map", "[tile] `a.til` `a.til` `a.til` `a.til` `a.til` [/tile] [near sight scroll] 200 "
+                + "[animation] `gate.ani` `[close]` 350 0 0 [/animation] [virtual movable area] 110 0 10 10 [/virtual movable area]",
+                scripts::get, new Images()).render(0, false);
+        assertEquals(Color.GREEN.getRGB(), paint(frame, false, 0).getRGB(112, 122));
+        assertEquals(Color.GREEN.getRGB(), paint(frame, false, 20).getRGB(152, 122));
+        assertEquals(110, frame.movable().get(0).x); assertEquals(120, frame.movable().get(0).y);
+    }
+    @Test void closebackBuildingsAreDrawnOverTheOpaqueTileFloor() throws Exception {
+        Map<String, String> scripts = Map.of("map/a.til", tile("tile.img", false, 0),
+                "map/house.ani", ani("front.img", false, 100));
+        var rendered = ScenePreview.load("map/test.map", "[tile] `a.til` [/tile] "
+                + "[animation] `house.ani` `[closeback]` 10 330 0 [/animation]", scripts::get, new Images()).render(0, false);
+        assertEquals(Color.GREEN.getRGB(), paint(rendered, false, 0).getRGB(12, 452));
+        assertEquals(Color.BLUE.getRGB(), paint(rendered, false, 0).getRGB(30, 452));
+    }
+    @Test void nativeSceneryUsesExplicitPeriodAndKeepsCoveringMapDuringInterpolation() throws Exception {
+        Map<String, String> scripts = Map.of("map/a.til", tile("", false, 0),
+                "passiveobject/passiveobject.lst", "333 `sky.obj`",
+                "passiveobject/sky.obj", "[layer] `[distantback]` [basic motion] `sky.ani` [int data] 80 451 [/int data]",
+                "passiveobject/sky.ani", "[LOOP] 1 [FRAME0] [IMAGE] `back.img` 0 [IMAGE POS] 0 0 [INTERPOLATION] 1 [DELAY] 100 "
+                        + "[FRAME1] [IMAGE] `back.img` 0 [IMAGE POS] -80 0 [DELAY] 0");
+        var scene = ScenePreview.load("map/test.map", "[tile] `a.til` `a.til` [/tile] [far sight scroll] 56 "
+                + "[passive object]\n333 0 0 120\n333 20 30 0\n[/passive object]", scripts::get, new Images());
+        for (long time : new long[]{0, 50, 99, 100, 60061}) {
+            var rendered = scene.render(time, false);
+            assertEquals(Color.RED.getRGB(), paint(rendered, false, 0).getRGB(440, 20));
+            assertEquals(Color.RED.getRGB(), paint(rendered, false, 0).getRGB(440, 170));
+            assertEquals(80, rendered.draws().get(0).repeatPeriod());
+            assertTrue(rendered.draws().get(0).repeat());
+            assertEquals(.56, rendered.draws().get(0).scroll());
+            assertTrue(rendered.warnings().isEmpty());
+        }
+        assertEquals(0, EntityScript.sceneryPeriod("[int data] 80", 331));
+    }
     @Test void nativeWorldOriginAndRectangularPassCellsAlignActorsWithFloor() throws Exception {
         Map<String, String> scripts = Map.of("map/a.til", tile("tile.img", false, 2),
                 "map/foot.ani", ani("front.img", true, 100));
         var frame = ScenePreview.load("map/test.map", "[tile] `a.til` [/tile] "
-                + "[animation] `foot.ani` `[normal]` 100 219 0 [/animation] "
-                + "[virtual movable area] 10 20 30 40 [/virtual movable area]", scripts::get, new Images()).render(0, false);
+                + "[animation] `foot.ani` `[normal]` 100 219 0 [/animation]", scripts::get, new Images()).render(0, false);
         assertEquals(339, frame.draws().get(1).y());
         assertTrue(frame.collisionAt(100, 339).contains("格 6,18"));
         assertTrue(frame.collisionAt(8, 131.9).contains("格 0,0"));
         assertTrue(frame.collisionAt(8, 132).contains("格 0,1"));
         assertTrue(frame.collisionAt(8, 119).contains("没有"));
-        assertEquals(140, frame.movable().get(0).y);
         assertEquals(Color.GREEN.getRGB(), paint(frame, false, 0).getRGB(100, 339));
+    }
+    @Test void townOverlayShowsOnlyMovableUnionInOverviewAndClientViewport() throws Exception {
+        Map<String, String> scripts = Map.of("map/a.til", tile("", false, 2), "map/b.til", tile("", false, 1));
+        var frame = ScenePreview.load("map/town.map", "[tile] `a.til` `b.til` [/tile] "
+                + "[virtual movable area] 10 0 60 30 100 100 20 20 [/virtual movable area]", scripts::get, new Images()).render(0, false);
+        var clean = paint(frame, false, 0); var overlay = paint(frame, true, 0);
+        for (Point point : List.of(new Point(8, 128), new Point(20, 128), new Point(232, 128)))
+            assertEquals(clean.getRGB(point.x, point.y), overlay.getRGB(point.x, point.y));
+        assertNotEquals(clean.getRGB(10, 130), overlay.getRGB(10, 130)); // cyan boundary remains visible
+        assertTrue(frame.collisionAt(20, 128).contains("城镇可移动区域 ·"));
+        assertTrue(frame.collisionAt(110, 230).contains("城镇可移动区域 ·"));
+        assertTrue(frame.collisionAt(90, 128).contains("城镇可移动区域外"));
+        assertFalse(frame.collisionAt(232, 128).contains("仅浮空"));
+        var client = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB); var g = client.createGraphics();
+        frame.paintClient(g, new Rectangle(0, 0, 640, 480), 1, new Point(), true, false); g.dispose();
+        assertEquals(Color.BLACK.getRGB(), client.getRGB(8, 128));
+        assertEquals(Color.BLACK.getRGB(), client.getRGB(232, 128));
+        assertNotEquals(Color.BLACK.getRGB(), client.getRGB(10, 130));
+        var tile = ScenePreview.load("map/a.til", scripts.get("map/a.til"), scripts::get, new Images()).render(0, false);
+        assertNotEquals(paint(tile, false, 0).getRGB(8, 128), paint(tile, true, 0).getRGB(8, 128));
+        var withoutArea = ScenePreview.load("map/town.map", "[tile] `a.til` [/tile] "
+                + "[town movable area] 0 0 10 10 1 1 [/town movable area]", scripts::get, new Images()).render(0, false);
+        assertEquals(paint(withoutArea, false, 0).getRGB(8, 128), paint(withoutArea, true, 0).getRGB(8, 128));
+        assertTrue(withoutArea.collisionAt(8, 128).contains("未配置"));
     }
     @Test void shorterBaseTilesAndIncompleteExtensionUseClientExtent() throws Exception {
         Map<String, String> scripts = Map.of("map/a.til", "[pass type] " + "0 ".repeat(280),

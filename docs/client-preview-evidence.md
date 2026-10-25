@@ -92,3 +92,86 @@ EQU 层级问题也有直接配置证据：`equipment/monster/soceress/hair01.eq
 最终可运行产物为 `pvf-product/build/product/PVFStudio-0.7.0/PVFStudio.exe`。`app/lib/pvf-studio.jar` SHA-256：`5ac0ebfe9cbd3f51dbb39b5e38eb31a9a111ff986a6e0f1d2b8f6aa00bb3f379`。
 
 普通 0.7.0 EXE 窗口另外打开原包与 `map/ocean/b2401.map`，确认 27/159 粒子、17 处对象碰撞，展开预览区域，连续播放至 55.069 秒并开启碰撞层后暂停；资源目录从工作区设置恢复。未修改配置或保存草稿。
+
+## 2026-10-25：Darkhell 平铺、Alfhlyra 层级和相机
+
+仍使用上述客户端与脚本包身份，对现有独立 IDB 副本重新提取函数，原始输出留在 `build/client-coordinate-evidence/`。
+
+| 客户端位置 | 静态证据与修正 |
+| --- | --- |
+| `0x56E6A0 → 0x56DBC0` | 333～337 号对象创建原生滚动场景类。不能把带 basic motion 的这些对象都作为单份普通实体。 |
+| `0x578A80 / 0x578AF0` | int data[0] 为横向副本间距；初始化时复制基础及附加动画到地图宽度以外。int data[1] 是由场景状态控制的纵向行程，不是动画时长。预览按前者平铺并保留 ANI 插值；全图模式补齐可见范围。 |
+| `0x4E8DF0 / 0x718090` | 层按 5、4、3、2、1、0 绘制，对应 distantback、middleback、closeback、bottom、normal、close；每层按 below、对象、upper 处理。 |
+| `0x463940` | 地块在 closeback/below 调用内绘制，位于该层 below 背景之后、对象之前。旧“地块在所有 closeback 对象之后”以及“close/below 提前到地块前”的规则作废。 |
+| `0x4C4F20 / 0x4C4F60 / 0x462D50 / 0x462DB0` | 相机位置乘所属层滚动比例，坐标与摄像机一起投影。旧预览只对拖动量应用比例，忽略居中相机。现从居中 640×480 相机计算完整视差；全图模式使用同一相机参考，另可裁剪为客户端视口。 |
+| `0x748D40` | `[virtual movable area]` 保留 x/y/宽/高；Alfhlyra 下方区域为 `(1003,433,76,36)`，投影后 y=553。青框继续使用地面坐标；udgate 的 close 层使用 110% 视差，不对青框加试凑偏移。 |
+
+真实资源回归使用 `validation/MapRegressionProbe.java`：两张地图分别在 0、10000、60061 ms 渲染，干净图、碰撞图和图层清单位于 `build/map-regression-final/`。Darkhell 天空在全宽与循环位移过程中保持覆盖；Alfhlyra closeback 建筑覆盖地面，门与青框使用上述相机规则。所有六个时间点均无资源诊断。原生场景推进、战斗和客户端像素级一致性未作为本轮验收结论。
+
+本地修复产物为 `build/PVFStudio-map-search-fix/PVFStudio.exe`，沿用 0.10.0 产品版本号，尚未发布。产品 JAR SHA-256 为 `927fda329b04b9a386a3786af66c93b55b64b2782a3fd9bc02fd1937bd7f6a75`。115 项 JVM、14 项 Python 测试通过；最终产品检查在 `build/product-checks/20261025-211934-36666660/`，包括 Darkhell 平铺、Alfhlyra 图层/青框/客户端视口拖动，以及文件内查找栏可见、真实替换/撤销、草稿和未保存内容的全包搜索、精确跳转、取消后原包可继续读取。搜索遍历 48,326 条目样本，不创建全包编辑器。
+
+## 2026-10-25：客户端视口的滚动边界与逐轴投影
+
+以下复核修正上一轮视口只有裁剪、可以无限拖动及纵向误用横向百分比的问题。原始反编译记录为 `camera-limits.txt`、`camera-scroll-load.txt`、`camera-script-reset.txt`，均在上述 `build/client-coordinate-evidence/`。
+
+| 客户端位置 | 静态结论 |
+| --- | --- |
+| `0x464BD0` | X 上限为 `max(0,基础地块数×224−640)`，窄地图不允许横向滚动。 |
+| `0x464B00 / 0x463030 / 0x4E6140` | Y 上限为完整扩展地块行数×120，X/Y 都夹在零与上限之间；较矮的基础通行区不改变该 Y 上限，不能用图片高度减 480 替代。 |
+| `0x74F840 / 0x748D40 / 0x464540` | MAP 数据的六个滚动参数先初始化为 100，三个 sight scroll 标签仅覆盖横向三项；加载时六项复制到场景对象。故当前 ACT1 的纵向三项都保持 100%。 |
+| `0x462D50 / 0x462DB0` | 每层相机偏移使用整数百分比相乘后除以 100；浮点近似不能产生额外的一像素误差。 |
+| `0x463940 / 0x4C4F20 / 0x4C4F60` | 地块与对象在屏幕坐标下绘制。原生视口按 640×480 裁剪，不按编辑器里的地块图片外框裁掉装饰与背景。 |
+
+`SceneCamera` 持有独立相机位置和 MAP 边界；拖动到边界立即丢弃越界量，反向移动不会有粘滞。渲染采用整数相机坐标；缩放和窗口尺寸变化只改变显示变换。边框和相机坐标标签绘制在原生画面之外，外围暗化；独立 TIL/PTL 不启用客户端相机。原生角色跟随的死区（X 270～370、Y 160～240）已在 `0x463030` 中观察到，但当前没有跟随角色对象，仍由用户手动移动相机；不模拟该跟随状态、场景事件转场或摇屏。
+
+122 项 JVM、14 项 Python 测试通过。最终产品检查目录为 `build/product-checks/20261025-214204-1867764f/`；包含实际 Canvas 的拖动、反向边界、缩放/resize 保持位置、边框可见性、Alfhlyra 左上/右下/门口截图，以及原生 AWT WINDOW_CLOSING 的取消、保存、放弃和重开恢复。关闭按钮原先在 `captureEditorState → CaretImpl.getOffset` 触发缺少 read-action 的断言，现用 WriteIntentReadAction 进入既有关闭流程。测试通过原生事件队列投递关闭事件，避免用已持锁的直接调用掩盖问题。
+
+`validation/MapRegressionProbe.java` 同时输出原生 640×480 的四角/居中相机图。Darkhell 与 Alfhlyra 的 0、10000、60061 ms 产物位于 `build/map-native-viewport-final/`，所有时间点无资源诊断。这些是本地客户端函数的静态对照和预览渲染验收，并非与运行中客户端所有动态状态逐像素比对。
+
+本轮可运行产物为 `build/PVFStudio-viewport-fix/PVFStudio.exe`，仍沿用 0.10.0 版本号、尚未发布；包含上一轮搜索与地图修复。产品 JAR SHA-256：`d5a37841e8542e5672bc5d6e8a5538d8564f550514a06918592d3e26ab590200`。
+
+## 2026-10-25：城镇青框与 TIL 红格的判定关系
+
+Alfhlyra 的红色 TIL 通行格可以落在青色 `[virtual movable area]` 内。这与相机滚动无关：城镇角色的地图通行判定使用虚拟矩形列表的并集，不把 TIL 红格与青框取交集。
+
+| 客户端位置 | 静态证据 |
+| --- | --- |
+| `0x464540`（`0x46470C`～`0x464719`） | 将脚本 `+0xE4` 的 virtual movable area 复制到当前地图 `+0x150`；矩形数据位于 `+0x154`～`+0x158`，每项 16 字节。 |
+| `0x9988D8 / 0x9988DC / 0x998970` | RTTI 标识 `CNRDVirtualCharacter`，其虚表从 `0x9988DC` 开始；通行判定槽 `+0x94` 指向 `0x479EF0`。 |
+| `0x479EF0 → 0x776C60` | 检查候选角色坐标是否在任意一个上述矩形内；条件为 `x >= left && x < left + width && y >= top && y < top + height`。此分支没有调用 TIL 通行查询。 |
+| `0x4A8160 → 0x4C5480 / 0x463AE0` | 通用角色分支检查对象碰撞及 TIL 通行格；不能把这套规则直接套到城镇虚拟角色上。 |
+
+原包 `sample/mapsample.map` 的韩文注释也说明：virtual movable area 是城镇角色可移动矩形列表，实际移动区域为列表并集，非城镇地图无意义；`[town movable area]` 则另存目标城镇与 AREA 编号，表示区域转换/进入地下城的触发区。
+
+`map/alfhlyra/alfhlyra.map` 的主矩形为 `(16,184,2423,258)`，地面 y 范围为 `[184,442)`；扩展地块的红格带位于其中，并不会因此阻止城镇角色行走。预览中的红格表示 TIL 原始通行数据，不能在城镇中单独解释为玩家最终禁行区。这里只核实静态判定，没有运行客户端角色实走；本次未修改渲染或产品产物。原始反编译输出为 `build/client-coordinate-evidence/town-virtual-check.txt`、`town-virtual-class.txt`、`town-movement-entry.txt`，与脚本注释相互印证。
+
+## 2026-10-25：按城镇区分碰撞叠加
+
+按后续显示需求，含非空 `[virtual movable area]` 或 `[town movable area]` 的 MAP 采用城镇通行叠加：只绘制可移动区域青框，隐藏 TIL 和对象的红/橙标记。悬停仅说明在区域并集内、区域外或未配置区域；图例与详情随场景切换。地下城与独立 TIL 保留原有通行格及对象碰撞提示，原始数据仍保留供读取。
+
+123 项 JVM 测试通过；覆盖全图和客户端视口的红/橙格隐藏、青框保留、多矩形并集、对象范围不覆盖城镇提示、缺失虚拟区域以及独立 TIL。真实产品检查与冒烟通过，目录 `build/product-checks/20261025-221447-34c286c5/`；Alfhlyra 图例和详情断言通过，并检查左上角视口截图只有青框。
+
+本轮可运行产物为 `build/PVFStudio-town-overlay-fix/PVFStudio.exe`，沿用 0.10.0，包含此前修复，尚未发布。产品 JAR SHA-256：`62d223ed05f0ec3960cb047051103c4aa70a7ad1c59be49fa6d5f51945a8768f`。
+
+## 2026-10-25：DGN 布局、房间与原生门
+
+DGN 可切换多套布局与起点/Boss，点击布局图切换房间，并选择匹配的 MAP。普通门、Boss 门和墙体按方向连接与 Boss 坐标生成；清房及 Boss 入口条件作为显式预览状态。门的常驻/关闭/开启 ANI、variation 和 TIL 通行格合并已接入现有场景。静态函数证据、排列策略与使用说明见 [副本预览](dungeon-preview.md)。
+
+真实脚本覆盖 43 DGN、49 套布局、178 组不同起点/Boss 组合；242 个房间开闭状态完成 NPK 渲染。原始结果在 `build/dungeon-native-final/`。门素材没有新增资源错误；既有逻辑对象和本地化字段诊断保留。这不是对在线副本随机种子、AI/战斗或玩家过门流程的运行验收。
+
+130 项 JVM 测试通过。最终产品检查及冒烟通过，目录 `build/product-checks/20261025-224856-b3bfc49d/`，包含实际面板中的 Lorien 布局、开闭门动画、Boss MAP、第二套布局与切换清房状态保持相机位置；另有 Swing 点击和返回房间保留 MAP/清理状态回归。
+
+本轮可运行产物为 `build/PVFStudio-dungeon-preview/PVFStudio.exe`，仍沿用 0.10.0，包含此前全部本地修复，尚未发布。产品 JAR SHA-256：`c1270611c6c1ff214e470e4a81a966a9dcde2579a05208983aa5fe867f857cf8`。
+
+## 2026-10-25：0.11.0 发行构建
+
+上述未发布修复统一收入 0.11.0。源码、产品描述、原生启动器与安装器版本均为 0.11.0；正式产品目录为 `pvf-product/build/product/PVFStudio-0.11.0/`，产品 JAR SHA-256 为 `34908adadff9d2c84d46c35555a0a26b1348cca28729d26c565f0eb345962eac`。
+
+130 项 JVM 测试、14 项独立 Python 测试及正式产品检查/完整冒烟通过。发行产品检查目录为 `build/product-checks/20261025-231343-f2f5a981/`；便携 ZIP 的 590 个条目全部 CRC 通过，并确认产品身份、JAR/EXE 与本地正式目录一致，不包含游戏数据、开发文档或旧宿主目录。发行包和校验文件在 `pvf-product/build/distributions/`，校验记录在 `build/release/package-validation-v0.11.0.json`。
+
+| 发行文件 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `PVFStudio-0.11.0-windows-x64-portable.zip` | 243440945 | `139edbfbe8cb56322f7bf333694d2ffe116fe7a3e2fbec41fcb018c3fcf535e3` |
+| `PVFStudio-0.11.0-windows-x64-setup.exe` | 186174298 | `53a8a918f645ec30a9323087d5da164db84f422e538892d30b3be925eb5e9cd8` |
+
+发布入口为 [v0.11.0 Release](https://github.com/firekula/PVFStudio/releases/tag/v0.11.0)。

@@ -137,7 +137,7 @@ final class TabWorkbenchSmoke {
         }
     }
     static void action(PvfStudioFrame frame, String id) { frame.getRootPane().getActionMap().get("pvf-tab-" + id).actionPerformed(new ActionEvent(frame, 0, id)); }
-    private static void stroke(Component target, int code, int modifiers) {
+    static void stroke(Component target, int code, int modifiers) {
         EventQueue queue = Toolkit.getDefaultToolkit().getSystemEventQueue(); long now = System.currentTimeMillis();
         queue.postEvent(new KeyEvent(target, KeyEvent.KEY_PRESSED, now, modifiers, code, KeyEvent.CHAR_UNDEFINED));
         queue.postEvent(new KeyEvent(target, KeyEvent.KEY_RELEASED, now, modifiers, code, KeyEvent.CHAR_UNDEFINED));

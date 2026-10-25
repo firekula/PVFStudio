@@ -7,6 +7,8 @@ import studio.pvf.preview.SceneScript;
 import studio.pvf.preview.ScenePreview;
 import studio.pvf.preview.EntityScript;
 import studio.pvf.preview.NpkResources;
+import studio.pvf.preview.DungeonPreview;
+import studio.pvf.preview.DungeonScript;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
@@ -34,14 +36,16 @@ final class ResourcePreviewSmoke {
         String mapPath = "map/sunderlandpoison/b801.map", tilePath = "map/hendonmyre/tile/hm01.til";
         String townPath = "map/hendonmyre/hendon_auction.map";
         String lorienPath = "map/lorien/104.map", multipartPath = "map/ocean/b2401.map";
+        String darkhellPath = "map/darkhell/b3402.map", alfhlyraPath = "map/alfhlyra/alfhlyra.map";
+        String dungeonPath = "dungeon/act1/lorien.dgn";
         String particlePath = "passiveobject/mapobject/particlefactory/particle/rayground.ptl";
         Charset charset = Charset.forName("GBK"); Map<String, String> scripts = new HashMap<>();
         try (PvfArchive archive = PvfArchive.open(archivePath)) {
-            for (String path : List.of(aniPath, itemPath, mobPath, stayPath, mapPath, tilePath, townPath, lorienPath, multipartPath))
+            for (String path : List.of(aniPath, itemPath, mobPath, stayPath, mapPath, tilePath, townPath, lorienPath, multipartPath, darkhellPath, alfhlyraPath))
                 scripts.put(path, new String(archive.readBytes(path), charset));
             Set<String> paths = new HashSet<>(); for (var entry : archive.entries()) paths.add(entry.path());
             // Resolving MAPs preloads exactly the referenced scripts, including indexed entities and equipment.
-            for (String path : List.of(mapPath, townPath, lorienPath, multipartPath)) {
+            for (String path : List.of(mapPath, townPath, lorienPath, multipartPath, darkhellPath, alfhlyraPath)) {
                 ScenePreview.load(path, scripts.get(path), candidate -> {
                     if (!paths.contains(candidate)) return null;
                     if (!scripts.containsKey(candidate)) scripts.put(candidate, new String(archive.readBytes(candidate), charset));
@@ -50,6 +54,24 @@ final class ResourcePreviewSmoke {
                     public NpkResources.Sprite sprite(String image, int index) throws java.io.IOException { throw new java.io.IOException("Deferred pixels"); }
                     public NpkResources.Info info(String image, int index) throws java.io.IOException { throw new java.io.IOException("Deferred metadata"); }
                 });
+            }
+            scripts.put(dungeonPath, new String(archive.readBytes(dungeonPath), charset));
+            ScenePreview.TextLookup dungeonLookup = candidate -> {
+                if (!paths.contains(candidate)) return null;
+                if (!scripts.containsKey(candidate)) scripts.put(candidate, new String(archive.readBytes(candidate), charset));
+                return scripts.get(candidate);
+            };
+            var dungeon = DungeonPreview.load(dungeonPath, scripts.get(dungeonPath), dungeonLookup);
+            var deferred = new ScenePreview.SpriteLookup() {
+                public NpkResources.Sprite sprite(String path, int i) throws java.io.IOException { throw new java.io.IOException("Deferred pixels"); }
+                public NpkResources.Info info(String path, int i) throws java.io.IOException { throw new java.io.IOException("Deferred metadata"); }
+            };
+            for (int i = 0; i < dungeon.definition().mazes().size(); i++) {
+                var maze = dungeon.definition().mazes().get(i);
+                var layout = dungeon.arrange(i, maze.starts().getFirst(), maze.bosses().getFirst(), 0);
+                for (var room : layout.rooms()) for (var choice : room.choices()) for (boolean open : new boolean[]{false, true})
+                    ScenePreview.loadRoom(choice.path(), scripts.get(choice.path()), dungeonLookup, deferred,
+                            dungeon.gates(layout, room, choice, open, true), 0, 0);
             }
         }
         Path preferences = Files.createDirectory(output.resolve("preview-settings"));
@@ -65,6 +87,67 @@ final class ResourcePreviewSmoke {
         });
         try {
             await(() -> panel.hasPreparedFrame() && panel.frameCount() == 7);
+            edt(() -> { window.setSize(1100, 1000); panel.setSource(new ResourcePreviewPanel.Source(dungeonPath, scripts.get(dungeonPath), scripts::get)); return null; });
+            await(() -> panel.renderedScene() != null && panel.previewDetails().contains(dungeonPath));
+            edt(() -> {
+                var controls = components(panel, DungeonPanel.class).getFirst(); var selection = controls.selection();
+                if (selection.layout().rooms().size() != 6 || selection.room().mask() != 1 || selection.map() == null)
+                    throw new AssertionError("DGN first layout and start room not loaded");
+                if (panel.renderedScene().activeFrames().keySet().stream().noneMatch(p -> p.contains("opendoor")))
+                    throw new AssertionError("Connected room did not create the native open gate");
+                checkbox(panel, "客户端视口").doClick(); checkbox(panel, "房间已清理").doClick(); return null;
+            });
+            await(() -> panel.renderedScene() != null && panel.previewDetails().contains("普通门关闭"));
+            edt(() -> {
+                if (panel.renderedScene().activeFrames().keySet().stream().noneMatch(p -> p.contains("closedoor")))
+                    throw new AssertionError("Uncleared room did not use closed gate animation");
+                var canvas = components(panel, ResourcePreviewPanel.Canvas.class).getFirst(); canvas.camera.set(canvas.camera.limits().maxX(), 0);
+                screenshot(panel, output.resolve("preview-dungeon-closed.png")); checkbox(panel, "房间已清理").doClick(); return null;
+            });
+            await(() -> panel.renderedScene() != null && panel.previewDetails().contains("普通门开启"));
+            edt(() -> {
+                var canvas = components(panel, ResourcePreviewPanel.Canvas.class).getFirst();
+                if (canvas.camera.position().x != canvas.camera.limits().maxX()) throw new AssertionError("Gate state reset the camera");
+                screenshot(panel, output.resolve("preview-dungeon-open.png"));
+                var controls = components(panel, DungeonPanel.class).getFirst(); controls.selectRoom(controls.selection().layout().boss()); return null;
+            });
+            await(() -> panel.renderedScene() != null && panel.previewDetails().contains("Boss 门开启"));
+            edt(() -> {
+                var controls = components(panel, DungeonPanel.class).getFirst(); var selection = controls.selection();
+                if (!selection.room().boss() || !selection.map().info().type().equals("boss")) throw new AssertionError("Boss MAP was not selected");
+                screenshot(panel, output.resolve("preview-dungeon-boss.png"));
+                components(panel, JComboBox.class).stream().filter(box -> "dungeon-maze".equals(box.getName())).findFirst().orElseThrow().setSelectedIndex(1); return null;
+            });
+            await(() -> panel.renderedScene() != null && panel.previewDetails().contains("副本布局 2×3"));
+            edt(() -> { screenshot(panel, output.resolve("preview-dungeon-layout-2.png")); checkbox(panel, "客户端视口").doClick(); return null; });
+            edt(() -> { window.setSize(1100, 800); panel.setSource(new ResourcePreviewPanel.Source(darkhellPath, scripts.get(darkhellPath), scripts::get)); return null; });
+            await(() -> panel.renderedScene() != null && panel.renderedScene().draws().stream().anyMatch(d -> d.repeatPeriod() == 777));
+            edt(() -> { screenshot(panel, output.resolve("preview-darkhell-tiled.png"));
+                panel.setSource(new ResourcePreviewPanel.Source(alfhlyraPath, scripts.get(alfhlyraPath), scripts::get)); return null; });
+            await(() -> panel.renderedScene() != null && panel.renderedScene().tileCount() == 22);
+            edt(() -> { var frame = panel.renderedScene();
+                if (!frame.town() || !panel.previewDetails().contains("通行范围：城镇可移动区域")
+                        || components(panel, JLabel.class).stream().noneMatch(label -> label.getText().equals("青框：城镇可移动区域（所有区域的并集）")))
+                    throw new AssertionError("Town overlay must have its own legend and explanation");
+                if (frame.draws().stream().noneMatch(d -> d.stage() == 8 && d.prepared().source().img().contains("cottage.img")))
+                    throw new AssertionError("Alfhlyra closeback buildings are not above the floor");
+                if (frame.movable().get(2).x != 1003 || frame.movable().get(2).y != 553) throw new AssertionError("Virtual area world coordinates changed");
+                checkbox(panel, "碰撞区域").doClick(); screenshot(panel, output.resolve("preview-alfhlyra-overview.png"));
+                checkbox(panel, "客户端视口").doClick(); return null; });
+            edt(() -> {
+                var canvas = components(panel, ResourcePreviewPanel.Canvas.class).getFirst();
+                double scale = Math.min(4, Math.min((canvas.getWidth() - 40) / 640.0, (canvas.getHeight() - 40) / 480.0));
+                Rectangle viewport = canvas.clientBounds(scale); int x = (int) viewport.getCenterX(), y = (int) viewport.getCenterY();
+                dragCamera(canvas, x, y, -100000, -100000);
+                if (!canvas.camera.position().equals(new Point(1824, 120))) throw new AssertionError("Native right/bottom camera limits failed");
+                screenshot(panel, output.resolve("preview-alfhlyra-client-bottom-right.png"));
+                dragCamera(canvas, x, y, 100000, 100000);
+                if (!canvas.camera.position().equals(new Point(0, 0))) throw new AssertionError("Native left/top camera limits failed");
+                screenshot(panel, output.resolve("preview-alfhlyra-client-top-left.png"));
+                canvas.camera.set(721, 120); canvas.repaint(); return null;
+            });
+            edt(() -> { screenshot(panel, output.resolve("preview-alfhlyra-client-viewport.png"));
+                checkbox(panel, "客户端视口").doClick(); checkbox(panel, "碰撞区域").doClick(); return null; });
             edt(() -> {
                 window.setSize(1100, 800);
                 panel.setSource(new ResourcePreviewPanel.Source(lorienPath, scripts.get(lorienPath), scripts::get)); return null;
@@ -218,6 +301,12 @@ final class ResourcePreviewSmoke {
             await(() -> panel.hasPreparedFrame() && panel.frameCount() == 7);
             if (!Files.isRegularFile(preferences.resolve("preview.properties"))) throw new AssertionError("NPK directory preference missing");
         } finally { edt(() -> { panel.close(); window.dispose(); return null; }); }
+    }
+    private static void dragCamera(Component canvas, int x, int y, int tx, int ty) {
+        long now = System.currentTimeMillis();
+        canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_PRESSED, now, 0, x, y, 1, false, java.awt.event.MouseEvent.BUTTON1));
+        canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_DRAGGED, now, java.awt.event.MouseEvent.BUTTON1_DOWN_MASK, tx, ty, 0, false, java.awt.event.MouseEvent.NOBUTTON));
+        canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_RELEASED, now, 0, tx, ty, 1, false, java.awt.event.MouseEvent.BUTTON1));
     }
 
     private static JButton button(Container panel, String text) {

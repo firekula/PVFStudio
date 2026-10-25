@@ -4,8 +4,10 @@ import studio.pvf.preview.NpkResources;
 import studio.pvf.preview.PreviewRenderer;
 import studio.pvf.preview.ResourceScript;
 import studio.pvf.preview.ScenePreview;
+import studio.pvf.preview.SceneCamera;
 import studio.pvf.preview.AnimationTimeline;
 import studio.pvf.preview.EntityScript;
+import studio.pvf.preview.DungeonPreview;
 
 import javax.swing.*;
 import java.awt.*;
@@ -38,13 +40,15 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private final JComboBox<String> speed = new JComboBox<>(new String[]{"0.25×", "0.5×", "1×", "2×", "4×"});
     private final JComboBox<String> zoom = new JComboBox<>(new String[]{"自适应", "25%", "50%", "100%", "200%", "400%"});
     private final JCheckBox collision = new JCheckBox("碰撞区域");
+    private final JCheckBox clientViewport = new JCheckBox("客户端视口");
     private final JCheckBox entityMarkers = new JCheckBox("对象标记");
     private final JCheckBox conditionalEntities = new JCheckBox("条件怪物");
-    private final JLabel legend = new JLabel("红：禁行 · 橙：仅浮空 · 蓝框：城镇可移动区域");
+    private final JLabel legend = new JLabel("红：禁行 · 橙：仅浮空");
     private final JSlider timeline = new JSlider(0, 0, 0);
     private final JLabel frameLabel = new JLabel("尚未选择配置");
     private final JTextArea details = new JTextArea(5, 24);
     private final Canvas canvas = new Canvas();
+    private final DungeonPanel dungeonPanel = new DungeonPanel(this::loadDungeonRoom);
     private final javax.swing.Timer playback = new javax.swing.Timer(100, e -> advance());
     private Future<?> job;
     private NpkResources resources;
@@ -52,6 +56,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private ResourceScript.Animation animation;
     private String animationPath;
     private ScenePreview scene;
+    private DungeonPanel.Selection dungeonSelection;
     private AnimationTimeline.Clock sceneClock = new AnimationTimeline.Clock();
     private long timelineStart;
     private long generation;
@@ -76,10 +81,13 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         parameters.add(new JLabel("外观参数")); parameters.add(variants);
         parameters.add(new JLabel("缩放")); parameters.add(zoom); header.add(parameters);
         JPanel overlays = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        collision.setToolTipText("叠加 TIL 的 16×12 通行格和被动对象 [width]/[pass type] 碰撞范围。红色不可通行，橙色仅浮空可通行；蓝框是城镇 [virtual movable area] 可移动区域。");
         entityMarkers.setToolTipText("显示所有实体的脚下原点及编号；没有可用待机动画的对象始终显示位置标记。");
         conditionalEntities.setToolTipText("同时预览 monster condition 中的候选怪物；不判断游戏中的出现条件，每条配置仅放置一个。");
+        clientViewport.setToolTipText("MAP 的原生 640×480 视口；拖动相机受客户端边界限制。缩放只改变显示大小。边框内为实际画面。");
         overlays.add(collision); overlays.add(entityMarkers); overlays.add(conditionalEntities); header.add(overlays);
+        JPanel cameraControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0)); cameraControls.add(clientViewport); header.add(cameraControls);
+        header.add(dungeonPanel);
+        clientViewport.addActionListener(e -> { canvas.clientViewport = clientViewport.isSelected(); canvas.resetView(); canvas.repaint(); });
         legend.setVisible(false); header.add(legend);
         add(header, BorderLayout.NORTH); add(canvas);
         JPanel footer = new JPanel(); footer.setLayout(new BoxLayout(footer, BoxLayout.Y_AXIS));
@@ -88,7 +96,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         speed.setSelectedIndex(2); footer.add(controls); footer.add(timeline); footer.add(frameLabel);
         details.setEditable(false); details.setLineWrap(true); details.setWrapStyleWord(true);
         details.setOpaque(false); details.setFont(UIManager.getFont("Label.font"));
-        details.setText("打开 MAP/TIL 预览完整场景，打开 ANI/PTL 播放动画或粒子。\nNPC、怪物、被动对象和粒子共用场景时钟。\n拖动平移、滚轮缩放；碰撞层可查看地块及对象碰撞范围。");
+        details.setText("打开 DGN 查看副本布局并切换房间；MAP/TIL 预览完整场景，ANI/PTL 播放动画或粒子。\n拖动平移、滚轮缩放；碰撞层可查看地块及对象碰撞范围。");
         footer.add(new JScrollPane(details)); add(footer, BorderLayout.SOUTH);
         choose.addActionListener(e -> chooseDirectory());
         refresh.addActionListener(e -> setSource(source));
@@ -122,7 +130,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
             else if (!changing && animation != null) { pause(); showFrame(timeline.getValue()); }
         });
         speed.addActionListener(e -> { sceneClock.speed(speedFactor()); if (playing) scheduleNext(); });
-        zoom.addActionListener(e -> { canvas.zoom = zoom.getSelectedIndex(); canvas.resetView(); canvas.repaint(); });
+        zoom.addActionListener(e -> { canvas.zoom = zoom.getSelectedIndex(); canvas.freeZoom = 0;
+            if (!canvas.usingClient()) { canvas.panX = 0; canvas.panY = 0; } canvas.repaint(); });
         playback.setRepeats(false); updateControls();
     }
 
@@ -192,6 +201,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
 
     void setSource(Source value) {
         source = value; invalidatePreview();
+        dungeonPanel.setVisible(false); dungeonSelection = null;
         Object selected = references.getSelectedItem(); String selectedName = selected == null ? "" : selected.toString();
         changing = true; references.removeAllItems(); changing = false;
         if (source == null) { frameLabel.setText("尚未选择配置"); details.setText("打开 .ani 或包含图片、动画引用的配置后预览。"); return; }
@@ -201,22 +211,32 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
             loadSelection();
         } else submit(() -> ResourceScript.references(snapshot.text()), found -> {
             changing = true;
+            if (snapshot.path().toLowerCase(Locale.ROOT).endsWith(".dgn")) references.addItem(new DungeonOption(snapshot.path()));
             if (isScene(snapshot.path())) references.addItem(new SceneOption(snapshot.path()));
             for (ResourceScript.Reference reference : found) references.addItem(reference);
             for (int i = 0; i < references.getItemCount(); i++)
                 if (references.getItemAt(i).toString().equals(selectedName)) references.setSelectedIndex(i);
             changing = false;
-            if (references.getItemCount() == 0) { frameLabel.setText("没有可预览的资源引用"); details.setText("支持 MAP/TIL 场景、带帧号的 .img 引用，以及 .ani 动画引用。"); }
+            if (references.getItemCount() == 0) { frameLabel.setText("没有可预览的资源引用"); details.setText("支持 DGN 副本、MAP/TIL 场景、带帧号的 .img 引用，以及 .ani 动画引用。"); }
             else loadSelection();
         });
     }
 
     private void loadSelection() {
         invalidatePreview();
+        dungeonPanel.setVisible(false); dungeonSelection = null;
         if (source == null) return;
         if (resources == null) { frameLabel.setText("请先选择 NPK 目录"); return; }
         Source snapshot = source; Object selected = references.getSelectedItem();
         if (selected == null) return;
+        if (selected instanceof DungeonOption) {
+            frameLabel.setText("读取副本布局与房间候选…"); canvas.error = "加载副本…"; canvas.repaint();
+            submit(() -> DungeonPreview.load(snapshot.path(), snapshot.text(), snapshot.lookup()::read), loaded -> {
+                dungeonPanel.install(loaded);
+                if (dungeonPanel.selection() == null) fail(new IOException("布局没有可预览的房间；请检查 greed 与起点配置"));
+            });
+            return;
+        }
         if (selected instanceof SceneOption || selected instanceof ResourceScript.Reference r && r.particle()) {
             frameLabel.setText("读取场景地块与动画…"); canvas.error = "加载场景…"; canvas.repaint();
             int[] values;
@@ -235,12 +255,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                 ScenePreview loaded = ScenePreview.load(path, text, snapshot.lookup()::read, indexed, values);
                 return new SceneLoaded(loaded, loaded.render(0, false, conditional));
             }, loaded -> {
-                scene = loaded.scene(); animationPath = snapshot.path();
-                sceneClock = new AnimationTimeline.Clock(); sceneClock.speed(speedFactor());
-                loop.setText("强制循环"); loop.setSelected(false);
-                loop.setToolTipText("场景时间持续前进。默认各 ANI 遵循自己的 LOOP；勾选后所有动画独立循环。");
-                timelineStart = 0; changing = true; timeline.setMaximum(60_000); timeline.setValue(0); changing = false;
-                canvas.world = loaded.rendered().bounds(); acceptScene(loaded.rendered()); updateControls();
+                acceptLoadedScene(loaded, snapshot.path());
             });
             return;
         }
@@ -321,7 +336,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private void pause() { playback.stop(); sceneClock.pause(); playing = false; play.setText("播放"); }
     private void invalidatePreview() {
         pause(); generation++; if (job != null) job.cancel(false);
-        animation = null; scene = null; canvas.scene = null;
+        animation = null; scene = null; canvas.scene = null; canvas.camera = null;
         loop.setText("循环"); loop.setToolTipText(null); legend.setVisible(false);
         canvas.prepared = null; canvas.world = null; canvas.resetView(); canvas.error = ""; canvas.repaint(); updateControls();
     }
@@ -329,7 +344,12 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         boolean loaded = scene != null || animation != null && !animation.frames().isEmpty();
         previous.setEnabled(loaded); next.setEnabled(loaded); play.setEnabled(scene != null || loaded && animation.frames().size() > 1);
         timeline.setEnabled(loaded); loop.setEnabled(loaded); speed.setEnabled(loaded);
-        collision.setEnabled(scene != null); legend.setVisible(scene != null); legend.setEnabled(collision.isSelected());
+        collision.setEnabled(scene != null); clientViewport.setEnabled(canvas.scene != null && canvas.scene.cameraLimits() != null);
+        boolean town = canvas.scene != null && canvas.scene.town();
+        legend.setText(town ? "青框：城镇可移动区域（所有区域的并集）" : "红：禁行 · 橙：仅浮空");
+        collision.setToolTipText(town ? "显示城镇 [virtual movable area] 可移动范围的青色边框。"
+                : "叠加 TIL 的 16×12 通行格和被动对象碰撞范围。红色不可通行，橙色仅浮空可通行。");
+        legend.setVisible(scene != null); legend.setEnabled(collision.isSelected());
         entityMarkers.setEnabled(scene != null);
         conditionalEntities.setEnabled(scene != null && canvas.scene != null && canvas.scene.conditionalCount() > 0);
         previous.setToolTipText(scene == null ? "上一帧" : "场景时间后退 16 ms");
@@ -342,15 +362,54 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         boolean conditional = conditionalEntities.isSelected();
         submit(() -> snapshot.render(time, force, conditional), this::acceptScene);
     }
+    private void loadDungeonRoom(DungeonPanel.Selection selection) {
+        boolean keepView = dungeonSelection != null && dungeonSelection.room().position().equals(selection.room().position())
+                && dungeonSelection.map() != null && selection.map() != null && dungeonSelection.map().path().equals(selection.map().path());
+        Point cameraPosition = canvas.camera == null ? null : canvas.camera.position();
+        double panX = canvas.panX, panY = canvas.panY, freeZoom = canvas.freeZoom;
+        invalidatePreview(); dungeonSelection = selection;
+        if (source == null || resources == null) return;
+        if (selection.map() == null) { fail(new IOException(selection.description() + "此房间没有符合配置的 MAP 候选")); return; }
+        Source snapshot = source; var indexed = resources; boolean conditional = conditionalEntities.isSelected(); int[] values;
+        try { values = variantValues(); } catch (IOException failure) { fail(failure); return; }
+        frameLabel.setText("读取副本房间 " + selection.room().position() + "…"); canvas.error = "加载房间…"; canvas.repaint();
+        submit(() -> {
+            String path = selection.map().path(), text = snapshot.lookup().read(path);
+            if (text == null) throw new IOException("找不到房间 MAP " + path);
+            var gates = selection.dungeon().gates(selection.layout(), selection.room(), selection.map(), selection.cleared(), selection.bossCondition());
+            var loaded = ScenePreview.loadRoom(path, text, snapshot.lookup()::read, indexed, gates, values);
+            return new SceneLoaded(loaded, loaded.render(0, false, conditional));
+        }, loaded -> {
+            acceptLoadedScene(loaded, selection.map().path());
+            if (keepView) {
+                if (cameraPosition != null && canvas.camera != null) canvas.camera.set(cameraPosition.x, cameraPosition.y);
+                canvas.panX = panX; canvas.panY = panY; canvas.freeZoom = freeZoom; canvas.repaint();
+            }
+        });
+    }
+    private void acceptLoadedScene(SceneLoaded loaded, String path) {
+        scene = loaded.scene(); animationPath = path;
+        sceneClock = new AnimationTimeline.Clock(); sceneClock.speed(speedFactor());
+        loop.setText("强制循环"); loop.setSelected(false);
+        loop.setToolTipText("场景时间持续前进。默认各 ANI 遵循自己的 LOOP；勾选后所有动画独立循环。");
+        timelineStart = 0; changing = true; timeline.setMaximum(60_000); timeline.setValue(0); changing = false;
+        canvas.world = loaded.rendered().bounds(); acceptScene(loaded.rendered()); updateControls();
+    }
     private void acceptScene(ScenePreview.Rendered rendered) {
         canvas.scene = rendered; canvas.overlay = collision.isSelected(); canvas.markers = entityMarkers.isSelected(); canvas.error = "";
+        updateControls();
+        if (rendered.cameraLimits() != null && (canvas.camera == null || !canvas.camera.limits().equals(rendered.cameraLimits())))
+            canvas.camera = new SceneCamera(rendered.cameraLimits());
         long time = rendered.milliseconds(); timelineStart = time / 60_000 * 60_000;
         changing = true; timeline.setValue((int) (time - timelineStart)); changing = false;
         timeline.setToolTipText("当前时间窗口 " + timelineStart / 1000 + "–" + (timelineStart / 1000 + 60) + " 秒；拖动可定位，播放持续前进");
         frameLabel.setText(String.format(Locale.ROOT, "场景 %.3f s · %d 个轨道 · 独立计时", time / 1000.0, rendered.trackCount()));
-        details.setText(animationPath + "\n" + rendered.tileCount() + " 个地块 · " + rendered.draws().size()
-                + " 个可绘制图层 · " + rendered.collisions().size() + " 个通行网格\n"
-                + "粒子：" + rendered.emitterCount() + " 个生成器 · " + rendered.particleCount() + " 个活动粒子 · 对象碰撞 " + rendered.objectCollisions().size() + " 处\n"
+        details.setText((dungeonSelection == null ? "" : source.path() + "\n" + dungeonSelection.description())
+                + animationPath + "\n" + rendered.tileCount() + " 个地块 · " + rendered.draws().size()
+                + " 个可绘制图层\n"
+                + (rendered.town() ? "通行范围：城镇可移动区域 " + rendered.movable().size() + " 处（青框，并集）\n"
+                        : "通行范围：" + rendered.collisions().size() + " 个通行网格 · 对象碰撞 " + rendered.objectCollisions().size() + " 处\n")
+                + "粒子：" + rendered.emitterCount() + " 个生成器 · " + rendered.particleCount() + " 个活动粒子\n"
                 + "实体：NPC " + countEntities(rendered, EntityScript.Kind.NPC) + " · 怪物 " + countEntities(rendered, EntityScript.Kind.MONSTER)
                 + " · 被动对象 " + countEntities(rendered, EntityScript.Kind.PASSIVE)
                 + (rendered.conditionalCount() == 0 ? "" : " · 条件候选 " + rendered.conditionalCount()) + "\n"
@@ -405,31 +464,44 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private record Loaded(String path, ResourceScript.Animation animation) {}
     private record SceneLoaded(ScenePreview scene, ScenePreview.Rendered rendered) {}
     private record SceneOption(String path) { @Override public String toString() { return "完整场景 · " + path; } }
+    private record DungeonOption(String path) { @Override public String toString() { return "副本布局 · " + path; } }
     @FunctionalInterface private interface Work<T> { T run() throws Exception; }
 
-    private static final class Canvas extends JPanel {
+    static final class Canvas extends JPanel {
         PreviewRenderer.Prepared prepared; ScenePreview.Rendered scene;
+        SceneCamera camera;
         Rectangle2D world; String error = ""; int zoom;
-        boolean overlay, markers; double panX, panY, freeZoom; Point drag;
+        boolean overlay, markers, clientViewport; double panX, panY, freeZoom; Point drag;
         Canvas() {
             setPreferredSize(new Dimension(400, 360)); setToolTipText("拖动平移，滚轮缩放");
             MouseAdapter mouse = new MouseAdapter() {
-                @Override public void mousePressed(MouseEvent event) { drag = event.getPoint(); setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)); }
+                @Override public void mousePressed(MouseEvent event) {
+                    if (!SwingUtilities.isLeftMouseButton(event) || usingClient() && !clientBounds(view().scale()).contains(event.getPoint())) return;
+                    drag = event.getPoint(); setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+                }
                 @Override public void mouseReleased(MouseEvent event) { drag = null; setCursor(Cursor.getDefaultCursor()); }
                 @Override public void mouseDragged(MouseEvent event) {
                     if (drag == null) return;
-                    panX += event.getX() - drag.x; panY += event.getY() - drag.y; drag = event.getPoint(); repaint();
+                    if (usingClient()) camera.move((drag.x - event.getX()) / view().scale(), (drag.y - event.getY()) / view().scale());
+                    else { panX += event.getX() - drag.x; panY += event.getY() - drag.y; }
+                    drag = event.getPoint(); repaint();
                 }
                 @Override public void mouseMoved(MouseEvent event) {
                     View view = view();
-                    double x = (event.getX() - view.x() - panX) / view.scale(), y = (event.getY() - view.y() - panY) / view.scale();
+                    if (usingClient() && !clientBounds(view.scale()).contains(event.getPoint())) { setToolTipText("客户端视口外；在边框内拖动移动相机"); return; }
+                    double x = (event.getX() - view.x() - (usingClient() ? 0 : panX)) / view.scale(),
+                            y = (event.getY() - view.y() - (usingClient() ? 0 : panY)) / view.scale();
                     String entity = scene == null ? "" : scene.entityAt(x, y);
                     String grid = scene != null && overlay ? scene.collisionAt(x, y) : "";
                     String tooltip = entity + (!entity.isEmpty() && !grid.isEmpty() ? "；" : "") + grid;
-                    setToolTipText(tooltip.isEmpty() ? "拖动平移，滚轮缩放" : tooltip);
+                    setToolTipText(tooltip.isEmpty() ? usingClient() ? "拖动相机，到达地图边界后停止；滚轮缩放视口" : "拖动平移，滚轮缩放" : tooltip);
                 }
                 @Override public void mouseWheelMoved(MouseWheelEvent event) {
                     View old = view();
+                    if (usingClient()) {
+                        if (!clientBounds(old.scale()).contains(event.getPoint())) return;
+                        freeZoom = Math.max(.02, Math.min(8, old.scale() * Math.pow(1.2, -event.getPreciseWheelRotation()))); repaint(); return;
+                    }
                     double wx = (event.getX() - old.x() - panX) / old.scale(), wy = (event.getY() - old.y() - panY) / old.scale();
                     freeZoom = Math.max(.02, Math.min(8, old.scale() * Math.pow(1.2, -event.getPreciseWheelRotation())));
                     View current = view(); panX = event.getX() - current.x() - wx * current.scale();
@@ -438,16 +510,25 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
             };
             addMouseListener(mouse); addMouseMotionListener(mouse); addMouseWheelListener(mouse);
         }
-        void resetView() { panX = 0; panY = 0; freeZoom = 0; }
+        void resetView() { panX = 0; panY = 0; freeZoom = 0; drag = null; if (camera != null) camera.reset(); }
+        boolean usingClient() { return clientViewport && scene != null && scene.cameraLimits() != null && camera != null; }
+        Rectangle clientBounds(double scale) {
+            int width = Math.max(1, (int) Math.round(SceneCamera.WIDTH * scale)), height = Math.max(1, (int) Math.round(SceneCamera.HEIGHT * scale));
+            return new Rectangle((getWidth() - width) / 2, (getHeight() - height) / 2, width, height);
+        }
         private View view() {
             double scale = freeZoom > 0 ? freeZoom : new double[]{1, .25, .5, 1, 2, 4}[zoom];
             double ox = getWidth() / 2.0, oy = getHeight() * .72;
             if (world != null && (scene != null || zoom == 0 || freeZoom > 0)) {
                 if (zoom == 0 && freeZoom == 0) scale = Math.min(4,
-                        Math.min(Math.max(1, getWidth() - 40) / Math.max(1, world.getWidth()),
-                                Math.max(1, getHeight() - 40) / Math.max(1, world.getHeight())));
+                        Math.min(Math.max(1, getWidth() - 40) / (usingClient() ? SceneCamera.WIDTH : Math.max(1, world.getWidth())),
+                                Math.max(1, getHeight() - 40) / (usingClient() ? SceneCamera.HEIGHT : Math.max(1, world.getHeight()))));
                 ox = getWidth() / 2.0 - world.getCenterX() * scale;
                 oy = getHeight() / 2.0 - world.getCenterY() * scale;
+            }
+            if (usingClient()) {
+                Rectangle viewport = clientBounds(scale); Point position = camera.position();
+                ox = viewport.x - position.x * scale; oy = viewport.y - position.y * scale;
             }
             return new View(ox, oy, scale);
         }
@@ -459,8 +540,19 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                     g.fillRect(x, y, 16, 16);
                 }
                 View view = view();
-                if (scene != null) scene.paint(g, new Rectangle(0, 0, getWidth(), getHeight()),
-                        view.x(), view.y(), view.scale(), panX, panY, overlay, markers);
+                if (scene != null) {
+                    if (usingClient()) {
+                        Rectangle viewport = clientBounds(view.scale()); Point position = camera.position();
+                        g.setColor(new Color(0, 0, 0, 100)); g.fillRect(0, 0, getWidth(), getHeight());
+                        scene.paintClient(g, viewport, view.scale(), position, overlay, markers);
+                        // Draw after the scene using the canvas clip, so scene clipping cannot hide the frame.
+                        g.setStroke(new BasicStroke(1)); g.setColor(new Color(15, 20, 27));
+                        g.drawRect(viewport.x - 2, viewport.y - 2, viewport.width + 3, viewport.height + 3);
+                        g.setColor(new Color(125, 195, 250)); g.drawRect(viewport.x - 1, viewport.y - 1, viewport.width + 1, viewport.height + 1);
+                        String label = "客户端视口 640×480 · 相机 " + position.x + "/" + camera.limits().maxX() + ", " + position.y + "/" + camera.limits().maxY();
+                        g.drawString(label, Math.max(6, viewport.x), Math.max(14, viewport.y - 6));
+                    } else scene.paint(g, new Rectangle(0, 0, getWidth(), getHeight()), view.x(), view.y(), view.scale(), panX, panY, overlay, markers);
+                }
                 else {
                     g.setColor(new Color(140, 147, 158, 120));
                     g.drawLine(0, (int) (view.y() + panY), getWidth(), (int) (view.y() + panY));
