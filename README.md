@@ -6,8 +6,8 @@
 
 **支持多种 DNF PVF 格式的脚本编辑与资源预览工具。**
 
-PVF Studio 将脚本编辑、全文搜索、游戏资源预览和副本布局检查集中在一个桌面应用中。它基于 IntelliJ Platform 的编辑器构建，提供独立的 Windows 程序、自带运行时和独立草稿工作区。**0.14.0 本地开发版** 增加 MAP / DGN 可视化编辑与代码 / 分屏切换，支持 ACT1 `DNF_SCRIPT_PACK`、DNF_Single 固定目录及 70S2 / DOF86 UUID 容器，并已验证 100 级 UUID 样本的读取和地图、副本预览。经典二进制 ANI 可直接编辑和预览，无需安装 IDEA 或运行服务端。具体边界见 [格式兼容](docs/pvf-compatibility.md)。
-本分支的 **0.14.0** 更新尚未发布：提供同一文档的代码 / 分屏 / 设计视图、MAP 对象拖动与资源添加、DGN 房间和连接编辑、独立深渊替换配置及 MAP 克隆注册。操作与兼容边界见 [可视化地图和副本编辑](docs/visual-map-editor.md)。
+PVF Studio 将脚本编辑、全文搜索、游戏资源预览和副本布局检查集中在一个桌面应用中。它基于 IntelliJ Platform 的编辑器构建，提供独立的 Windows 程序、自带运行时和独立草稿工作区。**0.14.1 本地修复版** 增加 MAP / DGN 可视化编辑与代码 / 分屏切换，支持 ACT1 `DNF_SCRIPT_PACK`、DNF_Single 固定目录及 70S2 / DOF86 UUID 容器，并已验证 100 级 UUID 样本的读取和地图、副本预览。经典二进制 ANI 可直接编辑和预览，无需安装 IDEA 或运行服务端。具体边界见 [格式兼容](docs/pvf-compatibility.md)。
+本分支的 **0.14.1** 更新尚未发布：提供同一文档的代码 / 分屏 / 设计视图、MAP 对象拖动与资源添加、DGN 房间和连接编辑、独立深渊替换配置及 MAP 克隆注册。操作与兼容边界见 [可视化地图和副本编辑](docs/visual-map-editor.md)。
 
 
 [下载最新版](https://github.com/firekula/PVFStudio/releases/latest) · [使用方法](#使用方法) · [源码构建](#源码构建) · [文档](#文档) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/firekula/PVFStudio/issues)
@@ -143,7 +143,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build-release.ps1 -Z
 脚本执行测试、原生启动器编译、产品装配和身份检查，然后打包。输出位置：
 
 ```text
-pvf-product/build/product/PVFStudio-0.14.0/      可直接运行的程序目录
+pvf-product/build/product/PVFStudio-0.14.1/      可直接运行的程序目录
 pvf-product/build/distributions/               安装器、便携 ZIP、SHA-256
 ```
 
@@ -155,7 +155,7 @@ pvf-product/build/distributions/               安装器、便携 ZIP、SHA-256
 .\gradlew.bat -PwithIntellij=true :pvf-product:runProduct
 
 python tools/check_product.py `
-  --product 'pvf-product/build/product/PVFStudio-0.14.0' `
+  --product 'pvf-product/build/product/PVFStudio-0.14.1' `
   --archive 'C:\Game\Script.pvf' `
   --npk 'C:\Game\ImagePacks2'
 ```
@@ -182,7 +182,7 @@ $cli = '.\pvf-cli\build\install\pvf-studio\bin\pvf-studio.bat'
 
 当前支持已验证的 ACT1、DNF_Single 固定目录和 70S2 / DOF86 UUID 样本，可修改、创建、删除及重命名条目。100 级 UUID 样本已验证读取、地图与副本预览，该样本的结构导出和游戏加载尚未验收；其他未经验证的 PVF 变体仍可能无法打开。`B0 D0` 脚本支持文本投影、数值/字符串编辑及字符串表追加；经典二进制 ANI 支持已识别字段的编辑、编译与预览。尚未识别的 ANI、专用二进制 MAP/TIL 等资源提供只读十六进制视图。存续条目的标识、补齐和不透明数据按原容器规则保留；重命名和删除不会自动改写脚本引用，详情见 [文件树操作](docs/file-operations.md)、[格式兼容](docs/pvf-compatibility.md) 和 [格式说明](docs/pvf-format.md)。
 
-预览展示配置中定义的视觉和通行数据，支持已实现的图层、变换、混合与粒子规则；没有执行角色 AI、战斗、寻路或完整动态碰撞。编码须能无损转换，混合换行条目暂只读。早期 0.1.0 导出的修改包需要从有效原包和草稿重新导出，原因见 [Changelog](CHANGELOG.md)。
+预览展示配置中定义的视觉和通行数据，支持已实现的图层、变换、混合与粒子规则；没有执行角色 AI、战斗、寻路或完整动态碰撞。编码须能无损转换；混合换行条目可编辑，并按文档版本保留原行尾。早期 0.1.0 导出的修改包需要从有效原包和草稿重新导出，原因见 [Changelog](CHANGELOG.md)。
 
 发行验证包括 173 项 JVM 测试、14 项独立 Python 测试、产品身份和实际工作台冒烟，以及 ZIP CRC / 内容 / 摘要检查。四份真实 PVF 合计 1,089,250 条目的结构导出通过独立校验；86 样本的 402,701 个二进制 ANI 通过字节一致重编译，431 个 DGN、563 套布局解析成功。86 普鲁兹地图另外验证实体记录、ACT 初始视觉和无标记对照渲染；100 级样本验证三个副本的显式 MAP 关联、8 套默认布局和门坐标，并检查列车地图平铺、地块偏移以及 1264×811 / 1024×720 小窗口。ACT1 副本验证覆盖 43 个 DGN、49 套布局、178 组起点/Boss 组合和 242 个房间开闭状态。测试范围、历史结果和客户端证据见下列文档。
 

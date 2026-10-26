@@ -81,12 +81,7 @@ public final class DungeonPreview {
             if (mask == 0 && maze.width() * maze.height() > 1 && !position.equals(start) && !position.equals(boss)) continue;
             boolean isBoss = position.equals(boss); List<Integer> specified = isBoss && maze.bossMaps().containsKey(position)
                     ? maze.bossMaps().get(position) : maze.maps().get(position);
-            List<MapChoice> pool = specified == null ? pools.get(mask + (isBoss ? 16 : 0))
-                    : specified.stream().map(maps::get).filter(Objects::nonNull)
-                    .filter(m -> isBoss ? m.info.type().equals("boss") : m.info.type().equals("normal")).toList();
-            // Ordinary coordinate lists often contain no Boss MAP; the separate Boss pool then applies.
-            if (isBoss && pool.isEmpty() && !maze.bossMaps().containsKey(position))
-                pool = pools.get(mask + 16);
+            List<MapChoice> pool = candidates(mazeIndex,position,isBoss);
             if (specified != null) {
                 var different = pool.stream().filter(m -> !m.info().supports(mask)).map(m -> Integer.toString(m.id())).distinct().toList();
                 if (!different.isEmpty()) problems.add("房间 " + position + " 使用 DGN 明确指定的 MAP " + String.join("、", different)
@@ -105,6 +100,15 @@ public final class DungeonPreview {
         }
         if (start != null && start.equals(boss)) problems.add("起点与 Boss 坐标相同");
         return new Layout(maze, start, boss, List.copyOf(rooms), List.copyOf(problems));
+    }
+
+    /** Effective metadata pool for one room/role; exposing it never pins an automatic source binding. */
+    public List<MapChoice> candidates(int mazeIndex,Position position,boolean boss) {
+        Maze maze=definition.mazes().get(mazeIndex);int mask=maze.mask(position);
+        List<Integer> specified=boss&&maze.bossMaps().containsKey(position)?maze.bossMaps().get(position):maze.maps().get(position);
+        List<MapChoice> pool=specified==null?pools.get(mask+(boss?16:0)):specified.stream().map(maps::get).filter(Objects::nonNull).filter(m -> boss?m.info.type().equals("boss"):m.info.type().equals("normal")).toList();
+        if(boss&&pool.isEmpty()&&!maze.bossMaps().containsKey(position))pool=pools.get(mask+16);
+        return List.copyOf(pool);
     }
 
     public List<Gate> gates(Layout layout, Room room, MapChoice map, boolean cleared, boolean bossCondition) {

@@ -10,6 +10,7 @@ final class SceneDocumentBridge<T> implements AutoCloseable {
     interface Port {
         String text(); long version(); boolean writable();
         void write(String label, String value);
+        default void writeEdit(ScriptEdit edit,String value){write(edit.label(),value);}
     }
     @FunctionalInterface interface Parser<T> { T parse(String text) throws Exception; }
     record State<T>(long version, String text, T model, boolean writable, String error) {}
@@ -47,7 +48,7 @@ final class SceneDocumentBridge<T> implements AutoCloseable {
             throw new IOException("代码已变化或当前片段无法编辑，请等待解析并重新选择");
         String value = edit.applyTo(port.text());
         if(value.equals(port.text()))return;
-        port.write(edit.label(), value); refresh();
+        port.writeEdit(edit, value); refresh();
     }
     @Override public void close() { closed = true; generation++; }
 }

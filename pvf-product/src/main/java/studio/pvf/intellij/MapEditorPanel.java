@@ -208,24 +208,16 @@ final class MapEditorPanel extends JPanel {
         writes.forEach(c -> c.setEnabled(writable)); properties.revalidate(); properties.repaint();
     }
     private ScriptEdit propertyEdit() throws Exception {
-        String text=model.source().text();
-        for(var field:fields.entrySet()) {
-            if(field.getKey().equals("traits"))continue;
-            if(field.getValue().getText().equals(entry().properties().get(field.getKey())))continue;
-            var current=MapDocument.parse(path,text); var entry=current.entries().stream().filter(e -> e.id().equals(selected)).findFirst().orElseThrow();
-            if(!field.getValue().getText().equals(entry.properties().get(field.getKey())))text=current.setField(selected,field.getKey(),field.getValue().getText()).applyTo(text);
+        var changes=new ArrayList<ScriptEdit.Replacement>();var original=entry();
+        for(var field:fields.entrySet())if(!field.getKey().equals("traits")&&!field.getValue().getText().equals(original.properties().get(field.getKey())))changes.addAll(model.setField(selected,field.getKey(),field.getValue().getText()).replacements());
+        String targetType=fields.containsKey("monsterType")?ScriptDialect.flag(fields.get("monsterType").getText()):"";
+        if(fields.containsKey("traits")&&(targetType.equals("champion")||targetType.equals("super champion"))){
+            String raw=fields.get("traits").getText().trim();var traits=raw.isBlank()?List.<Integer>of():Arrays.stream(raw.split("[,，\\s]+")).map(Integer::valueOf).toList();
+            if(traits.size()>64||traits.stream().anyMatch(n -> n<0))throw new java.io.IOException("特性编号须非负，最多 64 项");
+            int countIndex=original.fields().get("traitCount");var previous=original.tokens().subList(countIndex+1,original.tokens().size()).stream().map(t -> Integer.valueOf(t.value())).toList();
+            if(!previous.equals(traits))changes.add(model.source().replacement(new SourceDocument.Range(original.tokens().get(countIndex).range().start(),original.range().end()),traits.size()+(traits.isEmpty()?"":" "+String.join(" ",traits.stream().map(Object::toString).toList()))));
         }
-        if(fields.containsKey("traits")) {
-            var current=MapDocument.parse(path,text); var entry=current.entries().stream().filter(e -> e.id().equals(selected)).findFirst().orElseThrow();
-            if(entry.fields().containsKey("traitCount")) {
-                String raw=fields.get("traits").getText().trim(); var traits=raw.isBlank()?List.<Integer>of():Arrays.stream(raw.split("[,，\\s]+")).map(Integer::valueOf).toList();
-                if(traits.size()>64||traits.stream().anyMatch(n -> n<0))throw new java.io.IOException("特性编号须非负，最多 64 项");
-                var count=entry.tokens().get(entry.fields().get("traitCount"));
-                var previous=entry.tokens().subList(entry.fields().get("traitCount")+1,entry.tokens().size()).stream().map(t -> Integer.valueOf(t.value())).toList();
-                if(!previous.equals(traits))text=current.source().replace("设置精英特性",new SourceDocument.Range(count.range().start(),entry.range().end()),traits.size()+(traits.isEmpty()?"":" "+String.join(" ",traits.stream().map(Object::toString).toList()))).applyTo(text);
-            }
-        }
-        return model.source().replace("修改对象属性",new SourceDocument.Range(0,model.source().text().length()),text);
+        return new ScriptEdit("修改对象属性",model.source().text(),changes);
     }
     private void definition() {
         var entry=entry(); if(entry==null||catalog==null)return;

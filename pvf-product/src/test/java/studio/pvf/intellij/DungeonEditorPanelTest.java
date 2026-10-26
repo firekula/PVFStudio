@@ -88,6 +88,31 @@ class DungeonEditorPanelTest {
             assertTrue(h.panel.activeHellAt(new Position(0,0)));h.text=h.text.replace("[hell dungeon] 1","[hell dungeon] 0");h.install();assertFalse(h.panel.activeHellAt(new Position(0,0)));
         }catch(Exception e){throw new RuntimeException(e);}});
     }
+    @Test void oneFullHeightPreviewWithCompactRoomSelectionAndNoEmptyDiagnosticFooter()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();var split=(JSplitPane)((BorderLayout)h.panel.getLayout()).getLayoutComponent(BorderLayout.CENTER);
+            assertSame(h.panel.previewHost(),split.getLeftComponent(),"The main column must contain only the full preview");
+            assertNotNull(find((Container)split.getRightComponent(),"dgn-editor-grid",JComponent.class));
+            var footer=((BorderLayout)h.panel.getLayout()).getLayoutComponent(BorderLayout.SOUTH);assertTrue(footer.getPreferredSize().height<40,"An empty diagnostics area must not reserve rows");
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    @Test void roomGridClearsOldScenePixelsAndPropertyWheelHasUsefulIncrement()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();var grid=find(h.panel,"dgn-editor-grid",JComponent.class);grid.setSize(320,180);var pixels=new java.awt.image.BufferedImage(320,180,java.awt.image.BufferedImage.TYPE_INT_RGB);var g=pixels.createGraphics();g.setColor(Color.MAGENTA);g.fillRect(0,0,320,180);grid.paint(g);g.dispose();assertNotEquals(Color.MAGENTA.getRGB(),pixels.getRGB(250,140),"A room grid must erase cached map pixels");
+            var field=find(h.panel,"dgn-room-maps",JTextField.class);var scroll=(JScrollPane)SwingUtilities.getAncestorOfClass(JScrollPane.class,field);assertTrue(scroll.getVerticalScrollBar().getUnitIncrement()>=24);
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    @Test void automaticPoolsAreVisibleEditableAndUntouchedPoolsStayAutomatic()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.text="[maze info] [size] 2 1 [greed] `BBEE` [start map] 0 0 [/start map] [boss map] 1 0 [/boss map]";h.install();
+            var files=Map.of("dungeon/dungeon.lst","1 `x.dgn`","map/map.lst","10 `a.map` 20 `b.map`","map/a.map","[dungeon] 1 [type] `[normal]` [greed] `BBBBEEEE`","map/b.map","[dungeon] 1 [type] `[boss]` [greed] `BBBBEEEE`");
+            var dungeon=studio.pvf.preview.DungeonPreview.load("dungeon/x.dgn",h.text,files::get);var choice=DungeonEditorPreview.resolve(dungeon,h.panel.preview());String unchanged=h.text;h.panel.resolvedChoices(choice);
+            assertEquals("10",find(h.panel,"dgn-room-maps",JTextField.class).getText());assertEquals("20",find(h.panel,"dgn-room-boss-maps",JTextField.class).getText());assertEquals(unchanged,h.text);
+            h.value("dgn-room-maps","99");h.panel.resolvedChoices(choice);assertEquals("99",find(h.panel,"dgn-room-maps",JTextField.class).getText(),"An async pool resolution must not overwrite typing");
+            h.panel.selectRoom(new Position(0,0));h.panel.resolvedChoices(choice);h.value("dgn-room-boss-maps","20");h.click("dgn-apply-maps");
+            assertFalse(h.document().mazes().getFirst().layout().maps().containsKey(new Position(0,0)),"Displaying an automatic pool must not silently pin it");assertEquals(List.of(20),h.document().mazes().getFirst().layout().bossMaps().get(new Position(0,0)));
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
     static <T> T find(Container parent,String name,Class<T> type) {
         for(Component c:parent.getComponents()) {
             if(name.equals(c.getName()) && type.isInstance(c)) return type.cast(c);

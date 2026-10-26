@@ -17,6 +17,13 @@ public record ScriptEdit(String label, String baseline, List<Replacement> replac
         replacements = List.copyOf(replacements);
     }
 
+    public static ScriptEdit combine(String label,List<ScriptEdit> edits) throws IOException {
+        if(edits.isEmpty())throw new IOException("没有可合并的编辑");String baseline=edits.get(0).baseline();var changes=new ArrayList<Replacement>();var inserts=new java.util.LinkedHashMap<Integer,Replacement>();
+        for(var edit:edits){if(!baseline.equals(edit.baseline()))throw new IOException("编辑不是来自同一源码快照");for(var change:edit.replacements()){
+            if(change.start()==change.end())inserts.merge(change.start(),change,(a,b) -> new Replacement(a.start(),a.end(),"",a.value()+b.value()));else changes.add(change);
+        }}changes.addAll(inserts.values());return new ScriptEdit(label,baseline,changes);
+    }
+
     public String applyTo(String current) throws IOException {
         if (!baseline.equals(current)) throw new IOException("代码已变化，请重新选择后再编辑");
         var ordered = new ArrayList<>(replacements);

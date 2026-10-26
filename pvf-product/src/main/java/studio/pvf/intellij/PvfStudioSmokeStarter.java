@@ -55,6 +55,7 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
     private static void run(Path archivePath, Path output) {
         try {
             Files.createDirectory(output);
+            if(Boolean.getBoolean("pvf.smoke.dungeonUsability")){DungeonUsabilitySmoke.run(archivePath,output);System.out.println("PVF_STUDIO_DUNGEON_USABILITY_SMOKE_OK");ApplicationManager.getApplication().invokeLater(() -> ((ApplicationEx)ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));return;}
             if(Boolean.getBoolean("pvf.smoke.visualScene")){VisualSceneEditorSmoke.run(archivePath,output);System.out.println("PVF_STUDIO_VISUAL_SCENE_SMOKE_OK");ApplicationManager.getApplication().invokeLater(() -> ((ApplicationEx)ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));return;}
             if (Boolean.getBoolean("pvf.smoke.visualMap")) {
                 VisualMapWorkbenchSmoke.run(archivePath,output);
@@ -184,14 +185,16 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
                     } catch (Throwable failure) { edit.completeExceptionally(failure); }
                     finally { if (editor != null) EditorFactory.getInstance().releaseEditor(editor); }
                 });
-                String edited = newlines.restore(edit.get());
+                String normalizedEdit=edit.get();if(!normalizedEdit.startsWith(normalized))throw new AssertionError("Smoke append changed original source");
+                newlines.recordChange(normalized,normalizedEdit,normalized.length(),"",normalizedEdit.substring(normalized.length()),0,1);
+                String edited = newlines.restore(normalizedEdit,1);
                 workspace.stageText(entry, edited, charset);
                 workspace.export(exported);
                 Path backedUp = output.resolve("with-backup.pvf");
                 PvfBackupExport.Result initial = PvfBackupExport.export(workspace, backedUp);
                 if (Files.mismatch(archivePath, initial.backup()) != -1)
                     throw new AssertionError("First export backup did not preserve the source archive");
-                workspace.stageText(entry, edited + newlines.restore("// backup version two\n"), charset);
+                workspace.stageText(entry, edited + newlines.formatAdded("// backup version two\n"), charset);
                 PvfBackupExport.Result updated = PvfBackupExport.export(workspace, backedUp);
                 if (Files.mismatch(exported, updated.backup()) != -1)
                     throw new AssertionError("Update backup did not preserve the previous export");

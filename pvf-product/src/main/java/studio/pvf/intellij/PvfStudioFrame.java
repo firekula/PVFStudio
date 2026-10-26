@@ -65,6 +65,7 @@ import java.util.function.BooleanSupplier;
 
 /** Small standalone workbench; archive I/O never runs on the Swing event thread. */
 final class PvfStudioFrame extends JFrame {
+    private static final com.intellij.openapi.util.Key<Newlines> SOURCE_LINE_ENDINGS=com.intellij.openapi.util.Key.create("pvf.source.line.endings");
     private final ExecutorService io = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "pvf-studio-io"); t.setDaemon(true); return t;
     });
@@ -946,7 +947,7 @@ final class PvfStudioFrame extends JFrame {
         Document document = retained!=null&&retained.getText().equals(normalized)?retained:EditorFactory.getInstance().createDocument(normalized);
         Newlines lineEndings = new Newlines(raw);
         boolean binary = studio.pvf.workspace.BinaryView.isView(raw);
-        Editor editor = lineEndings.isMixed() || binary ? EditorFactory.getInstance().createViewer(document, editorProject)
+        Editor editor = binary ? EditorFactory.getInstance().createViewer(document, editorProject)
                 : EditorFactory.getInstance().createEditor(document, editorProject);
         editor.getSettings().setLineNumbersShown(showLineNumbers);
         editor.getSettings().setUseSoftWraps(softWraps);
@@ -973,7 +974,10 @@ final class PvfStudioFrame extends JFrame {
         tabShortcuts.forEach((action, shortcut) -> action.registerCustomShortcutSet(shortcut, session.component()));
         sessions.put(path, session);
         session.documentListener=new DocumentListener() {
+            private String beforeText;
+            public void beforeDocumentChange(DocumentEvent event){beforeText=event.getDocument().getText();}
             public void documentChanged(DocumentEvent event) {
+                session.newlines.recordChange(beforeText,event.getDocument().getText(),event.getOffset(),event.getOldFragment().toString(),event.getNewFragment().toString(),event.getOldTimeStamp(),event.getDocument().getModificationStamp());
                 updateSessionTitle(session); previewRefresh.restart(); scheduleEditorStateSave();
                 if (session.bridge != null) session.bridge.refresh();
             }
@@ -1000,7 +1004,7 @@ final class PvfStudioFrame extends JFrame {
             tabs.decorate(session.component(), PvfFileIcons.forEntry(path, false, false)); tabs.setSelectedComponent(session.component());
         });
         status.setText(path + " | " + charset.name() + " | " + session.newlines.description()
-                + (binary ? " | 二进制只读预览" : lineEndings.isMixed() ? " | 混合换行暂只读，避免隐式改写行尾" : " | Ctrl+S 保存草稿；导出生成新包"));
+                + (binary ? " | 二进制只读预览" : lineEndings.isMixed() ? " | 编辑时保留原有混合换行；Ctrl+S 保存草稿" : " | Ctrl+S 保存草稿；导出生成新包"));
         updateButtons();
     }
 
@@ -1037,6 +1041,12 @@ final class PvfStudioFrame extends JFrame {
             public void write(String label, String value) {
                 com.intellij.openapi.command.CommandProcessor.getInstance().executeCommand(session.editor.getProject(),
                     () -> ApplicationManager.getApplication().runWriteAction(() -> session.editor.getDocument().setText(value)), label, null);
+            }
+            public void writeEdit(studio.pvf.sceneedit.ScriptEdit edit,String value){
+                com.intellij.openapi.command.CommandProcessor.getInstance().executeCommand(session.editor.getProject(),() -> ApplicationManager.getApplication().runWriteAction(() -> {
+                    var changes=new ArrayList<>(edit.replacements());changes.sort(java.util.Comparator.comparingInt(studio.pvf.sceneedit.ScriptEdit.Replacement::start).reversed());
+                    for(var change:changes)session.editor.getDocument().replaceString(change.start(),change.end(),change.value());
+                }),edit.label(),null);
             }
         }, text -> {
             var source = studio.pvf.sceneedit.SourceDocument.parse(text);
@@ -1108,7 +1118,7 @@ final class PvfStudioFrame extends JFrame {
         for(Session s:affected) {
             if(s.editor.isViewer()) { status.setText("涉及只读文档，无法克隆绑定"); return; }
             var doc=s.editor.getDocument(); writable.put(s,doc.isWritable()); stamps.put(s,doc.getModificationStamp());
-            raw.put(s.path,s.newlines.restore(doc.getText())); beforePersisted.put(s,s.persistedText);
+            raw.put(s.path,s.newlines.restore(doc.getText(),doc.getModificationStamp())); beforePersisted.put(s,s.persistedText);
         }
         affected.forEach(s -> s.editor.getDocument().setReadOnly(true));
         Runnable thaw=() -> writable.forEach((s,value) -> { if(!s.editor.isDisposed()) {
@@ -1134,14 +1144,15 @@ final class PvfStudioFrame extends JFrame {
                 thaw.run();
                 try {
                     var touched=affected.stream().filter(s -> prepared.documentTexts().containsKey(s.path)).toList();
-                    var beforeTexts=Map.of("map/map.lst",normalizeNewlines(prepared.registration().listEdit().baseline()),dungeonPath,normalizeNewlines(prepared.registration().dungeonEdit().baseline()));
+                    var beforeRawTexts=Map.of("map/map.lst",prepared.registration().listEdit().baseline(),dungeonPath,prepared.registration().dungeonEdit().baseline());
+                    var beforeTexts=new HashMap<String,String>();beforeRawTexts.forEach((path,text) -> beforeTexts.put(path,normalizeNewlines(text)));
                     var afterTexts=new HashMap<String,String>();prepared.documentTexts().forEach((path,text) -> afterTexts.put(path,normalizeNewlines(text)));
                     var originalDocuments=new HashMap<String,Document>();var persistedBefore=new HashMap<>(beforeTexts);
                     touched.forEach(tab -> {originalDocuments.put(tab.path,tab.editor.getDocument());persistedBefore.put(tab.path,beforePersisted.get(tab));});
                     com.intellij.openapi.command.CommandProcessor.getInstance().executeCommand(origin.editor.getProject(), () -> {
                         ApplicationManager.getApplication().runWriteAction(() -> {
                             for(Session s:touched) {
-                                setTransactionText(s.editor.getDocument(),afterTexts.get(s.path));
+                                setTransactionText(s.editor.getDocument(),afterTexts.get(s.path),prepared.documentTexts().get(s.path));
                                 s.persistedText=s.editor.getDocument().getText(); s.persistedStamp=s.editor.getDocument().getModificationStamp(); updateSessionTitle(s);
                             }
                         });
@@ -1162,7 +1173,7 @@ final class PvfStudioFrame extends JFrame {
                                     var targets=SceneDocumentReconciliation.targets(beforeTexts,afterTexts,texts,after);
                                     current.restoreBatch(batch,after);
                                     ApplicationManager.getApplication().runWriteAction(() -> targets.forEach((path,text) -> {
-                                        setTransactionText(documents.get(path),text);Session live=sessions.get(path);
+                                        setTransactionText(documents.get(path),text,after?prepared.documentTexts().get(path):beforeRawTexts.get(path));Session live=sessions.get(path);
                                         if(live!=null){live.persistedText=after?afterTexts.get(path):persistedBefore.get(path);live.persistedStamp=-1;updateSessionTitle(live);}
                                     }));
                                     if(!after&&clone!=null){sessions.remove(clone.path);tabs.remove(clone.component());releaseSession(clone);}
@@ -1175,16 +1186,17 @@ final class PvfStudioFrame extends JFrame {
                 } catch(Throwable failure) {
                     try { current.restoreBatch(batch,false); } catch(IOException rollback) { failure.addSuppressed(rollback); }
                     ApplicationManager.getApplication().runWriteAction(() -> affected.forEach(s -> { if(prepared.documentTexts().containsKey(s.path)) {
-                        s.editor.getDocument().setText(normalizeNewlines(raw.get(s.path))); s.persistedText=beforePersisted.get(s); s.persistedStamp=-1;
+                        setTransactionText(s.editor.getDocument(),normalizeNewlines(raw.get(s.path)),raw.get(s.path)); s.persistedText=beforePersisted.get(s); s.persistedStamp=-1;
                     } }));
                     showError(failure);
                 }
             },thaw);
         },thaw);
     }
-    private static void setTransactionText(Document document,String text){
+    private static void setTransactionText(Document document,String text,String raw){
         // The custom global action owns the entire batch; avoid separate Document actions with different lifetimes.
         com.intellij.openapi.command.undo.UndoUtil.disableUndoIn(document,() -> document.setText(text));
+        Newlines lines=document.getUserData(SOURCE_LINE_ENDINGS);if(lines!=null)lines.rememberRaw(raw,document.getModificationStamp());
     }
     private void refreshSceneStructure(String selection) {
         previewSignature="";
@@ -1220,7 +1232,7 @@ final class PvfStudioFrame extends JFrame {
         for (Session session : targets) {
             String text = session.editor.getDocument().getText();
             if (!text.equals(session.persistedText))
-                result.add(new Snapshot(session, text, session.newlines.restore(text),
+                result.add(new Snapshot(session, text, session.newlines.restore(text,session.editor.getDocument().getModificationStamp()),
                         session.editor.getDocument().getModificationStamp()));
             else {
                 session.persistedStamp = session.editor.getDocument().getModificationStamp();
@@ -1633,41 +1645,45 @@ final class PvfStudioFrame extends JFrame {
         Point pendingViewport;
         Session(String path, Charset charset, String raw, Editor editor) {
             this.path = path; this.charset = charset; this.editor = editor;
-            this.newlines = new Newlines(raw); this.persistedText = editor.getDocument().getText();
+            Newlines held=editor.getDocument().getUserData(SOURCE_LINE_ENDINGS);this.newlines=held==null?new Newlines(raw,editor.getDocument().getModificationStamp()):held;this.newlines.rememberRaw(raw,editor.getDocument().getModificationStamp());editor.getDocument().putUserData(SOURCE_LINE_ENDINGS,this.newlines); this.persistedText = editor.getDocument().getText();
             this.persistedStamp = editor.getDocument().getModificationStamp();
         }
         boolean isUnsaved() { return persistedStamp != editor.getDocument().getModificationStamp() && !persistedText.equals(editor.getDocument().getText()); }
     }
 
-    /** Keeps each original newline where possible, and the dominant style for added lines. */
+    /** Newline identity follows document edit ranges and revision stamps, including native undo/redo. */
     static final class Newlines {
-        private final List<String> originals = new ArrayList<>();
-        private final String dominant;
-        Newlines(String raw) {
-            int crlf = 0, lf = 0, cr = 0;
-            for (int i = 0; i < raw.length(); i++) {
-                char c = raw.charAt(i);
-                if (c == '\r') {
-                    if (i + 1 < raw.length() && raw.charAt(i + 1) == '\n') {
-                        originals.add("\r\n"); crlf++; i++;
-                    } else { originals.add("\r"); cr++; }
-                } else if (c == '\n') { originals.add("\n"); lf++; }
-            }
-            dominant = crlf >= lf && crlf >= cr ? "\r\n" : lf >= cr ? "\n" : "\r";
+        private record State(String fingerprint,byte[] endings) {}
+        private final Map<Long,State> revisions=new HashMap<>();
+        private final String dominant,initialNormalized;
+        private final long initialStamp;
+        private final boolean mixed;
+        Newlines(String raw){this(raw,0);}
+        Newlines(String raw,long stamp){
+            initialNormalized=normalize(raw);initialStamp=stamp;byte[] kinds=endings(raw);int[] counts=new int[3];for(byte kind:kinds)counts[kind]++;
+            dominant=counts[0]>=counts[1]&&counts[0]>=counts[2]?"\r\n":counts[1]>=counts[2]?"\n":"\r";
+            mixed=java.util.stream.IntStream.of(counts).filter(n -> n>0).count()>1;rememberRaw(raw,stamp);
         }
-        String restore(String text) {
-            StringBuilder raw = new StringBuilder(text.length() + originals.size()); int newline = 0;
-            for (int i = 0; i < text.length(); i++) {
-                char c = text.charAt(i);
-                if (c == '\n') raw.append(newline < originals.size() ? originals.get(newline++) : dominant);
-                else raw.append(c);
-            }
-            return raw.toString();
+        private static String normalize(String raw){return raw.replace("\r\n","\n").replace('\r','\n');}
+        private static String fingerprint(String text){try{return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));}catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}}
+        private static byte[] endings(String raw){var result=new java.io.ByteArrayOutputStream();for(int i=0;i<raw.length();i++){char c=raw.charAt(i);if(c=='\r'){if(i+1<raw.length()&&raw.charAt(i+1)=='\n'){result.write(0);i++;}else result.write(2);}else if(c=='\n')result.write(1);}return result.toByteArray();}
+        private static int count(String text,int end){int n=0;for(int i=0;i<end;i++)if(text.charAt(i)=='\n')n++;return n;}
+        void rememberRaw(String raw,long stamp){revisions.put(stamp,new State(fingerprint(normalize(raw)),endings(raw)));}
+        void recordChange(String before,String after,int offset,String removed,String added,long oldStamp,long newStamp){
+            State old=revisions.get(oldStamp);if(old==null||!old.fingerprint.equals(fingerprint(before)))throw new IllegalStateException("未找到编辑前的原始行尾版本");
+            String digest=fingerprint(after);State known=revisions.get(newStamp);if(known!=null&&known.fingerprint.equals(digest))return;
+            if(offset<0||offset+removed.length()>before.length()||!before.substring(offset,offset+removed.length()).equals(removed))throw new IllegalStateException("编辑范围与行尾版本不一致");
+            int prefix=count(before,offset),deleted=count(removed,removed.length()),inserted=count(added,added.length());byte[] kinds=old.endings;
+            if(deleted!=0||inserted!=0){kinds=new byte[old.endings.length-deleted+inserted];System.arraycopy(old.endings,0,kinds,0,prefix);java.util.Arrays.fill(kinds,prefix,prefix+inserted,(byte)(dominant.equals("\r\n")?0:dominant.equals("\n")?1:2));System.arraycopy(old.endings,prefix+deleted,kinds,prefix+inserted,old.endings.length-prefix-deleted);}
+            revisions.put(newStamp,new State(digest,kinds));
         }
-        String description() {
-            return isMixed() ? "混合换行（只读）"
-                    : dominant.equals("\r\n") ? "CRLF" : dominant.equals("\n") ? "LF" : "CR";
+        String restore(String text,long stamp){
+            State state=revisions.get(stamp);if(state==null||!state.fingerprint.equals(fingerprint(text)))throw new IllegalStateException("未找到保存内容对应的原始行尾版本");
+            var raw=new StringBuilder(text.length()+state.endings.length);int line=0;for(int i=0;i<text.length();i++){char c=text.charAt(i);if(c=='\n'){byte kind=state.endings[line++];raw.append(kind==0?"\r\n":kind==1?"\n":"\r");}else raw.append(c);}return raw.toString();
         }
-        boolean isMixed() { return originals.stream().distinct().count() > 1; }
+        String formatAdded(String text){return text.replace("\n",dominant);}
+        String restore(String text){if(initialNormalized.equals(text))return restore(text,initialStamp);if(!mixed)return text.replace("\n",dominant);throw new IllegalStateException("混合行尾需要对应的文档编辑版本");}
+        String description(){return mixed?"混合换行（保留原行尾）":dominant.equals("\r\n")?"CRLF":dominant.equals("\n")?"LF":"CR";}
+        boolean isMixed(){return mixed;}
     }
 }
