@@ -10,6 +10,7 @@ final class VisualEditorSurface extends JPanel {
     private final JComponent code;
     private JComponent visual;
     private final JPanel body = new JPanel(new BorderLayout());
+    private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.LEFT,4,2));
     private final JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
     private final EnumMap<Mode, JToggleButton> buttons = new EnumMap<>(Mode.class);
     private final Runnable changed;
@@ -29,12 +30,17 @@ final class VisualEditorSurface extends JPanel {
                 ratio = Math.clamp((double)split.getDividerLocation() / split.getWidth(), .1, .9); changed.run();
             }
         });
-        add(bar, BorderLayout.NORTH); add(body); setMode(Mode.CODE);
+        JPanel toolbar=new JPanel(new BorderLayout()); toolbar.add(tools); toolbar.add(bar,BorderLayout.EAST);
+        add(toolbar, BorderLayout.NORTH); add(body); setMode(Mode.CODE);
     }
     JComponent code() { return code; }
     JComponent visual() { return visual; }
     Mode mode() { return mode; }
     double ratio() { return ratio; }
+    void action(String title,String name,Runnable run) {
+        for(Component c:tools.getComponents())if(name.equals(c.getName()))tools.remove(c);
+        JButton button=new JButton(title); button.setName(name); button.addActionListener(e -> run.run()); tools.add(button); tools.revalidate();
+    }
     void setVisual(JComponent component) { visual = component; setMode(mode); }
     void setMode(Mode next) {
         mode = next; split.setLeftComponent(null); split.setRightComponent(null); body.removeAll();

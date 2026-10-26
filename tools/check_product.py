@@ -9,7 +9,7 @@ import uuid
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def run(app: Path, root: Path, mode: str, archive: Path | None, npk: Path | None = None, progress_only: bool = False, binary_ani: bool = False, map_files: bool = False, dungeon_86: bool = False, entities_86: bool = False, dungeon_100: bool = False):
+def run(app: Path, root: Path, mode: str, archive: Path | None, npk: Path | None = None, progress_only: bool = False, binary_ani: bool = False, map_files: bool = False, dungeon_86: bool = False, entities_86: bool = False, dungeon_100: bool = False, visual_dungeon: bool = False):
     config = root / mode / "config"
     config.mkdir(parents=True)
     command = [
@@ -35,6 +35,8 @@ def run(app: Path, root: Path, mode: str, archive: Path | None, npk: Path | None
         command.append("-Dpvf.smoke.entities86=true")
     if dungeon_100:
         command.append("-Dpvf.smoke.dungeon100=true")
+    if visual_dungeon:
+        command.append("-Dpvf.smoke.visualDungeon=true")
     command += ["-cp", f"{app / 'lib/platform-loader.jar'};{app / 'lib/pvf-studio.jar'}", "studio.pvf.product.PvfStudioMain"]
     if mode == "check":
         command += ["--check", str(root / "check.properties")]
@@ -42,7 +44,7 @@ def run(app: Path, root: Path, mode: str, archive: Path | None, npk: Path | None
         command += ["--smoke", str(archive), str(root / "smoke-results")]
     log = root / f"{mode}.log"
     with log.open("w", encoding="utf-8") as output:
-        result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, timeout=300 if progress_only or binary_ani or map_files or dungeon_86 or entities_86 or dungeon_100 else 120)
+        result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, timeout=300 if progress_only or binary_ani or map_files or dungeon_86 or entities_86 or dungeon_100 or visual_dungeon else 120)
     if result.returncode:
         print(log.read_text(encoding="utf-8", errors="replace")[-10000:])
         raise RuntimeError(f"Product {mode} failed ({result.returncode}); logs: {root}")
@@ -60,7 +62,10 @@ def main():
     parser.add_argument("--dungeon-86", action="store_true", help="With 86 --archive/--npk, verify DGN layouts, room/Boss switching and rendered scenes")
     parser.add_argument("--entities-86", action="store_true", help="With 86 --archive/--npk, verify flat MAP placements and ACT entity sprite rendering")
     parser.add_argument("--dungeon-100", action="store_true", help="With 100 --archive/--npk, verify explicit room choices and original gate coordinates")
+    parser.add_argument("--visual-dungeon", action="store_true", help="Verify design surface, native rooms and atomic clone undo/redo")
     args = parser.parse_args()
+    if args.visual_dungeon and (not args.archive or not args.npk):
+        parser.error("--visual-dungeon requires --archive/--npk")
     if args.npk and not args.archive:
         parser.error("--npk requires --archive")
     if args.progress_only and not args.archive:
@@ -80,7 +85,7 @@ def main():
     root.mkdir(parents=True)
     run(product / "app", root, "check", None)
     if args.archive:
-        run(product / "app", root, "smoke", args.archive.resolve(), args.npk.resolve() if args.npk else None, args.progress_only, args.binary_ani, args.map_files, args.dungeon_86, args.entities_86, args.dungeon_100)
+        run(product / "app", root, "smoke", args.archive.resolve(), args.npk.resolve() if args.npk else None, args.progress_only, args.binary_ani, args.map_files, args.dungeon_86, args.entities_86, args.dungeon_100, args.visual_dungeon)
 
 
 if __name__ == "__main__":

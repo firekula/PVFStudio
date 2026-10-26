@@ -37,7 +37,7 @@ final class SceneDocumentBridge<T> implements AutoCloseable {
             T result = parsed; String error = failure;
             ui.execute(() -> {
                 if (closed || generation != request || port.version() != version || !port.text().equals(text)) return;
-                state = new State<>(version, text, result == null ? last : result, result != null && error.isEmpty() && port.writable(), error);
+                state = new State<>(version, text, result == null ? last : result, result != null && error.isEmpty(), error);
                 listener.accept(state);
             });
         });

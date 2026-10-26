@@ -25,6 +25,8 @@ final class Dungeon100WorkbenchSmoke {
             for(String name:List.of("fruz_station","kohlepowerstation","grandine")) {
                 String path="dungeon/act9/"+name+".dgn";
                 edt(() -> { frame.openEntry(path); return null; });
+                await(() -> ready(frame));
+                edt(() -> { ((VisualEditorSurface)components(frame,EditorTabs.class).getFirst().getSelectedComponent()).setMode(VisualEditorSurface.Mode.CODE); return null; });
                 await(() -> ready(frame)&&controls.isVisible()&&panel.renderedScene()!=null&&panel.previewDetails().contains(path));
                 var dungeon=edt(() -> controls.selection().dungeon());
                 for(int index=0;index<dungeon.definition().mazes().size();index++) {

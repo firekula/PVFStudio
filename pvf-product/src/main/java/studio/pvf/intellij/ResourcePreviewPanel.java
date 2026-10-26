@@ -57,6 +57,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private Future<?> job;
     private NpkResources resources;
     private Source source;
+    private DungeonEditorPanel.Preview editorDungeon;
+    private Consumer<DungeonPanel.Selection> editorResolved;
     private ResourceScript.Animation animation;
     private String animationPath;
     private ScenePreview scene;
@@ -120,7 +122,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
             detailScroll.setVisible(showDetails.isSelected()); updateDetailsLabel(); revalidate();
         });
         choose.addActionListener(e -> chooseDirectory());
-        refresh.addActionListener(e -> setSource(source));
+        refresh.addActionListener(e -> reloadSource());
         references.addActionListener(e -> { if (!changing) loadSelection(); });
         variants.addActionListener(e -> loadSelection());
         collision.addActionListener(e -> {
@@ -216,7 +218,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                             + (indexed.warnings().isEmpty() ? "" : " / " + indexed.warnings().size() + " 条索引提示") + suffix);
                     root.setToolTipText("<html>" + html(indexed.directory().toString()) + "<br>"
                             + html(String.join("\n", indexed.warnings().stream().limit(12).toList())).replace("\n", "<br>") + "</html>");
-                    setSource(source);
+                    reloadSource();
                 });
             } catch (Exception failure) {
                 SwingUtilities.invokeLater(() -> {
@@ -230,6 +232,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     }
 
     void setSource(Source value) {
+        editorDungeon=null; editorResolved=null; references.setVisible(true);
         source = value; invalidatePreview();
         dungeonPanel.setVisible(false); dungeonSelection = null;
         Object selected = references.getSelectedItem(); String selectedName = selected == null ? "" : selected.toString();
@@ -252,7 +255,30 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         });
     }
 
+    private void reloadSource() {
+        if(editorDungeon!=null)setDungeonEditorSource(source,editorDungeon,editorResolved); else setSource(source);
+    }
+
+    void setDungeonEditorSource(Source value, DungeonEditorPanel.Preview selected, Consumer<DungeonPanel.Selection> resolved) {
+        editorDungeon=selected; editorResolved=resolved; references.setVisible(false);
+        source=value; invalidatePreview(); dungeonPanel.setVisible(false); dungeonSelection=null;
+        if(value==null||selected==null)return;
+        submit("载入所选副本房间",() -> DungeonPreview.load(value.path(),value.text(),value.lookup()::read), dungeon -> {
+            if(selected.maze()>=dungeon.definition().mazes().size())return;
+            var maze=dungeon.definition().mazes().get(selected.maze());
+            var layout=dungeon.arrange(selected.maze(),maze.starts().isEmpty()?null:maze.starts().getFirst(),
+                    maze.bosses().isEmpty()?null:maze.bosses().getFirst(),0,selected.hell());
+            var room=layout.room(selected.position());
+            if(room==null) { canvas.error="该房间待创建或连接"; canvas.repaint(); return; }
+            var map=room.map();
+            if(!room.hell()&&selected.mapId()!=null)map=room.choices().stream().filter(m -> m.id()==selected.mapId()).findFirst().orElse(map);
+            var selection=new DungeonPanel.Selection(dungeon,layout,room,map,true,true,0);
+            resolved.accept(selection); loadDungeonRoom(selection);
+        });
+    }
+
     private void loadSelection() {
+        if(editorDungeon!=null) { reloadSource(); return; }
         invalidatePreview();
         dungeonPanel.setVisible(false); dungeonSelection = null;
         if (source == null) return;

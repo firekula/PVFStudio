@@ -85,6 +85,7 @@ final class PvfStudioFrame extends JFrame {
     private int encodingIndex = 4;
     private boolean showLineNumbers = true;
     private boolean softWraps;
+    private boolean showResourcePreview = true;
     private RecentArchives recentArchives = RecentArchives.EMPTY;
     private boolean recentLoaded;
     private final Path recentFile;
@@ -97,6 +98,7 @@ final class PvfStudioFrame extends JFrame {
     private final JPanel navigation = new JPanel(new CardLayout());
     private final EditorTabs tabs = new EditorTabs();
     private final Map<AnAction, CustomShortcutSet> tabShortcuts = new LinkedHashMap<>();
+    private final Map<String,String> roomOrigins = new HashMap<>();
     private final Deque<ClosedTab> closedTabs = new ArrayDeque<>();
     private final Path draftsRoot;
     private final boolean exitOnClose;
@@ -106,6 +108,7 @@ final class PvfStudioFrame extends JFrame {
         return false;
     };
     private final ResourcePreviewPanel preview = new ResourcePreviewPanel();
+    private final JPanel previewDock = new JPanel(new BorderLayout());
     private final javax.swing.Timer previewRefresh = new javax.swing.Timer(350, e -> updatePreview());
     private final javax.swing.Timer sessionSave = new javax.swing.Timer(650,
             e -> ApplicationManager.getApplication().invokeLater(this::saveEditorState));
@@ -149,7 +152,8 @@ final class PvfStudioFrame extends JFrame {
         resultScroll.getViewport().setBackground(tree.getBackground());
         navigation.add(resultScroll, "results");
         left.add(navigation);
-        editorSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tabs, preview);
+        previewDock.add(preview);
+        editorSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tabs, previewDock);
         editorSplit.setResizeWeight(0.7); editorSplit.setDividerLocation(540);
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, editorSplit);
         split.setDividerLocation(280); split.setResizeWeight(0.2);
@@ -305,8 +309,9 @@ final class PvfStudioFrame extends JFrame {
         JMenu viewMenu = menu(bar, "查看(V)", KeyEvent.VK_V); viewMenu.add(diff);
         var previewVisible = new JCheckBoxMenuItem("资源预览", true); viewMenu.add(previewVisible);
         previewVisible.addActionListener(e -> {
+            showResourcePreview = previewVisible.isSelected();
             if (!previewVisible.isSelected()) previewDivider = editorSplit.getDividerLocation();
-            preview.setVisible(previewVisible.isSelected()); editorSplit.setDividerSize(previewVisible.isSelected() ? UIManager.getInt("SplitPane.dividerSize") : 0);
+            previewDock.setVisible(previewVisible.isSelected()); editorSplit.setDividerSize(previewVisible.isSelected() ? UIManager.getInt("SplitPane.dividerSize") : 0);
             if (previewVisible.isSelected()) editorSplit.setDividerLocation(previewDivider); editorSplit.revalidate();
         });
         viewMenu.addSeparator();
@@ -982,13 +987,19 @@ final class PvfStudioFrame extends JFrame {
     private void configureVisualSession(Session session) {
         if (!(session.path.endsWith(".map") || session.path.endsWith(".dgn")) || studio.pvf.workspace.BinaryView.isView(session.persistedText)) return;
         JLabel visual = new JLabel("正在解析场景…", SwingConstants.CENTER);
-        session.surface = new VisualEditorSurface(session.editor.getComponent(), visual, this::scheduleEditorStateSave);
+        session.surface = new VisualEditorSurface(session.editor.getComponent(), visual, () -> { scheduleEditorStateSave(); previewRefresh.restart(); });
+        if(session.path.endsWith(".dgn")) {
+            session.dungeonPanel = new DungeonEditorPanel((stamp,edit) -> session.bridge.apply(stamp,edit),
+                    map -> openRoomMap(session,map), () -> { if(selectedSession()==session)previewRefresh.restart(); }, range -> revealSource(session,range));
+            session.dungeonPanel.onClone(request -> cloneRoomMap(session,request));
+            session.surface.setVisual(session.dungeonPanel);
+        }
         session.bridge = new SceneDocumentBridge<>(new SceneDocumentBridge.Port() {
             public String text() { return session.editor.getDocument().getText(); }
             public long version() { return session.editor.getDocument().getModificationStamp(); }
             public boolean writable() { return !busy && !session.editor.isViewer() && !session.editor.isDisposed(); }
             public void write(String label, String value) {
-                com.intellij.openapi.command.CommandProcessor.getInstance().executeCommand(null,
+                com.intellij.openapi.command.CommandProcessor.getInstance().executeCommand(session.editor.getProject(),
                     () -> ApplicationManager.getApplication().runWriteAction(() -> session.editor.getDocument().setText(value)), label, null);
             }
         }, text -> {
@@ -997,9 +1008,122 @@ final class PvfStudioFrame extends JFrame {
             return session.path.endsWith(".map") ? studio.pvf.sceneedit.MapDocument.parse(session.path, text)
                     : studio.pvf.sceneedit.DungeonDocument.parse(session.path, text);
         }, sceneWorker, SwingUtilities::invokeLater, state -> {
-            visual.setText(state.error().isEmpty() ? "场景已解析 · 可切换代码与设计" : state.error());
+            if(session.dungeonPanel!=null)session.dungeonPanel.install((studio.pvf.sceneedit.DungeonDocument)state.model(),state.version(),state.writable(),state.error());
+            else visual.setText(state.error().isEmpty() ? "场景已解析 · 可切换代码与设计" : state.error());
         });
         session.bridge.refresh();
+        session.surface.setMode(VisualEditorSurface.Mode.DESIGN);
+        decorateRoomOrigin(session);
+        loadSceneCatalog(session);
+    }
+
+    private void revealSource(Session session, studio.pvf.sceneedit.SourceDocument.Range range) {
+        if(session.surface!=null)session.surface.setMode(VisualEditorSurface.Mode.SPLIT);
+        session.editor.getCaretModel().moveToOffset(Math.min(range.start(),session.editor.getDocument().getTextLength()));
+        session.editor.getScrollingModel().scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER);
+        session.editor.getContentComponent().requestFocusInWindow();
+    }
+    private void openRoomMap(Session origin,String path) {
+        roomOrigins.put(path,origin.path); openEntry(path);
+        Session existing=sessions.get(path); if(existing!=null)decorateRoomOrigin(existing);
+    }
+    private void decorateRoomOrigin(Session session) {
+        if(session.surface!=null&&roomOrigins.containsKey(session.path)) session.surface.action("返回副本", "scene-return-dungeon", () -> openEntry(roomOrigins.get(session.path)));
+    }
+    private void loadSceneCatalog(Session session) {
+        if(workspace==null)return;
+        var current=workspace; var paths=current.paths(); var texts=new HashMap<String,String>();
+        sessions.forEach((path,tab) -> texts.put(path,tab.editor.getDocument().getText()));
+        sceneWorker.execute(() -> {
+            var catalog=studio.pvf.sceneedit.SceneCatalog.build(paths,path -> texts.containsKey(path)?texts.get(path):current.readText(path,session.charset));
+            SwingUtilities.invokeLater(() -> { if(session.editor.isDisposed()||workspace!=current)return;
+                session.catalog=catalog; if(session.dungeonPanel!=null)session.dungeonPanel.setCatalog(catalog);
+            });
+        });
+    }
+
+    private void cloneRoomMap(Session origin,DungeonEditorPanel.Preview selected) {
+        if(busy||origin.catalog==null||selected.mapId()==null)return;
+        String source=origin.catalog.maps().get(selected.mapId()); if(source==null)return;
+        String destination=JOptionPane.showInputDialog(this,"同目录的新 MAP 路径；克隆、注册和绑定会一起保存为草稿，可整体撤销。",source.substring(0,source.length()-4)+"_copy.map");
+        if(destination!=null)cloneRoomMap(origin.path,selected,destination);
+    }
+    void cloneRoomMap(String dungeonPath,DungeonEditorPanel.Preview selected,String destination) {
+        Session origin=sessions.get(dungeonPath);
+        if(busy||workspace==null||origin==null||origin.catalog==null||selected.mapId()==null)return;
+        String source=origin.catalog.maps().get(selected.mapId()); if(source==null)return;
+        var current=workspace;
+        boolean bindBoss=origin.bridge.state().model() instanceof studio.pvf.sceneedit.DungeonDocument dungeon
+                && dungeon.mazes().get(selected.maze()).layout().bosses().contains(selected.position());
+        List<Session> affected=sessions.values().stream().filter(s -> s.path.equals(source)||s.path.equals(dungeonPath)||s.path.equals("map/map.lst")).toList();
+        Map<Session,Boolean> writable=new LinkedHashMap<>(); Map<Session,Long> stamps=new LinkedHashMap<>(); Map<String,String> raw=new HashMap<>(); Map<Session,String> beforePersisted=new HashMap<>();
+        Map<String,Charset> charsets=new HashMap<>(); affected.forEach(s -> charsets.put(s.path,s.charset));
+        for(Session s:affected) {
+            if(s.editor.isViewer()) { status.setText("涉及只读文档，无法克隆绑定"); return; }
+            var doc=s.editor.getDocument(); writable.put(s,doc.isWritable()); stamps.put(s,doc.getModificationStamp());
+            raw.put(s.path,s.newlines.restore(doc.getText())); beforePersisted.put(s,s.persistedText);
+        }
+        affected.forEach(s -> s.editor.getDocument().setReadOnly(true));
+        Runnable thaw=() -> writable.forEach((s,value) -> { if(!s.editor.isDisposed())s.editor.getDocument().setReadOnly(!value); });
+        runTask("准备 MAP 克隆与注册…", () -> {
+            String sourceText=raw.containsKey(source)?raw.get(source):current.readText(source,origin.charset);
+            String listText=raw.containsKey("map/map.lst")?raw.get("map/map.lst"):current.readText("map/map.lst",origin.charset);
+            var request=new studio.pvf.sceneedit.MapRegistration.Request(current.paths(),source,destination,current.readBytes(source),sourceText,listText,
+                    dungeonPath,raw.get(dungeonPath),selected.maze(),selected.position(),bindBoss,null,Integer.MAX_VALUE);
+            var prepared=MapCloneCommand.prepare(request,origin.charset,current.readBytes("map/map.lst"),current.readBytes(dungeonPath));
+            List<PvfWorkspace.TextChange> changes=new ArrayList<>();
+            for(var change:prepared.changes()) {
+                changes.add(new PvfWorkspace.TextChange(change.path(),change.text(),charsets.getOrDefault(change.path(),origin.charset),change.expectedBytes()));
+            }
+            return new MapCloneCommand.Prepared(prepared.registration(),changes,prepared.documentTexts());
+        }, prepared -> {
+            if(workspace!=current||stamps.entrySet().stream().anyMatch(e -> e.getKey().editor.isDisposed()||e.getKey().editor.getDocument().getModificationStamp()!=e.getValue())) {
+                thaw.run(); status.setText("文档已变化，克隆未提交"); return;
+            }
+            runTask("原子提交 MAP、索引与房间绑定…", () -> prepared.publish(current), batch -> {
+                thaw.run();
+                try {
+                    var touched=affected.stream().filter(s -> prepared.documentTexts().containsKey(s.path)).toList();
+                    com.intellij.openapi.command.CommandProcessor.getInstance().executeCommand(origin.editor.getProject(), () -> {
+                        ApplicationManager.getApplication().runWriteAction(() -> {
+                            for(Session s:touched) {
+                                s.editor.getDocument().setText(normalizeNewlines(prepared.documentTexts().get(s.path)));
+                                s.persistedText=s.editor.getDocument().getText(); s.persistedStamp=s.editor.getDocument().getModificationStamp(); updateSessionTitle(s);
+                            }
+                        });
+                        UndoManager.getGlobalInstance().undoableActionPerformed(new com.intellij.openapi.command.undo.BasicUndoableAction(touched.stream().map(s -> s.editor.getDocument()).toArray(Document[]::new)) {
+                            public boolean isGlobal() { return true; }
+                            public void undo() throws com.intellij.openapi.command.undo.UnexpectedUndoException { restore(false); }
+                            public void redo() throws com.intellij.openapi.command.undo.UnexpectedUndoException { restore(true); }
+                            private void restore(boolean after) throws com.intellij.openapi.command.undo.UnexpectedUndoException {
+                                try {
+                                    if(workspace!=current)throw new IOException("副本工作区已关闭");
+                                    Session clone=sessions.get(prepared.registration().destinationPath());
+                                    if(!after&&clone!=null&&clone.isUnsaved())throw new IOException("新 MAP 有未保存编辑，请先撤销这些编辑");
+                                    current.restoreBatch(batch,after);
+                                    if(!after&&clone!=null) { sessions.remove(clone.path); tabs.remove(clone.component()); releaseSession(clone); }
+                                    for(Session s:touched) { s.persistedText=after?normalizeNewlines(prepared.documentTexts().get(s.path)):beforePersisted.get(s); s.persistedStamp=-1; }
+                                    refreshSceneStructure(prepared.registration().destinationPath());
+                                } catch(IOException failure) { throw new com.intellij.openapi.command.undo.UnexpectedUndoException(failure.getMessage()); }
+                            }
+                        });
+                    },"克隆、注册并绑定 MAP",null,com.intellij.openapi.command.UndoConfirmationPolicy.DO_NOT_REQUEST_CONFIRMATION);
+                    refreshSceneStructure(prepared.registration().destinationPath()); status.setText("已克隆 MAP #"+prepared.registration().mapId()+"；Ctrl+Z 可整体撤销");
+                } catch(Throwable failure) {
+                    try { current.restoreBatch(batch,false); } catch(IOException rollback) { failure.addSuppressed(rollback); }
+                    ApplicationManager.getApplication().runWriteAction(() -> affected.forEach(s -> { if(prepared.documentTexts().containsKey(s.path)) {
+                        s.editor.getDocument().setText(normalizeNewlines(raw.get(s.path))); s.persistedText=beforePersisted.get(s); s.persistedStamp=-1;
+                    } }));
+                    showError(failure);
+                }
+            },thaw);
+        },thaw);
+    }
+    private void refreshSceneStructure(String selection) {
+        if(workspace==null)return; var current=workspace;
+        runTask("刷新文件目录…",progress -> buildDirectories(current,progress), updated -> {
+            refreshFileTree(updated,selection); sessions.values().stream().filter(s -> s.surface!=null).forEach(this::loadSceneCatalog); previewRefresh.restart();
+        },() -> {});
     }
 
     private void saveDrafts(Runnable after) {
@@ -1205,14 +1329,25 @@ final class PvfStudioFrame extends JFrame {
         previewRefresh.stop(); Session selected = selectedSession();
         if (selected == null || workspace == null) { preview.setSource(null); return; }
         if (studio.pvf.workspace.BinaryView.isView(selected.persistedText)) { preview.setSource(null); return; }
+        if(selected.surface!=null)loadSceneCatalog(selected);
         PvfWorkspace current = workspace;
         Map<String, String> editors = new HashMap<>();
         for (Session session : sessions.values()) editors.put(session.path, session.editor.getDocument().getText());
         Set<String> paths = current.paths();
-        preview.setSource(new ResourcePreviewPanel.Source(selected.path, selected.editor.getDocument().getText(), path -> {
+        var source=new ResourcePreviewPanel.Source(selected.path, selected.editor.getDocument().getText(), path -> {
             String text = editors.get(path);
             return text != null ? text : paths.contains(path) ? current.readText(path, selected.charset) : null;
-        }));
+        });
+        boolean design=selected.surface!=null&&selected.surface.mode()!=VisualEditorSurface.Mode.CODE&&selected.dungeonPanel!=null;
+        JPanel host=design?selected.dungeonPanel.previewHost():previewDock;
+        if(preview.getParent()!=host) { if(preview.getParent()!=null)preview.getParent().remove(preview); host.add(preview); host.revalidate(); }
+        previewDock.setVisible(!design&&showResourcePreview);
+        editorSplit.setDividerSize(previewDock.isVisible()?UIManager.getInt("SplitPane.dividerSize"):0);
+        if(previewDock.isVisible())editorSplit.setDividerLocation(previewDivider);
+        if(design) {
+            if(selected.bridge.state().model() instanceof studio.pvf.sceneedit.DungeonDocument document)
+                preview.setDungeonEditorSource(new ResourcePreviewPanel.Source(selected.path,document.source().text(),source.lookup()),selected.dungeonPanel.preview(),selected.dungeonPanel::resolvedChoices);
+        } else preview.setSource(source);
     }
 
     private void closeSelectedTab() {
@@ -1395,6 +1530,8 @@ final class PvfStudioFrame extends JFrame {
         TextEditor fileEditor;
         VisualEditorSurface surface;
         SceneDocumentBridge<Object> bridge;
+        DungeonEditorPanel dungeonPanel;
+        studio.pvf.sceneedit.SceneCatalog catalog;
         JComponent component() { return surface == null ? editor.getComponent() : surface; }
         String persistedText;
         long persistedStamp;

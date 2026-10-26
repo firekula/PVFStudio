@@ -24,6 +24,8 @@ final class Dungeon86WorkbenchSmoke {
             for (String path : List.of("dungeon/act9/fruz_station.dgn", "dungeon/act9/kohlepowerstation.dgn", "dungeon/act9/grandine.dgn",
                     "dungeon/anton_awakening/phase2/blackvolcano.dgn", "dungeon/anton_raid/phase2/blackvolcano.dgn")) {
                 edt(() -> { frame.openEntry(path); return null; });
+                await(() -> ready(frame));
+                edt(() -> { ((VisualEditorSurface)components(frame,EditorTabs.class).getFirst().getSelectedComponent()).setMode(VisualEditorSurface.Mode.CODE); return null; });
                 await(() -> ready(frame) && controls.isVisible() && panel.renderedScene() != null && panel.previewDetails().contains(path));
                 edt(() -> {
                     var selection = controls.selection();
