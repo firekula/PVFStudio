@@ -20,6 +20,7 @@ final class MultiSelectDropdown<T> extends JPanel {
     private final JList<T> list=new JList<>(rows);
     private Map<T,String> options=Map.of();
     private List<T> selected=List.of();
+    private Set<T> selectedSet=Set.of();
     private Consumer<List<T>> changed=values -> {};
     private Consumer<List<T>> committed=values -> {};
     private boolean pending;
@@ -31,9 +32,11 @@ final class MultiSelectDropdown<T> extends JPanel {
         setMinimumSize(new Dimension(100,26));
         search.putClientProperty("JTextField.placeholderText","搜索编号、名称或坐标");
         search.getDocument().addDocumentListener(new DocumentListener(){public void insertUpdate(DocumentEvent e){filter();}public void removeUpdate(DocumentEvent e){filter();}public void changedUpdate(DocumentEvent e){filter();}});
+        list.setFixedCellHeight(26);list.setFixedCellWidth(310);
+        JCheckBox cell=new JCheckBox();cell.setOpaque(true);cell.setBorder(BorderFactory.createEmptyBorder(3,4,3,4));
         list.setCellRenderer((owner,value,index,active,focus) -> {
-            JCheckBox cell=new JCheckBox(label(value),selected.contains(value));cell.setOpaque(true);
-            cell.setBackground(active?owner.getSelectionBackground():owner.getBackground());cell.setForeground(active?owner.getSelectionForeground():owner.getForeground());cell.setBorder(BorderFactory.createEmptyBorder(3,4,3,4));return cell;
+            cell.setText(label(value));cell.setSelected(selectedSet.contains(value));cell.setFont(owner.getFont());
+            cell.setBackground(active?owner.getSelectionBackground():owner.getBackground());cell.setForeground(active?owner.getSelectionForeground():owner.getForeground());return cell;
         });
         list.addMouseListener(new MouseAdapter(){public void mousePressed(MouseEvent e){int i=list.locationToIndex(e.getPoint());if(i>=0&&list.getCellBounds(i,i).contains(e.getPoint()))toggle(rows.get(i));}});
         list.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE,0),"toggle");
@@ -55,7 +58,12 @@ final class MultiSelectDropdown<T> extends JPanel {
         updateSummary();
     }
     void options(Map<T,String> values){options=Collections.unmodifiableMap(new LinkedHashMap<>(values));filter();updateSummary();}
-    void selected(List<T> values){++revision;selected=List.copyOf(new LinkedHashSet<>(values));filter();updateSummary();}
+    void selected(List<T> values){
+        var extras=new HashSet<>(selectedSet);extras.removeAll(options.keySet());
+        ++revision;selected=List.copyOf(new LinkedHashSet<>(values));selectedSet=Set.copyOf(selected);
+        var nextExtras=new HashSet<>(selectedSet);nextExtras.removeAll(options.keySet());
+        if(!extras.equals(nextExtras))filter();else list.repaint();updateSummary();
+    }
     List<T> selected(){return selected;}
     void onChange(Consumer<List<T>> listener){changed=listener;}
     void onCommit(Consumer<List<T>> listener){committed=listener;}
@@ -64,9 +72,11 @@ final class MultiSelectDropdown<T> extends JPanel {
     @Override public void setEnabled(boolean enabled){super.setEnabled(enabled);if(button!=null)button.setEnabled(enabled);if(!enabled&&popup!=null)popup.setVisible(false);}
     private String label(T value){return options.getOrDefault(value,value+" · 未登记");}
     private void filter(){
-        String needle=search.getText().trim().toLowerCase(Locale.ROOT);T active=list.getSelectedValue();rows.clear();
+        String needle=search.getText().trim().toLowerCase(Locale.ROOT);T active=list.getSelectedValue();
         var all=new LinkedHashSet<T>(options.keySet());all.addAll(selected);
-        for(T value:all)if(label(value).toLowerCase(Locale.ROOT).contains(needle))rows.addElement(value);
+        var matches=new ArrayList<T>();for(T value:all)if(label(value).toLowerCase(Locale.ROOT).contains(needle))matches.add(value);
+        list.getSelectionModel().setValueIsAdjusting(true);
+        try{rows.clear();rows.addAll(matches);}finally{list.getSelectionModel().setValueIsAdjusting(false);}
         if(active!=null)list.setSelectedValue(active,false);list.repaint();
     }
     private void updateSummary(){
