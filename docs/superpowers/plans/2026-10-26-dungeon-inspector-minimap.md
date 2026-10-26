@@ -28,26 +28,26 @@
 ### Task 1: Dropdowns and fixed inspector
 
 **Files:** Create MultiSelectDropdown.java and test; modify DungeonEditorPanel.java and DungeonEditorPanelTest.java under pvf-product/src/{main,test}/java/studio/pvf/intellij.
-**Interfaces:** MultiSelectDropdown<T>.options(Map<T,String>), selected(List<T>), selected(), onChange(Consumer<List<T>>), toggle(T). DungeonEditorPanel keeps install/resolvedChoices/preview APIs.
+**Interfaces:** MultiSelectDropdown<T>.options(Map<T,String>), selected(List<T>), selected(), onChange(Consumer<List<T>>), onCommit(Consumer<List<T>>), toggle(T). DungeonEditorPanel keeps install/resolvedChoices/preview APIs.
 
-- [ ] Write and run failing tests for multi-role dropdown commands, preserved automatic pools, fixed tabs and all-page bounds.
-- [ ] Implement dropdowns, tabs, coordinate navigation and independent colored role markers.
-- [ ] Run targeted tests; commit the tested inspector change.
+- [x] Write and run failing tests for multi-role dropdown commands, preserved automatic pools, fixed tabs and all-page bounds.
+- [x] Implement dropdowns, tabs, coordinate navigation and independent colored role markers.
+- [x] Run targeted tests; commit the tested inspector change.
 
 ### Task 2: Native minimap atlas
 
 **Files:** Create pvf-preview/.../DungeonMinimap.java and test; modify ResourcePreviewPanel.java and DungeonEditorPanel.java.
 **Interfaces:** DungeonMinimap.load(String,ScenePreview.SpriteLookup) returns immutable atlas; tile(mask) returns loaded image. Panel setMinimap(path,atlas,reason) only accepts the current source image. ResourcePreviewPanel requests atlas using its current resource directory and generation.
 
-- [ ] Write/run failing atlas and painting tests for mask mapping, invalid dimensions and fallback.
-- [ ] Implement verified 120-frame format, background loading/cache, generation guards and nearest-neighbor rendering.
-- [ ] Run targeted tests; commit native rendering.
+- [x] Write/run failing atlas and painting tests for mask mapping, invalid dimensions and fallback.
+- [x] Implement verified 120-frame format, background loading/cache, generation guards and nearest-neighbor rendering.
+- [x] Run targeted tests; commit native rendering.
 
 ### Task 3: Native usability, package and independent review
 
 **Files:** DungeonUsabilitySmoke.java, build.gradle.kts, user documentation.
 
-- [ ] Update native smoke for dropdowns and no scrolling, preserving candidate apply/undo/redo/export and all newline provenance checks.
-- [ ] Verify real Client_test2 Lorien and NPK rendering at 1264 and 1024, all tabs, multiple roles and fallback. Run full Gradle check/product verification and Python validation.
+- [x] Update native smoke for dropdowns and no scrolling, preserving candidate apply/undo/redo/export and all newline provenance checks.
+- [x] Verify real Client_test2 Lorien and NPK rendering at 1264 and 1024, all tabs, multiple roles and fallback. Run full Gradle check/product verification and Python validation.
 - [ ] One fresh final independent review; fix material findings with regression tests.
 - [ ] Package 0.14.2 and verify extracted portable product; document evidence and commit.

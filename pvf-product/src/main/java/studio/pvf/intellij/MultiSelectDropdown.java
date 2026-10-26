@@ -3,6 +3,8 @@ package studio.pvf.intellij;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
 import java.awt.*;
 import java.awt.event.*;
 import java.util.*;
@@ -19,6 +21,9 @@ final class MultiSelectDropdown<T> extends JPanel {
     private Map<T,String> options=Map.of();
     private List<T> selected=List.of();
     private Consumer<List<T>> changed=values -> {};
+    private Consumer<List<T>> committed=values -> {};
+    private boolean pending;
+    private long revision;
 
     MultiSelectDropdown() {
         super(new BorderLayout());add(button);button.setHorizontalAlignment(SwingConstants.LEFT);
@@ -37,15 +42,25 @@ final class MultiSelectDropdown<T> extends JPanel {
         JPanel body=new JPanel(new BorderLayout(4,4));body.setBorder(BorderFactory.createEmptyBorder(5,5,5,5));body.add(search,BorderLayout.NORTH);body.add(scroll);
         JButton clear=new JButton("清空候选");clear.addActionListener(e -> commit(List.of()));
         JButton done=new JButton("完成");done.addActionListener(e -> popup.setVisible(false));JPanel footer=new JPanel(new FlowLayout(FlowLayout.RIGHT,4,0));footer.add(clear);footer.add(done);body.add(footer,BorderLayout.SOUTH);popup.add(body);
+        popup.addPopupMenuListener(new PopupMenuListener(){
+            public void popupMenuWillBecomeVisible(PopupMenuEvent e){pending=false;}
+            public void popupMenuWillBecomeInvisible(PopupMenuEvent e){
+                if(!pending)return;pending=false;long expected=revision;var values=selected;
+                // Writing can disable this field while Swing is still hiding its Popup. Finish hiding first.
+                SwingUtilities.invokeLater(() -> {if(isEnabled()&&revision==expected)committed.accept(values);});
+            }
+            public void popupMenuCanceled(PopupMenuEvent e){}
+        });
         button.addActionListener(e -> {if(popup.isVisible())popup.setVisible(false);else{search.setText("");filter();popup.show(button,0,button.getHeight());search.requestFocusInWindow();}});
         updateSummary();
     }
     void options(Map<T,String> values){options=Collections.unmodifiableMap(new LinkedHashMap<>(values));filter();updateSummary();}
-    void selected(List<T> values){selected=List.copyOf(new LinkedHashSet<>(values));filter();updateSummary();}
+    void selected(List<T> values){++revision;selected=List.copyOf(new LinkedHashSet<>(values));filter();updateSummary();}
     List<T> selected(){return selected;}
     void onChange(Consumer<List<T>> listener){changed=listener;}
+    void onCommit(Consumer<List<T>> listener){committed=listener;}
     void toggle(T value){if(!isEnabled())return;var next=new ArrayList<>(selected);if(!next.remove(value))next.add(value);commit(next);}
-    private void commit(List<T> values){if(!isEnabled()||selected.equals(values))return;selected(values);changed.accept(selected);}
+    private void commit(List<T> values){if(!isEnabled()||selected.equals(values))return;selected(values);changed.accept(selected);if(popup.isVisible())pending=true;else committed.accept(selected);}
     @Override public void setEnabled(boolean enabled){super.setEnabled(enabled);if(button!=null)button.setEnabled(enabled);if(!enabled&&popup!=null)popup.setVisible(false);}
     private String label(T value){return options.getOrDefault(value,value+" · 未登记");}
     private void filter(){

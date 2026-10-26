@@ -79,16 +79,16 @@ final class DungeonEditorPanel extends JPanel {
         field(properties,"普通 MAP 候选",maps);properties.add(mapsOrigin);field(properties,"Boss MAP 候选",bossMaps);properties.add(bossMapsOrigin);
         maps.onChange(values -> {if(!changing)mapsEdited=true;});bossMaps.onChange(values -> {if(!changing)bossMapsEdited=true;});
         JPanel automatic=row();automatic.add(action("普通恢复自动","dgn-auto-maps",() -> {maps.selected(List.of());mapsEdited=true;mapsOrigin.setText("应用后恢复自动选图");}));automatic.add(action("Boss 恢复自动","dgn-auto-boss-maps",() -> {bossMaps.selected(List.of());bossMapsEdited=true;bossMapsOrigin.setText("应用后恢复自动 Boss 池");}));properties.add(automatic);
-        properties.add(action("创建房间 / 应用候选","dgn-apply-maps",() -> change(() -> {
+        JPanel applying=row();applying.add(action("创建 / 应用候选","dgn-apply-maps",() -> change(() -> {
             List<Integer> ids=mapsAutomatic&&!mapsEdited?List.of():maps.selected();
             List<Integer> bossIds=bossMapsAutomatic&&!bossMapsEdited?List.of():bossMaps.selected();
             if(!current().rooms().contains(position))return model.createRoom(maze,position,ids,bossIds);
             return ScriptEdit.combine("设置房间 MAP 候选",List.of(model.setCandidates(maze,position,false,ids),model.setCandidates(maze,position,true,bossIds)));
-        })));
+        })));applying.add(action("克隆 MAP 并绑定…","dgn-clone-map",() -> cloneMap.accept(preview())));properties.add(applying);
         JPanel nav=row();nav.add(button("打开房间 MAP","dgn-open-map",this::openSelected));nav.add(action("删除房间","dgn-delete-room",() -> change(() -> model.removeRoom(maze,position))));properties.add(nav);
-        properties.add(action("克隆 MAP 并绑定…","dgn-clone-map",() -> cloneMap.accept(preview())));inspector.addTab("房间",properties);
+        inspector.addTab("房间",properties);
         JPanel roles=page();field(roles,"候选起点（可多选）",startRooms);field(roles,"候选 Boss 房间（可多选）",bossRooms);writes.add(startRooms);writes.add(bossRooms);
-        startRooms.onChange(values -> {if(!changing)change(() -> model.setStarts(maze,values));});bossRooms.onChange(values -> {if(!changing)change(() -> model.setBosses(maze,values));});
+        startRooms.onCommit(values -> {if(!changing)change(() -> model.setStarts(maze,values));});bossRooms.onCommit(values -> {if(!changing)change(() -> model.setBosses(maze,values));});
         JPanel flags=row();flags.add(start);flags.add(boss);roles.add(flags);writes.add(start);writes.add(boss);
         start.addActionListener(e -> {if(!changing)change(() -> model.setStarts(maze,toggle(current().layout().starts(),start.isSelected())));});
         boss.addActionListener(e -> {if(!changing)change(() -> model.setBosses(maze,toggle(current().layout().bosses(),boss.isSelected())));});
@@ -102,8 +102,8 @@ final class DungeonEditorPanel extends JPanel {
         JPanel hellActions=row();hellActions.add(action("设为当前房间","dgn-hell-here",() -> change(() -> hell(position))));hellActions.add(action("清除封印房","dgn-hell-clear",() -> change(() -> newHell(0,null))));deep.add(hellActions);
         hellEnabled.addActionListener(e -> {if(!changing){if(hellEnabled.isSelected()&&(model.hell(maze).hitCounts().isEmpty()||model.hell(maze).mapId()<=0||model.hell(maze).position()==null))enableFromTemplate();else change(() -> hell(model.hell(maze).position()));}});
         deep.add(action("从同包副本选择深渊模板…","dgn-hell-template",this::enableFromTemplate));
-        deep.add(button("编辑深渊 MAP / 封印对象","dgn-open-hell-map",() -> {if(model!=null&&catalog!=null){var path=catalog.maps().get(model.hell(maze).mapId());if(path!=null)openMap.accept(path);}}));
-        deep.add(button("打开 hellparty.etc","dgn-open-hellparty",() -> {if(catalog!=null&&catalog.paths().contains("etc/hellparty.etc"))openMap.accept("etc/hellparty.etc");else status.setText("当前包没有 etc/hellparty.etc");}));
+        JPanel deepFiles=row();deepFiles.add(button("编辑封印 MAP","dgn-open-hell-map",() -> {if(model!=null&&catalog!=null){var path=catalog.maps().get(model.hell(maze).mapId());if(path!=null)openMap.accept(path);}}));
+        deepFiles.add(button("hellparty.etc","dgn-open-hellparty",() -> {if(catalog!=null&&catalog.paths().contains("etc/hellparty.etc"))openMap.accept("etc/hellparty.etc");else status.setText("当前包没有 etc/hellparty.etc");}));deep.add(deepFiles);
         escape.addActionListener(e -> {if(!changing)change(() -> hell(model.hell(maze).position()));});inspector.addTab("深渊",deep);
         JPanel parameters=page();field(parameters,"击打阈值（全局，保留原字段数量）",hits);field(parameters,"出现率（全局原始值）",rate);field(parameters,"金币限制（旧版本全局原始值）",coin);
         parameters.add(action("应用深渊参数","dgn-apply-hell",() -> change(() -> hell(model.hell(maze).position()))));parameters.add(note("封印房与 Boss 位置独立。概率单位未经确认，保留原始值。"));inspector.addTab("参数",parameters);
@@ -202,7 +202,7 @@ final class DungeonEditorPanel extends JPanel {
             hits.setText(join(hell.hitCounts())); rate.setText(hell.appearRate()==null?"":hell.appearRate().toString()); coin.setText(hell.coinLimit()==null?"":hell.coinLimit().toString());
             previewMaps.removeAllItems(); var choices=layout.bosses().contains(position)&&!layout.bossMaps().getOrDefault(position,List.of()).isEmpty()?layout.bossMaps().get(position):layout.maps().getOrDefault(position,List.of()); choices.forEach(previewMaps::addItem);
             diagnostics.setText(String.join("\n",model.diagnostics().stream().filter(d -> d.maze()==maze).map(d -> d.severity()+" "+d.message()).limit(20).toList())); diagnostics.setCaretPosition(0);diagnosticScroll.setVisible(!diagnostics.getText().isBlank());diagnostics.setRows(Math.clamp(diagnostics.getLineCount(),1,3));diagnosticScroll.setPreferredSize(new Dimension(200,diagnostics.getPreferredSize().height+4));
-            grid.setPreferredSize(new Dimension(300,Math.min(156,Math.max(64,layout.height()*54)))); grid.revalidate(); grid.repaint();
+            grid.setPreferredSize(new Dimension(300,108)); grid.revalidate(); grid.repaint();
         } finally { changing=false; }
         previewChanged.run();
     }

@@ -133,6 +133,13 @@ class DungeonEditorPanelTest {
             assertTrue(hasColor(image,64,128,new Color(245,157,66)));assertTrue(hasColor(image,128,192,new Color(245,157,66)));
         }catch(Exception e){throw new RuntimeException(e);}});
     }
+    @Test void largeLayoutKeepsFixedMapHeightAndEveryCellReachableByDropdown()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.text="[maze info] [size] 50 50 [greed] `"+"AA".repeat(2500)+"` [map specification] 49 49 10 [/map specification]";h.install();
+            var grid=find(h.panel,"dgn-editor-grid",JComponent.class);assertTrue(grid.getPreferredSize().height<=108,"Large maps must not steal space from fixed inspector pages");
+            var rooms=find(h.panel,"dgn-select-room",JComboBox.class);assertEquals(2500,rooms.getItemCount());rooms.setSelectedItem(new Position(49,49));assertEquals(new Position(49,49),h.panel.position());
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
     @Test void nativeTilesReplaceSchematicPathsAndStaleAtlasIsIgnored()throws Exception{
         SwingUtilities.invokeAndWait(() -> {try{
             var h=new Harness();h.text="[minimap image] `Map/MiniMap/Act1.img`\n"+h.text;h.install();
