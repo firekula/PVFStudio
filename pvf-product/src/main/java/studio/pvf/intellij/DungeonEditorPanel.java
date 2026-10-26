@@ -22,13 +22,14 @@ final class DungeonEditorPanel extends JPanel {
     private final JComboBox<String> mazes = named(new JComboBox<>(),"dgn-editor-maze");
     private final JPanel previewHost = new JPanel(new BorderLayout());
     private final Grid grid = new Grid();
-    private final JScrollPane inspector;
-    private final JScrollPane roomScroll=new JScrollPane(grid);
+    private final JTabbedPane inspector = named(new JTabbedPane(),"dgn-inspector-tabs");
+    private final JComboBox<Position> rooms = named(new JComboBox<>(),"dgn-select-room");
     private final JLabel selection = new JLabel("选择房间");
     private final JLabel status = new JLabel("正在解析…");
     private final JTextArea diagnostics = new JTextArea(3,20);
     private final JScrollPane diagnosticScroll=new JScrollPane(diagnostics);
-    private final JTextField maps = named(new JTextField(),"dgn-room-maps"), bossMaps = named(new JTextField(),"dgn-room-boss-maps");
+    private final MultiSelectDropdown<Integer> maps = named(new MultiSelectDropdown<>(),"dgn-room-maps"), bossMaps = named(new MultiSelectDropdown<>(),"dgn-room-boss-maps");
+    private final MultiSelectDropdown<Position> startRooms=named(new MultiSelectDropdown<>(),"dgn-start-rooms"),bossRooms=named(new MultiSelectDropdown<>(),"dgn-boss-rooms");
     private final JCheckBox start = named(new JCheckBox("起点候选"),"dgn-start"), boss = named(new JCheckBox("Boss 候选"),"dgn-boss");
     private final EnumMap<Direction,JCheckBox> doors = new EnumMap<>(Direction.class);
     private final JCheckBox hellEnabled = named(new JCheckBox("启用深渊（整个副本）"),"dgn-hell-enabled");
@@ -64,54 +65,48 @@ final class DungeonEditorPanel extends JPanel {
         top.add(action("新建布局","dgn-new-maze",() -> change(() -> model.addMaze(3,3))));
         top.add(action("复制布局","dgn-copy-maze",() -> change(() -> model.copyMaze(maze))));
         top.add(action("调整尺寸…","dgn-resize",this::resize)); add(top,BorderLayout.NORTH);
-        roomScroll.setPreferredSize(new Dimension(300,140));roomScroll.getVerticalScrollBar().setUnitIncrement(32);roomScroll.getHorizontalScrollBar().setUnitIncrement(32);
-        JPanel layout=new JPanel(new BorderLayout(0,4));layout.add(new JLabel("房间布局 · S 起点 · B Boss · H 深渊封印"),BorderLayout.NORTH);layout.add(roomScroll);layout.setBorder(BorderFactory.createEmptyBorder(4,6,4,6));
-        JPanel properties = new JPanel(); properties.setLayout(new BoxLayout(properties,BoxLayout.Y_AXIS));
-        selection.setAlignmentX(LEFT_ALIGNMENT); properties.add(selection);
-        field(properties,"普通 MAP 候选（编号，逗号分隔）",maps);properties.add(mapsOrigin); field(properties,"Boss MAP 候选",bossMaps);properties.add(bossMapsOrigin);
-        watch(maps,() -> mapsEdited=true);watch(bossMaps,() -> bossMapsEdited=true);
-        JPanel choose = row(); choose.add(action("选择 MAP…","dgn-pick-map",() -> chooseMap(maps)));
-        choose.add(action("选择 Boss MAP…","dgn-pick-boss-map",() -> chooseMap(bossMaps))); properties.add(choose);
+        JPanel layout=new JPanel(new BorderLayout(0,3));
+        JPanel location=row();location.add(new JLabel("房间"));rooms.setPreferredSize(new Dimension(125,26));location.add(rooms);layout.add(location,BorderLayout.NORTH);layout.add(grid);
+        JLabel legend=new JLabel("S 起点 · B Boss · H 深渊 · 蓝框为选中房间");legend.setFont(legend.getFont().deriveFont(11f));layout.add(legend,BorderLayout.SOUTH);layout.setBorder(BorderFactory.createEmptyBorder(3,6,3,6));
+        rooms.addActionListener(e -> {if(!changing&&rooms.getSelectedItem() instanceof Position p)selectRoom(p);});
+        JPanel properties=page();properties.add(selection);
+        field(properties,"普通 MAP 候选",maps);properties.add(mapsOrigin);field(properties,"Boss MAP 候选",bossMaps);properties.add(bossMapsOrigin);
+        maps.onChange(values -> {if(!changing)mapsEdited=true;});bossMaps.onChange(values -> {if(!changing)bossMapsEdited=true;});
+        JPanel automatic=row();automatic.add(action("普通恢复自动","dgn-auto-maps",() -> {maps.selected(List.of());mapsEdited=true;mapsOrigin.setText("应用后恢复自动选图");}));automatic.add(action("Boss 恢复自动","dgn-auto-boss-maps",() -> {bossMaps.selected(List.of());bossMapsEdited=true;bossMapsOrigin.setText("应用后恢复自动 Boss 池");}));properties.add(automatic);
         properties.add(action("创建房间 / 应用候选","dgn-apply-maps",() -> change(() -> {
-            List<Integer> ids = mapsAutomatic&&!mapsEdited?List.of():numbers(maps.getText());
-            if (!current().rooms().contains(position)) return model.createRoom(maze,position,ids);
-            return ScriptEdit.combine("设置房间 MAP 候选",List.of(model.setCandidates(maze,position,false,ids),model.setCandidates(maze,position,true,bossMapsAutomatic&&!bossMapsEdited?List.of():numbers(bossMaps.getText()))));
+            List<Integer> ids=mapsAutomatic&&!mapsEdited?List.of():maps.selected();
+            List<Integer> bossIds=bossMapsAutomatic&&!bossMapsEdited?List.of():bossMaps.selected();
+            if(!current().rooms().contains(position))return model.createRoom(maze,position,ids,bossIds);
+            return ScriptEdit.combine("设置房间 MAP 候选",List.of(model.setCandidates(maze,position,false,ids),model.setCandidates(maze,position,true,bossIds)));
         })));
-        JPanel only=row();only.add(action("仅此房为起点","dgn-only-start",() -> change(() -> model.setStarts(maze,List.of(position)))));only.add(action("仅此房为 Boss","dgn-only-boss",() -> change(() -> model.setBosses(maze,List.of(position)))));properties.add(only);
-        JPanel flags=row(); flags.add(start); flags.add(boss); properties.add(flags); writes.add(start); writes.add(boss);
-        start.addActionListener(e -> { if(!changing) change(() -> model.setStarts(maze,toggle(current().layout().starts(),start.isSelected()))); });
-        boss.addActionListener(e -> { if(!changing) change(() -> model.setBosses(maze,toggle(current().layout().bosses(),boss.isSelected()))); });
-        JPanel links = row(); links.add(new JLabel("通路"));
-        for (Direction d:Direction.values()) {
-            JCheckBox door=named(new JCheckBox(d.label),"dgn-connect-"+d.name().toLowerCase(Locale.ROOT)); doors.put(d,door); links.add(door); writes.add(door);
-            door.addActionListener(e -> { if(!changing) change(() -> checkedConnection(d,door.isSelected())); });
-        }
-        properties.add(links);
-        JPanel nav=row(); nav.add(button("打开房间 MAP","dgn-open-map",this::openSelected)); nav.add(action("删除房间","dgn-delete-room",() -> change(() -> model.removeRoom(maze,position)))); properties.add(nav);
-        properties.add(action("克隆 MAP 并绑定…","dgn-clone-map",() -> cloneMap.accept(preview())));
-        properties.add(new JSeparator()); properties.add(new JLabel("深渊封印房")); properties.add(hellEnabled); properties.add(escape); writes.add(hellEnabled); writes.add(escape);
-        field(properties,"封印 MAP 编号",hellMap); properties.add(hellPosition);
-        JPanel hellActions=row(); hellActions.add(action("设为当前房间","dgn-hell-here",() -> change(() -> hell(position))));
-        hellActions.add(action("清除封印房","dgn-hell-clear",() -> change(() -> newHell(0,null)))); properties.add(hellActions);
-        hellEnabled.addActionListener(e -> { if(!changing) {if(hellEnabled.isSelected()&&(model.hell(maze).hitCounts().isEmpty()||model.hell(maze).mapId()<=0||model.hell(maze).position()==null))enableFromTemplate();else change(() -> hell(model.hell(maze).position()));} });
-        properties.add(action("从同包副本选择深渊模板…","dgn-hell-template",this::enableFromTemplate));
-        properties.add(button("编辑深渊 MAP / 封印对象","dgn-open-hell-map",() -> {if(model!=null&&catalog!=null){var path=catalog.maps().get(model.hell(maze).mapId());if(path!=null)openMap.accept(path);}}));
-        properties.add(button("打开 hellparty.etc","dgn-open-hellparty",() -> {if(catalog!=null&&catalog.paths().contains("etc/hellparty.etc"))openMap.accept("etc/hellparty.etc");else status.setText("当前包没有 etc/hellparty.etc");}));
-        escape.addActionListener(e -> { if(!changing) change(() -> hell(model.hell(maze).position())); });
-        field(properties,"击打阈值（全局，保留原字段数量）",hits); field(properties,"出现率（全局原始值）",rate); field(properties,"金币限制（旧版本全局原始值）",coin);
-        properties.add(action("应用深渊参数","dgn-apply-hell",() -> change(() -> hell(model.hell(maze).position()))));
-        JTextArea explanation=new JTextArea("深渊启用后，在指定坐标以封印 MAP 替换普通 MAP；与 Boss 位置独立。封印对象的 monster / hellparty 内容在 MAP 中编辑。概率单位未经确认，保留原始值。");
-        explanation.setEditable(false); explanation.setLineWrap(true); explanation.setWrapStyleWord(true); explanation.setOpaque(false); explanation.setRows(5); properties.add(explanation);
-        properties.add(new JSeparator());mapProblems.setMaximumSize(new Dimension(Integer.MAX_VALUE,28));properties.add(mapProblems);properties.add(button("打开 MAP 检查项源码","dgn-open-map-problem",() -> {var item=(DungeonMapChecks.Check)mapProblems.getSelectedItem();if(item!=null)openMap.accept(item.path());}));
-        properties.add(new JSeparator()); properties.add(new JLabel("仅预览，不修改配置")); properties.add(previewMode); properties.add(previewMaps);
-        previewMode.addActionListener(e -> { if(!changing) previewChanged.run(); }); previewMaps.addActionListener(e -> { if(!changing) previewChanged.run(); });
-        properties.add(button("定位布局源码","dgn-reveal",() -> {
-            if(model==null)return; var sections=model.source().sections("maze info"); if(maze<sections.size())reveal.accept(sections.get(maze).heading().range());
-        }));
-        properties.setBorder(BorderFactory.createEmptyBorder(6,6,6,6));
-        for(Component child:properties.getComponents())if(child instanceof JComponent c)c.setAlignmentX(LEFT_ALIGNMENT);
-        inspector=new JScrollPane(properties);inspector.setName("dgn-properties-scroll");inspector.getVerticalScrollBar().setUnitIncrement(28); inspector.setMinimumSize(new Dimension(180,100)); inspector.setPreferredSize(new Dimension(300,400));
-        JPanel settings=new JPanel(new BorderLayout(0,4));settings.add(layout,BorderLayout.NORTH);settings.add(inspector);settings.setMinimumSize(new Dimension(240,160));settings.setPreferredSize(new Dimension(340,400));
+        JPanel nav=row();nav.add(button("打开房间 MAP","dgn-open-map",this::openSelected));nav.add(action("删除房间","dgn-delete-room",() -> change(() -> model.removeRoom(maze,position))));properties.add(nav);
+        properties.add(action("克隆 MAP 并绑定…","dgn-clone-map",() -> cloneMap.accept(preview())));inspector.addTab("房间",properties);
+        JPanel roles=page();field(roles,"候选起点（可多选）",startRooms);field(roles,"候选 Boss 房间（可多选）",bossRooms);writes.add(startRooms);writes.add(bossRooms);
+        startRooms.onChange(values -> {if(!changing)change(() -> model.setStarts(maze,values));});bossRooms.onChange(values -> {if(!changing)change(() -> model.setBosses(maze,values));});
+        JPanel flags=row();flags.add(start);flags.add(boss);roles.add(flags);writes.add(start);writes.add(boss);
+        start.addActionListener(e -> {if(!changing)change(() -> model.setStarts(maze,toggle(current().layout().starts(),start.isSelected())));});
+        boss.addActionListener(e -> {if(!changing)change(() -> model.setBosses(maze,toggle(current().layout().bosses(),boss.isSelected())));});
+        JPanel only=row();only.add(action("仅此房为起点","dgn-only-start",() -> change(() -> model.setStarts(maze,List.of(position)))));only.add(action("仅此房为 Boss","dgn-only-boss",() -> change(() -> model.setBosses(maze,List.of(position)))));roles.add(only);
+        JPanel links=row();links.add(new JLabel("通路"));for(Direction d:Direction.values()){
+            JCheckBox door=named(new JCheckBox(d.label),"dgn-connect-"+d.name().toLowerCase(Locale.ROOT));doors.put(d,door);links.add(door);writes.add(door);
+            door.addActionListener(e -> {if(!changing)change(() -> checkedConnection(d,door.isSelected()));});
+        }roles.add(links);roles.add(note("所有候选都会标记在布局中；通路同时修改相邻房间。"));inspector.addTab("起终点",roles);
+        JPanel deep=page();deep.add(hellEnabled);deep.add(escape);writes.add(hellEnabled);writes.add(escape);
+        field(deep,"封印 MAP 编号",hellMap);deep.add(hellPosition);
+        JPanel hellActions=row();hellActions.add(action("设为当前房间","dgn-hell-here",() -> change(() -> hell(position))));hellActions.add(action("清除封印房","dgn-hell-clear",() -> change(() -> newHell(0,null))));deep.add(hellActions);
+        hellEnabled.addActionListener(e -> {if(!changing){if(hellEnabled.isSelected()&&(model.hell(maze).hitCounts().isEmpty()||model.hell(maze).mapId()<=0||model.hell(maze).position()==null))enableFromTemplate();else change(() -> hell(model.hell(maze).position()));}});
+        deep.add(action("从同包副本选择深渊模板…","dgn-hell-template",this::enableFromTemplate));
+        deep.add(button("编辑深渊 MAP / 封印对象","dgn-open-hell-map",() -> {if(model!=null&&catalog!=null){var path=catalog.maps().get(model.hell(maze).mapId());if(path!=null)openMap.accept(path);}}));
+        deep.add(button("打开 hellparty.etc","dgn-open-hellparty",() -> {if(catalog!=null&&catalog.paths().contains("etc/hellparty.etc"))openMap.accept("etc/hellparty.etc");else status.setText("当前包没有 etc/hellparty.etc");}));
+        escape.addActionListener(e -> {if(!changing)change(() -> hell(model.hell(maze).position()));});inspector.addTab("深渊",deep);
+        JPanel parameters=page();field(parameters,"击打阈值（全局，保留原字段数量）",hits);field(parameters,"出现率（全局原始值）",rate);field(parameters,"金币限制（旧版本全局原始值）",coin);
+        parameters.add(action("应用深渊参数","dgn-apply-hell",() -> change(() -> hell(model.hell(maze).position()))));parameters.add(note("封印房与 Boss 位置独立。概率单位未经确认，保留原始值。"));inspector.addTab("参数",parameters);
+        JPanel inspect=page();inspect.add(new JLabel("仅预览，不修改配置"));inspect.add(previewMode);inspect.add(previewMaps);
+        previewMode.addActionListener(e -> {if(!changing)previewChanged.run();});previewMaps.addActionListener(e -> {if(!changing)previewChanged.run();});
+        inspect.add(new JSeparator());inspect.add(mapProblems);inspect.add(button("打开 MAP 检查项源码","dgn-open-map-problem",() -> {var item=(DungeonMapChecks.Check)mapProblems.getSelectedItem();if(item!=null)openMap.accept(item.path());}));
+        inspect.add(button("定位布局源码","dgn-reveal",() -> {if(model==null)return;var sections=model.source().sections("maze info");if(maze<sections.size())reveal.accept(sections.get(maze).heading().range());}));inspector.addTab("预览",inspect);
+        for(int i=0;i<inspector.getTabCount();i++)for(Component child:((Container)inspector.getComponentAt(i)).getComponents())if(child instanceof JComponent c){c.setAlignmentX(LEFT_ALIGNMENT);if(c instanceof JComboBox||c instanceof JSeparator)c.setMaximumSize(new Dimension(Integer.MAX_VALUE,c instanceof JSeparator?8:28));}
+        JPanel settings=new JPanel(new BorderLayout(0,3));settings.add(layout,BorderLayout.NORTH);settings.add(inspector);settings.setMinimumSize(new Dimension(324,160));settings.setPreferredSize(new Dimension(350,400));
         JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,previewHost,settings); split.setResizeWeight(.72); split.setDividerLocation(540); add(split);
         diagnostics.setEditable(false); diagnostics.setLineWrap(true); diagnostics.setWrapStyleWord(true);
         JPanel footer=new JPanel(new BorderLayout()); footer.add(status,BorderLayout.NORTH); diagnosticScroll.setVisible(false);diagnosticScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE,76));footer.add(diagnosticScroll); add(footer,BorderLayout.SOUTH);
@@ -120,8 +115,9 @@ final class DungeonEditorPanel extends JPanel {
     }
     private static <T extends JComponent> T named(T c,String name) { c.setName(name); return c; }
     private static JPanel row() { var p=new JPanel(new FlowLayout(FlowLayout.LEFT,4,2)); p.setAlignmentX(LEFT_ALIGNMENT); p.setMaximumSize(new Dimension(Integer.MAX_VALUE,36)); return p; }
-    private void watch(JTextField field,Runnable edited){field.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){changed();}public void removeUpdate(javax.swing.event.DocumentEvent e){changed();}public void changedUpdate(javax.swing.event.DocumentEvent e){changed();}private void changed(){if(!changing)edited.run();}});}
-    private static void field(JPanel p,String title,JTextField value) { p.add(new JLabel(title)); value.setMaximumSize(new Dimension(Integer.MAX_VALUE,28)); p.add(value); }
+    private static JPanel page(){JPanel p=new JPanel();p.setLayout(new BoxLayout(p,BoxLayout.Y_AXIS));p.setBorder(BorderFactory.createEmptyBorder(6,7,6,7));return p;}
+    private static JTextArea note(String text){var c=new JTextArea(text);c.setEditable(false);c.setLineWrap(true);c.setWrapStyleWord(true);c.setOpaque(false);c.setRows(2);c.setMaximumSize(new Dimension(Integer.MAX_VALUE,50));return c;}
+    private static void field(JPanel p,String title,JComponent value) { p.add(new JLabel(title)); value.setMaximumSize(new Dimension(Integer.MAX_VALUE,28)); p.add(value); }
     private JButton button(String title,String name,Runnable run) { JButton b=named(new JButton(title),name); b.setAlignmentX(LEFT_ALIGNMENT); b.addActionListener(e -> run.run()); return b; }
     private JButton action(String title,String name,Runnable run) { JButton b=button(title,name,run); writes.add(b); return b; }
     JPanel previewHost() { return previewHost; }
@@ -152,15 +148,15 @@ final class DungeonEditorPanel extends JPanel {
             int gate=p.equals(position)?direction.ordinal():direction.opposite().ordinal();for(int id:ids){var check=mapChecks.get(id);if(check==null||!check.hasGate(gate))throw new IOException("MAP #"+id+" 未验证可用的原生门坐标；请打开 MAP 检查项修正");}
         }}return model.connect(maze,position,direction,enabled);
     }
-    void setCatalog(SceneCatalog value) { catalog=value; }
+    void setCatalog(SceneCatalog value) {catalog=value;var items=new LinkedHashMap<Integer,String>();value.maps().entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(e -> items.put(e.getKey(),e.getKey()+" · "+e.getValue()));maps.options(items);bossMaps.options(items);}
     void resolvedChoices(DungeonPanel.Selection value) {
         if(value==null||model==null||!value.room().position().equals(position)||!value.dungeon().definition().equals(model.definition()))return;
         changing=true;
         try {
             var normal=value.dungeon().candidates(maze,position,false).stream().map(map -> map.id()).toList();
             var bosses=value.dungeon().candidates(maze,position,true).stream().map(map -> map.id()).toList();
-            if(mapsAutomatic&&!mapsEdited){maps.setText(join(normal));mapsOrigin.setText("自动选图池 · "+normal.size()+" 项；修改并应用后固定到此房间");}
-            if(bossMapsAutomatic&&!bossMapsEdited){bossMaps.setText(join(bosses));bossMapsOrigin.setText("自动 Boss 池 · "+bosses.size()+" 项；修改并应用后固定");}
+            if(mapsAutomatic&&!mapsEdited){maps.selected(normal);mapsOrigin.setText("自动选图池 · "+normal.size()+" 项；应用修改后固定");}
+            if(bossMapsAutomatic&&!bossMapsEdited){bossMaps.selected(bosses);bossMapsOrigin.setText("自动 Boss 池 · "+bosses.size()+" 项；应用修改后固定");}
             previewMaps.removeAllItems();value.room().choices().forEach(map -> previewMaps.addItem(map.id()));if(value.map()!=null)previewMaps.setSelectedItem(value.map().id());
         }finally{changing=false;}
     }
@@ -174,14 +170,16 @@ final class DungeonEditorPanel extends JPanel {
     private DungeonDocument.Maze current() { return model.mazes().get(maze); }
     void selectRoom(Position value) { if(model!=null && value.x()>=0 && value.y()>=0 && value.x()<current().layout().width() && value.y()<current().layout().height()) { position=value; update(); } }
     private void update() {
-        Point scroll=inspector.getViewport().getViewPosition();
         changing=true;
         try {
             var room=current(); var layout=room.layout(); if(position.x()>=layout.width()||position.y()>=layout.height())position=new Position(0,0);
             boolean exists=room.rooms().contains(position), editable=writable&&!model.source().sections("maze info").isEmpty();
-            writes.forEach(c -> c.setEnabled(editable));maps.setEditable(editable);bossMaps.setEditable(editable);hellMap.setEditable(editable);hits.setEditable(editable);rate.setEditable(editable);
+            writes.forEach(c -> c.setEnabled(editable));maps.setEnabled(editable);bossMaps.setEnabled(editable);hellMap.setEditable(editable);hits.setEditable(editable);rate.setEditable(editable);
             mapsAutomatic=layout.maps().getOrDefault(position,List.of()).isEmpty();bossMapsAutomatic=layout.bossMaps().getOrDefault(position,List.of()).isEmpty();mapsEdited=false;bossMapsEdited=false;mapsOrigin.setText(mapsAutomatic?"自动选图池，正在解析候选…":"本房间固定的普通 MAP 候选");bossMapsOrigin.setText(bossMapsAutomatic?"自动 Boss 池，正在解析候选…":"本房间固定的 Boss MAP 候选");
-            selection.setText("房间 "+position+(exists?"":" · 空格，指定 MAP 后创建")); maps.setText(join(layout.maps().getOrDefault(position,List.of()))); bossMaps.setText(join(layout.bossMaps().getOrDefault(position,List.of())));
+            selection.setText("房间 "+position+(exists?"":" · 空格，指定 MAP 后创建")); maps.selected(layout.maps().getOrDefault(position,List.of()));bossMaps.selected(layout.bossMaps().getOrDefault(position,List.of()));
+            var positions=new LinkedHashMap<Position,String>();rooms.removeAllItems();
+            for(int y=0;y<layout.height();y++)for(int x=0;x<layout.width();x++){var p=new Position(x,y);rooms.addItem(p);if(room.rooms().contains(p))positions.put(p,"房间 "+p);}
+            rooms.setSelectedItem(position);startRooms.options(positions);bossRooms.options(positions);startRooms.selected(layout.starts());bossRooms.selected(layout.bosses());
             start.setSelected(layout.starts().contains(position)); boss.setSelected(layout.bosses().contains(position)); start.setEnabled(editable&&exists); boss.setEnabled(editable&&exists);
             for(var item:doors.entrySet()) { item.getValue().setSelected(layout.connected(position,item.getKey())); item.getValue().setEnabled(editable&&exists&&room.rooms().contains(layout.neighbor(position,item.getKey()))); }
             var hell=model.hell(maze); hellEnabled.setSelected(hell.enabled()); escape.setSelected(hell.excluded()); escape.setEnabled(editable&&model.supportsEscape());
@@ -192,10 +190,8 @@ final class DungeonEditorPanel extends JPanel {
             hits.setText(join(hell.hitCounts())); rate.setText(hell.appearRate()==null?"":hell.appearRate().toString()); coin.setText(hell.coinLimit()==null?"":hell.coinLimit().toString());
             previewMaps.removeAllItems(); var choices=layout.bosses().contains(position)&&!layout.bossMaps().getOrDefault(position,List.of()).isEmpty()?layout.bossMaps().get(position):layout.maps().getOrDefault(position,List.of()); choices.forEach(previewMaps::addItem);
             diagnostics.setText(String.join("\n",model.diagnostics().stream().filter(d -> d.maze()==maze).map(d -> d.severity()+" "+d.message()).limit(20).toList())); diagnostics.setCaretPosition(0);diagnosticScroll.setVisible(!diagnostics.getText().isBlank());diagnostics.setRows(Math.clamp(diagnostics.getLineCount(),1,3));diagnosticScroll.setPreferredSize(new Dimension(200,diagnostics.getPreferredSize().height+4));
-            roomScroll.setPreferredSize(new Dimension(300,Math.min(180,layout.height()*64+8)));
-            grid.setPreferredSize(new Dimension(layout.width()*64,layout.height()*64)); grid.revalidate(); grid.repaint();
+            grid.setPreferredSize(new Dimension(300,Math.min(156,Math.max(64,layout.height()*54)))); grid.revalidate(); grid.repaint();
         } finally { changing=false; }
-        SwingUtilities.invokeLater(() -> inspector.getViewport().setViewPosition(scroll));
         previewChanged.run();
     }
     private List<Position> toggle(List<Position> before,boolean enabled) { var values=new ArrayList<>(before); values.remove(position); if(enabled)values.add(position); return values; }
@@ -229,11 +225,6 @@ final class DungeonEditorPanel extends JPanel {
         try { edit.apply(version,command.make()); }
         catch(Exception failure) { if(model!=null)update();status.setText("无法应用："+failure.getMessage()); status.setToolTipText(status.getText()); }
     }
-    private void chooseMap(JTextField target) {
-        if(catalog==null)return;
-        Integer selected=SceneAssetPicker.choose(this,"选择房间 MAP",catalog.maps());
-        if(selected!=null){boolean automatic=target==maps?mapsAutomatic&&!mapsEdited:bossMapsAutomatic&&!bossMapsEdited;target.setText(automatic||target.getText().isBlank()?selected.toString():target.getText()+", "+selected);}
-    }
     private void openSelected() {
         if(catalog==null)return; Integer id=(Integer)previewMaps.getSelectedItem();
         if(previewMode.getSelectedIndex()==1 && model!=null)id=model.hell(maze).mapId();
@@ -253,21 +244,27 @@ final class DungeonEditorPanel extends JPanel {
         change(() -> model.resize(maze,w,h,crop));
     }
     private final class Grid extends JComponent {
-        Grid() { setOpaque(true);setBackground(Optional.ofNullable(UIManager.getColor("Panel.background")).orElse(new Color(45,48,53))); addMouseListener(new MouseAdapter() { public void mousePressed(MouseEvent e) { selectRoom(new Position(e.getX()/64,e.getY()/64)); } }); }
-        protected void paintComponent(Graphics graphics) {
-            super.paintComponent(graphics);graphics.setColor(getBackground());graphics.fillRect(0,0,getWidth(),getHeight()); if(model==null)return; Graphics2D g=(Graphics2D)graphics.create();
-            try {
-                var room=current(); var layout=room.layout(); var hell=model.hell(maze); g.setStroke(new BasicStroke(3));
-                for(int y=0;y<layout.height();y++)for(int x=0;x<layout.width();x++) {
-                    Position p=new Position(x,y); int px=x*64,py=y*64; boolean exists=room.rooms().contains(p);
-                    g.setColor(exists?new Color(62,78,99):new Color(35,40,47)); g.fillRoundRect(px+5,py+5,54,54,8,8);
-                    g.setColor(p.equals(position)?new Color(90,185,255):new Color(100,110,124)); g.drawRoundRect(px+5,py+5,54,54,8,8);
-                    for(Direction d:Direction.values())if(layout.connected(p,d))g.drawLine(px+32,py+32,px+32+d.dx*32,py+32+d.dy*32);
-                    String flags=(layout.starts().contains(p)?"S":"")+(layout.bosses().contains(p)?"B":"")+(activeHellAt(p)?"H":"");
-                    g.setColor(Color.WHITE); g.drawString(exists?flags.isEmpty()?x+","+y:flags:"+",px+16,py+32);
-                    if(exists&&layout.mask(p)==0&&!room.playable(p)) { g.setColor(Color.ORANGE); g.drawString("待连通",px+10,py+50); }
+        Grid(){setOpaque(true);setBackground(Optional.ofNullable(UIManager.getColor("Panel.background")).orElse(new Color(45,48,53)));setToolTipText("");addMouseListener(new MouseAdapter(){public void mousePressed(MouseEvent e){if(model==null)return;var m=metrics();selectRoom(new Position((int)Math.floor((e.getX()-m[1])/m[0]),(int)Math.floor((e.getY()-m[2])/m[0])));}});}
+        private double[] metrics(){var l=current().layout();double w=getWidth()>0?getWidth():l.width()*64,h=getHeight()>0?getHeight():l.height()*64;double cell=Math.min(64,Math.min(w/l.width(),h/l.height()));return new double[]{cell,(w-cell*l.width())/2,(h-cell*l.height())/2};}
+        @Override public String getToolTipText(MouseEvent e){if(model==null)return null;var m=metrics();int x=(int)Math.floor((e.getX()-m[1])/m[0]),y=(int)Math.floor((e.getY()-m[2])/m[0]);if(x<0||y<0||x>=current().layout().width()||y>=current().layout().height())return null;var p=new Position(x,y);return "房间 "+p+(current().layout().starts().contains(p)?" · 起点候选":"")+(current().layout().bosses().contains(p)?" · Boss 候选":"")+(activeHellAt(p)?" · 深渊封印":"");}
+        protected void paintComponent(Graphics graphics){
+            super.paintComponent(graphics);graphics.setColor(getBackground());graphics.fillRect(0,0,getWidth(),getHeight());if(model==null)return;Graphics2D g=(Graphics2D)graphics.create();
+            try{
+                var room=current();var l=room.layout();var m=metrics();g.translate(m[1],m[2]);g.scale(m[0]/64,m[0]/64);g.setStroke(new BasicStroke(2));
+                for(int y=0;y<l.height();y++)for(int x=0;x<l.width();x++){
+                    Position p=new Position(x,y);int px=x*64,py=y*64;boolean exists=room.rooms().contains(p);
+                    g.setColor(exists?new Color(62,78,99):new Color(35,40,47));g.fillRoundRect(px+4,py+4,56,56,8,8);
+                    g.setColor(new Color(100,110,124));g.drawRoundRect(px+4,py+4,56,56,8,8);
+                    for(Direction d:Direction.values())if(l.connected(p,d))g.drawLine(px+32,py+32,px+32+d.dx*32,py+32+d.dy*32);
+                    g.setColor(Color.WHITE);g.drawString(exists?x+","+y:"+",px+17,py+32);
+                    int badgeX=px+7;if(l.starts().contains(p)){badge(g,"S",badgeX,py+7,new Color(66,190,125));badgeX+=17;}
+                    if(l.bosses().contains(p)){badge(g,"B",badgeX,py+7,new Color(245,157,66));badgeX+=17;}
+                    if(activeHellAt(p))badge(g,"H",badgeX,py+7,new Color(194,123,235));
+                    if(p.equals(position)){g.setColor(new Color(90,185,255));g.setStroke(new BasicStroke(3));g.drawRoundRect(px+2,py+2,60,60,8,8);g.setStroke(new BasicStroke(2));}
+                    if(exists&&l.mask(p)==0&&!room.playable(p)){g.setColor(Color.ORANGE);g.drawString("待连通",px+10,py+50);}
                 }
-            } finally { g.dispose(); }
+            }finally{g.dispose();}
         }
+        private void badge(Graphics2D g,String text,int x,int y,Color color){g.setColor(color);g.fillRoundRect(x,y,15,15,4,4);g.setColor(new Color(20,30,35));g.setFont(g.getFont().deriveFont(Font.BOLD,11f));g.drawString(text,x+4,y+12);}
     }
 }

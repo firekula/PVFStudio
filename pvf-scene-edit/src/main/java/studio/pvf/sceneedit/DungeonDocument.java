@@ -76,10 +76,13 @@ public final class DungeonDocument {
     }
 
     public ScriptEdit createRoom(int maze, Position position, List<Integer> maps) throws IOException {
+        return createRoom(maze,position,maps,List.of());
+    }
+    public ScriptEdit createRoom(int maze, Position position, List<Integer> maps, List<Integer> bossMaps) throws IOException {
         var s = scope(maze); inside(s.maze.layout,position);
         if (s.maze.rooms.contains(position)) throw new IOException("该房间已经存在");
         if (maps.isEmpty()) throw new IOException("新房间需要先指定一个 MAP");
-        return candidates(s,position,false,maps);
+        return ScriptEdit.combine("创建房间",List.of(candidates(s,position,false,maps),candidates(s,position,true,bossMaps)));
     }
     public ScriptEdit setCandidates(int maze, Position position, boolean boss, List<Integer> maps) throws IOException {
         var s = scope(maze); member(s,position); return candidates(s,position,boss,maps);

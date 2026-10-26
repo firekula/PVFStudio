@@ -25,15 +25,22 @@ class DungeonEditorPanelTest {
         void install() throws Exception { panel.install(DungeonDocument.parse("dungeon/x.dgn", text), 1, true, ""); }
         DungeonDocument document() throws Exception { return DungeonDocument.parse("dungeon/x.dgn",text); }
         void click(String name) { find(panel, name, AbstractButton.class).doClick(); }
-        void value(String name,String value) { find(panel, name, JTextField.class).setText(value); }
+        void value(String name,String value) {
+            if(name.equals("dgn-room-maps")||name.equals("dgn-room-boss-maps")) {
+                var field=find(panel,name,MultiSelectDropdown.class);
+                for(Object id:List.copyOf(field.selected()))field.toggle(id);
+                if(!value.isBlank())for(String id:value.split(","))field.toggle(Integer.valueOf(id.trim()));
+            } else find(panel,name,JTextField.class).setText(value);
+        }
     }
     @Test void emptyClickCreatesRoomConnectsBothWaysAndNavigatesActualMap() throws Exception {
         SwingUtilities.invokeAndWait(() -> { try {
             var h = new Harness(); JComponent grid = find(h.panel,"dgn-editor-grid",JComponent.class);
             grid.dispatchEvent(new MouseEvent(grid, MouseEvent.MOUSE_PRESSED,0,0,2*64+32,32,1,false));
             assertEquals(new Position(2,0), h.panel.position());
-            h.value("dgn-room-maps","10, 11"); h.click("dgn-apply-maps");
+            h.value("dgn-room-maps","10, 11");h.value("dgn-room-boss-maps","20"); h.click("dgn-apply-maps");
             assertEquals(List.of(10,11),h.document().mazes().getFirst().layout().maps().get(new Position(2,0)));
+            assertEquals(List.of(20),h.document().mazes().getFirst().layout().bossMaps().get(new Position(2,0)));
             h.click("dgn-connect-left"); assertTrue(h.document().mazes().getFirst().layout().connected(new Position(2,0),Direction.LEFT));
             h.click("dgn-open-map"); assertEquals(List.of("map/a.map"),h.opened);
             h.click("dgn-start"); h.click("dgn-boss");
@@ -96,10 +103,10 @@ class DungeonEditorPanelTest {
             var footer=((BorderLayout)h.panel.getLayout()).getLayoutComponent(BorderLayout.SOUTH);assertTrue(footer.getPreferredSize().height<40,"An empty diagnostics area must not reserve rows");
         }catch(Exception e){throw new RuntimeException(e);}});
     }
-    @Test void roomGridClearsOldScenePixelsAndPropertyWheelHasUsefulIncrement()throws Exception{
+    @Test void roomGridClearsOldScenePixelsAndInspectorNeverScrolls()throws Exception{
         SwingUtilities.invokeAndWait(() -> {try{
             var h=new Harness();var grid=find(h.panel,"dgn-editor-grid",JComponent.class);grid.setSize(320,180);var pixels=new java.awt.image.BufferedImage(320,180,java.awt.image.BufferedImage.TYPE_INT_RGB);var g=pixels.createGraphics();g.setColor(Color.MAGENTA);g.fillRect(0,0,320,180);grid.paint(g);g.dispose();assertNotEquals(Color.MAGENTA.getRGB(),pixels.getRGB(250,140),"A room grid must erase cached map pixels");
-            var field=find(h.panel,"dgn-room-maps",JTextField.class);var scroll=(JScrollPane)SwingUtilities.getAncestorOfClass(JScrollPane.class,field);assertTrue(scroll.getVerticalScrollBar().getUnitIncrement()>=24);
+            var field=find(h.panel,"dgn-room-maps",MultiSelectDropdown.class);assertNull(SwingUtilities.getAncestorOfClass(JScrollPane.class,field));assertNull(SwingUtilities.getAncestorOfClass(JScrollPane.class,grid));assertNotNull(find(h.panel,"dgn-inspector-tabs",JTabbedPane.class));
         }catch(Exception e){throw new RuntimeException(e);}});
     }
     @Test void automaticPoolsAreVisibleEditableAndUntouchedPoolsStayAutomatic()throws Exception{
@@ -107,12 +114,26 @@ class DungeonEditorPanelTest {
             var h=new Harness();h.text="[maze info] [size] 2 1 [greed] `BBEE` [start map] 0 0 [/start map] [boss map] 1 0 [/boss map]";h.install();
             var files=Map.of("dungeon/dungeon.lst","1 `x.dgn`","map/map.lst","10 `a.map` 20 `b.map`","map/a.map","[dungeon] 1 [type] `[normal]` [greed] `BBBBEEEE`","map/b.map","[dungeon] 1 [type] `[boss]` [greed] `BBBBEEEE`");
             var dungeon=studio.pvf.preview.DungeonPreview.load("dungeon/x.dgn",h.text,files::get);var choice=DungeonEditorPreview.resolve(dungeon,h.panel.preview());String unchanged=h.text;h.panel.resolvedChoices(choice);
-            assertEquals("10",find(h.panel,"dgn-room-maps",JTextField.class).getText());assertEquals("20",find(h.panel,"dgn-room-boss-maps",JTextField.class).getText());assertEquals(unchanged,h.text);
-            h.value("dgn-room-maps","99");h.panel.resolvedChoices(choice);assertEquals("99",find(h.panel,"dgn-room-maps",JTextField.class).getText(),"An async pool resolution must not overwrite typing");
+            assertEquals(List.of(10),find(h.panel,"dgn-room-maps",MultiSelectDropdown.class).selected());assertEquals(List.of(20),find(h.panel,"dgn-room-boss-maps",MultiSelectDropdown.class).selected());assertEquals(unchanged,h.text);
+            h.value("dgn-room-maps","99");h.panel.resolvedChoices(choice);assertEquals(List.of(99),find(h.panel,"dgn-room-maps",MultiSelectDropdown.class).selected(),"An async pool resolution must not overwrite choices");
             h.panel.selectRoom(new Position(0,0));h.panel.resolvedChoices(choice);h.value("dgn-room-boss-maps","20");h.click("dgn-apply-maps");
             assertFalse(h.document().mazes().getFirst().layout().maps().containsKey(new Position(0,0)),"Displaying an automatic pool must not silently pin it");assertEquals(List.of(20),h.document().mazes().getFirst().layout().bossMaps().get(new Position(0,0)));
         }catch(Exception e){throw new RuntimeException(e);}});
     }
+    @Test void roleDropdownsSupportMultipleOverlappingCandidates()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.text=h.text.replace("BBEEAA","BBFFEE");h.install();
+            var starts=find(h.panel,"dgn-start-rooms",MultiSelectDropdown.class);var bosses=find(h.panel,"dgn-boss-rooms",MultiSelectDropdown.class);
+            starts.toggle(new Position(1,0));bosses.toggle(new Position(2,0));
+            assertEquals(List.of(new Position(0,0),new Position(1,0)),h.document().mazes().getFirst().layout().starts());
+            assertEquals(List.of(new Position(1,0),new Position(2,0)),h.document().mazes().getFirst().layout().bosses());
+            h.panel.selectRoom(new Position(2,0));assertEquals(2,starts.selected().size());assertEquals(2,bosses.selected().size());
+            var grid=find(h.panel,"dgn-editor-grid",JComponent.class);grid.setSize(192,64);var image=new java.awt.image.BufferedImage(192,64,2);grid.paint(image.createGraphics());
+            assertTrue(hasColor(image,0,64,new Color(66,190,125)));assertTrue(hasColor(image,64,128,new Color(66,190,125)));
+            assertTrue(hasColor(image,64,128,new Color(245,157,66)));assertTrue(hasColor(image,128,192,new Color(245,157,66)));
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    private static boolean hasColor(java.awt.image.BufferedImage image,int x0,int x1,Color color){for(int y=0;y<image.getHeight();y++)for(int x=x0;x<x1;x++)if(image.getRGB(x,y)==color.getRGB())return true;return false;}
     static <T> T find(Container parent,String name,Class<T> type) {
         for(Component c:parent.getComponents()) {
             if(name.equals(c.getName()) && type.isInstance(c)) return type.cast(c);

@@ -1,0 +1,11 @@
+# Dungeon inspector and native minimap follow-up
+
+The user requests a fixed right panel, dropdown selection for start/Boss candidates, visible markers for every candidate, and native NPK minimap tiles with a schematic fallback. This is a concrete follow-up to the already approved editor; continue inline and review at the end.
+
+Use a fixed minimap above compact tabs (room, roles/connections, hell, advanced/preview). No inspector or minimap scrollbars; fit the entire layout, and provide a room-coordinate dropdown for precise selection of large layouts. Dropdown popups may scroll their option lists. Keep all controls reachable at 1024×720.
+
+Start and Boss dropdowns select multiple existing room coordinates and immediately use lossless setStarts/setBosses commands. MAP candidate dropdowns display ID and path, support search and multiple choices, and stage changes until Apply. Display automatic native pools without pinning untouched pools. Retain unresolved explicit IDs, source version guards, mixed newline provenance and native undo/redo. Keep single-room shortcuts and reciprocal connection validation.
+
+Every start candidate has a green S badge, every Boss candidate an orange B badge, and active hell a purple H badge; overlapping roles keep all badges. The current cell has a separate blue border. Native tiles are loaded from the current DGN [minimap image] using the shared resource index and background worker. For the verified ACT1 tile format, directions are R=1/U=2/L=4/D=8, eight variants per nonzero mask, frame=(mask-1)*8+4 (lit deterministic variant). Nearest-neighbor tiles abut so native paths connect. Verify the 120 tile frames are 18×18; missing/incompatible assets fall back to the existing schematic. Unconnected cells have a neutral editor placeholder. The interface Boss icon is optional, with explicit text badges always present.
+
+Resource loads are guarded by directory generation and exact requested image; no archive I/O in painting. Do not modify original PVF/NPK files or the user's running 0.14.1 directory. Package this follow-up as 0.14.2.
