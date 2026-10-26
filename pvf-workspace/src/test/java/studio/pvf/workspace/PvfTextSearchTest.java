@@ -7,6 +7,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PvfTextSearchTest {
+    @Test void skippedBinaryFilesStillAdvanceProgressToTheEnd() throws Exception {
+        int[] processed = {0};
+        var result = PvfTextSearch.scan(List.of("a", "b", "c"), path -> null, "x", "", false, 10,
+                () -> false, count -> processed[0] = count);
+        assertEquals(3, result.skipped()); assertEquals(3, processed[0]); assertEquals(0, result.scanned());
+    }
     @Test void literalMatchesHaveNormalizedEditorOffsetsAndUnicodeCaseWithoutLosingColumns() throws Exception {
         String raw = "first\r\n中文 [Tile]\r[Tile] last";
         var result = PvfTextSearch.scan(List.of("map/a.map"), path -> raw, "[tile]", "MAP/", false, 20, () -> false, n -> {});

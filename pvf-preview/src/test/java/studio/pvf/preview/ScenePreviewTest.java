@@ -10,6 +10,64 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ScenePreviewTest {
+    @Test void onlyNormalLayerSortsByWorldYWhileOtherLayersKeepCreationOrder() throws Exception {
+        Map<String, String> scripts = Map.of("map/a.til", tile("", false, 0),
+                "map/rail.ani", ani("back.img", false, 100),
+                "map/stair.ani", "[FRAME0] [IMAGE] `front.img` 0 [IMAGE POS] 0 20 [DELAY] 100");
+        for (String layer : List.of("distantback", "middleback", "closeback", "bottom", "normal", "close")) {
+            var frame = ScenePreview.load("map/test.map", "[tile] `a.til` [/tile] [animation] "
+                    + "`rail.ani` `[" + layer + "]` 0 20 0 `stair.ani` `[" + layer + "]` 0 10 0 [/animation]",
+                    scripts::get, new Images()).render(0, false);
+            int expected = layer.equals("normal") ? Color.RED.getRGB() : Color.GREEN.getRGB();
+            assertEquals(expected, paint(frame, false, 0).getRGB(2, 152), layer);
+            var image = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB); var g = image.createGraphics();
+            frame.paintClient(g, new Rectangle(0, 0, 640, 480), 1, new Point(), false, false); g.dispose();
+            assertEquals(expected, image.getRGB(2, 152), layer + " client");
+        }
+    }
+    @Test void newerBasicImageOffsetAlignsFloorWithoutMovingActorsPassCellsOrExtendedRows() throws Exception {
+        Map<String, String> scripts = Map.of("map/a.til", tile("tile.img", false, 2) + " [img pos] 80",
+                "map/e.til", tile("ext.img", true, 0) + " [img pos] 80", "map/foot.ani", ani("front.img", false, 100));
+        var frame = ScenePreview.load("map/test.map", "[tile] `a.til` [/tile] [extended tile] `e.til` [/extended tile] "
+                + "[animation] `foot.ani` `[normal]` 100 240 0 [/animation]", scripts::get, new Images()).render(0, false);
+        assertEquals(600, frame.bounds().getHeight()); assertEquals(-80, frame.draws().get(0).y());
+        assertEquals(480, frame.draws().get(1).y()); assertEquals(360, frame.draws().get(2).y());
+        assertEquals(120, frame.collisions().get(0).y()); assertEquals(480, frame.collisions().get(1).y());
+        assertEquals(Color.BLUE.getRGB(), paint(frame, false, 0).getRGB(90, 360));
+        assertEquals(Color.GREEN.getRGB(), paint(frame, false, 0).getRGB(100, 360));
+        assertEquals(Color.RED.getRGB(), paint(frame, false, 0).getRGB(90, 480));
+        assertTrue(frame.collisionAt(8, 120).contains("0,0"));
+        var standalone = ScenePreview.load("map/a.til", scripts.get("map/a.til"), scripts::get, new Images()).render(0, false);
+        assertEquals(-80, standalone.draws().get(0).y()); assertEquals(120, standalone.collisions().get(0).y());
+    }
+    @Test void seaTrainSceneryRepeatsThroughWholeMapAndClientCameraAcrossAnimationLoop() throws Exception {
+        Map<String, String> scripts = Map.of("map/a.til", tile("", false, 0),
+                "passiveobject/passiveobject.lst", "723 `sea.obj` 724 `ordinary.obj`",
+                "passiveobject/sea.obj", "[layer] `[distantback]` [basic motion] `sea.ani` [int data] 80 0 [/int data]",
+                "passiveobject/ordinary.obj", "[basic motion] `sea.ani` [int data] 80 0 [/int data]",
+                "passiveobject/sea.ani", "[LOOP] 1 [FRAME0] [IMAGE] `back.img` 0 [IMAGE POS] 0 -80 [INTERPOLATION] 1 [DELAY] 100 "
+                        + "[FRAME1] [IMAGE] `back.img` 0 [IMAGE POS] -80 -80 [DELAY] 0");
+        var scene = ScenePreview.load("map/sea.map", "[tile] " + "`a.til` ".repeat(5) + "[/tile] [far sight scroll] 56 "
+                + "[passive object] 723 0 0 120 [/passive object]", scripts::get, new Images());
+        for (long time : new long[]{0, 50, 99, 100, 60061}) {
+            var frame = scene.render(time, false);
+            BufferedImage image = new BufferedImage(1120, 480, BufferedImage.TYPE_INT_ARGB); var g = image.createGraphics();
+            frame.paint(g, new Rectangle(0, 0, 1120, 480), 0, 80, 1, 0, 0, false); g.dispose();
+            for (int x : new int[]{0, 555, 1119}) assertEquals(Color.RED.getRGB(), image.getRGB(x, 1));
+            g = image.createGraphics(); frame.paintClient(g, new Rectangle(0, 0, 640, 480), 1, new Point(480, 0), false, false); g.dispose();
+            assertEquals(Color.RED.getRGB(), image.getRGB(639, 1)); assertTrue(frame.warnings().isEmpty());
+        }
+        assertEquals(0, EntityScript.sceneryPeriod(scripts.get("passiveobject/ordinary.obj"), 724));
+    }
+    @Test void overviewIncludesDecorationOutsideFloorWithoutChangingClientLimits() throws Exception {
+        var rendered = ScenePreview.load("map/test.map", "[tile] `a.til` [/tile] [animation] `a.ani` `[normal]` 300 -200 0 [/animation]",
+                Map.of("map/a.til", tile("", false, 0), "map/a.ani", ani("front.img", false, 100))::get, new Images()).render(0, false);
+        assertEquals(224, rendered.bounds().getWidth()); assertEquals(new SceneCamera.Limits(0, 0), rendered.cameraLimits());
+        assertTrue(rendered.overviewBounds().getMaxX() > 300); assertTrue(rendered.overviewBounds().getMinY() < 0);
+        BufferedImage image = new BufferedImage(500, 500, BufferedImage.TYPE_INT_ARGB); var g = image.createGraphics();
+        rendered.paint(g, new Rectangle(0, 0, 500, 500), 0, 100, 1, 0, 0, false); g.dispose();
+        assertEquals(Color.GREEN.getRGB(), image.getRGB(300, 20));
+    }
     @Test void clientVerticalLimitIsIndependentOfShorterBaseImageHeight() throws Exception {
         var frame = ScenePreview.load("map/test.map", "[tile] `a.til` `a.til` [/tile] [extended tile] `e.til` `e.til` `e.til` [/extended tile]",
                 Map.of("map/a.til", "[pass type] " + "0 ".repeat(280), "map/e.til", tile("ext.img", true, 0))::get, new Images()).render(0, false);

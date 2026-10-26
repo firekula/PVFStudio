@@ -23,7 +23,7 @@ public final class ResourceScript {
             if (token.startsWith("//") || token.startsWith("/*")) continue;
             if (token.startsWith("[")) {
                 if (!tag.isEmpty()) sections.add(new Section(tag, List.copyOf(values), tagLine, List.copyOf(lines)));
-                tag = token.substring(1, token.length() - 1).trim().toLowerCase(Locale.ROOT); values.clear(); lines.clear(); tagLine = line;
+                tag = ScriptDialect.tag(token.substring(1, token.length() - 1)); values.clear(); lines.clear(); tagLine = line;
             } else {
                 if (token.startsWith("`") || token.startsWith("\"")) token = token.substring(1, token.length() - 1);
                 values.add(token);
@@ -35,6 +35,8 @@ public final class ResourceScript {
     }
 
     static List<String> listTokens(String text) {
+        // The legacy monster catalog uses a lone slash followed by whitespace for a comment.
+        text = text.replaceAll("(?m)^[\\t ]*/[\\t ]+[^\\r\\n]*", "");
         List<String> values = new ArrayList<>(); Matcher matcher = TOKENS.matcher(text);
         while (matcher.find()) {
             String value = matcher.group();
@@ -63,6 +65,7 @@ public final class ResourceScript {
 
     public static Animation animation(String text) throws IOException {
         List<Frame> frames = new ArrayList<>(); List<String> warnings = new ArrayList<>();
+        Set<String> unsupported = new HashSet<>();
         Builder frame = null; int declared = -1; boolean loop = false;
         for (Section section : sections(text)) {
             Matcher number = FRAME.matcher(section.tag());
@@ -78,6 +81,9 @@ public final class ResourceScript {
             switch (section.tag()) {
                 case "loop" -> loop = integer(section, 0) != 0;
                 case "frame max" -> declared = integer(section, 0);
+                case "spectrum", "clip", "loop start", "loop end", "operation" -> {
+                    if (unsupported.add(section.tag())) warnings.add("预览暂未模拟 [" + section.tag().toUpperCase(Locale.ROOT) + "]；文本与导出保留原配置");
+                }
                 default -> {
                     if (frame == null) continue;
                     switch (section.tag()) {
@@ -97,6 +103,12 @@ public final class ResourceScript {
                             if (frame.delay < 0) throw error(section, "DELAY 不能为负数");
                         }
                         case "interpolation" -> frame.interpolation = number(section, 0) != 0;
+                        case "flip type" -> {
+                            String type = value(section, 0).toUpperCase(Locale.ROOT);
+                            if (!List.of("NONE", "HORIZON", "VERTICAL", "ALL").contains(type)) throw error(section, "未知翻转类型：" + type);
+                            frame.flipX = type.equals("HORIZON") || type.equals("ALL");
+                            frame.flipY = type.equals("VERTICAL") || type.equals("ALL");
+                        }
                         case "graphic effect" -> {
                             frame.effect = value(section, 0).toUpperCase(Locale.ROOT);
                             if (!frame.effect.equals("NONE") && !frame.effect.equals("LINEARDODGE"))
@@ -191,9 +203,9 @@ public final class ResourceScript {
     }
     private static final class Builder {
         String image = ""; int index, r = 255, g = 255, b = 255, a = 255, delay = 100;
-        String effect = "NONE"; boolean interpolation;
+        String effect = "NONE"; boolean interpolation, flipX, flipY;
         double x, y, scaleX = 1, scaleY = 1, rotation; final int line;
         Builder(int line) { this.line = line; }
-        Frame build() { return new Frame(image, index, x, y, scaleX, scaleY, rotation, r, g, b, a, delay, line, effect, interpolation); }
+        Frame build() { return new Frame(image, index, x, y, flipX ? -scaleX : scaleX, flipY ? -scaleY : scaleY, rotation, r, g, b, a, delay, line, effect, interpolation); }
     }
 }

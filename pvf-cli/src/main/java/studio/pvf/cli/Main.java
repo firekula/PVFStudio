@@ -40,6 +40,7 @@ public final class Main {
                         out.println("source=" + archive.sourcePath());
                         out.println("bytes=" + archive.archiveSize());
                         out.println("entries=" + archive.fileCount());
+                        out.println("format=" + archive.format().description());
                         out.println("sha256=" + archive.sha256());
                         out.printf(Locale.ROOT, "open_ms=%.3f%n", (System.nanoTime() - start) / 1_000_000.0);
                     }
@@ -65,7 +66,13 @@ public final class Main {
                     if (args.length != 3 && args.length != 4) throw usage("cat <archive> <virtual-path> [charset=GBK]");
                     Charset charset = Charset.forName(args.length == 4 ? args[3] : "GBK");
                     try (PvfArchive archive = PvfArchive.open(Path.of(args[1]))) {
-                        out.print(TextCodec.decode(archive.readBytes(args[2]), charset));
+                        byte[] bytes = archive.readBytes(args[2]);
+                        out.print(studio.pvf.workspace.BinaryAniCodec.isBinary(args[2], bytes)
+                                ? studio.pvf.workspace.BinaryAniCodec.decode(bytes, charset)
+                                : studio.pvf.workspace.BinaryScriptCodec.isScript(bytes)
+                                ? studio.pvf.workspace.BinaryScriptCodec.decode(bytes,
+                                    new studio.pvf.workspace.BinaryScriptCodec.StringTable(archive.readBytes("stringtable.bin"), charset))
+                                : TextCodec.decode(bytes, charset));
                     }
                 }
                 case "export" -> export(args, out);
@@ -73,6 +80,14 @@ public final class Main {
                     require(args, 5);
                     try (PvfWorkspace workspace = PvfWorkspace.open(Path.of(args[1]), Path.of(args[2]))) {
                         workspace.stageBytes(args[3], Files.readAllBytes(Path.of(args[4])));
+                        out.println("staged=" + workspace.dirtyPaths().size());
+                    }
+                }
+                case "stage-text" -> {
+                    if (args.length != 5 && args.length != 6) throw usage("stage-text <archive> <workspace-dir> <virtual-path> <utf8-file> [charset=GBK]");
+                    try (PvfWorkspace workspace = PvfWorkspace.open(Path.of(args[1]), Path.of(args[2]))) {
+                        workspace.stageText(args[3], Files.readString(Path.of(args[4]), StandardCharsets.UTF_8),
+                                Charset.forName(args.length == 6 ? args[5] : "GBK"));
                         out.println("staged=" + workspace.dirtyPaths().size());
                     }
                 }
@@ -138,13 +153,14 @@ public final class Main {
 
     private static void help(PrintStream out) {
         String version = Main.class.getPackage().getImplementationVersion();
-        out.println("PVF Studio " + (version == null ? "development" : version) + " — DNF_SCRIPT_PACK reader and lossless exporter");
+        out.println("PVF Studio " + (version == null ? "development" : version) + " — ACT1 / UUID / legacy PVF reader and lossless exporter");
         out.println("info <archive>");
         out.println("list <archive> [path-filter]");
         out.println("extract <archive> <virtual-path> <new-file>");
         out.println("cat <archive> <virtual-path> [charset=GBK]");
         out.println("export <archive> <new.pvf> [--replace <virtual-path> <local-file>]...");
         out.println("stage <archive> <workspace-dir> <virtual-path> <local-file>");
+        out.println("stage-text <archive> <workspace-dir> <virtual-path> <utf8-file> [charset=GBK]");
         out.println("status <archive> <workspace-dir>");
         out.println("revert <archive> <workspace-dir> <virtual-path>");
         out.println("workspace-export <archive> <workspace-dir> <new.pvf>");

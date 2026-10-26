@@ -32,6 +32,21 @@ class PvfCoreTest {
 
     @TempDir Path temporary;
 
+    @Test void openingReportsRealDirectoryCountsAndBothCompleteFileHashes() throws Exception {
+        Fixture fixture = fixture(false);
+        Path source = fixture.write(temporary.resolve("progress.pvf"));
+        Map<String, Long> completed = new java.util.HashMap<>();
+        try (PvfArchive archive = PvfArchive.open(source, (stage, done, total, detail) -> {
+            if (total > 0) assertTrue(done >= 0 && done <= total, stage);
+            completed.put(stage, done);
+        })) {
+            assertEquals((long) archive.fileCount(), completed.get("pvf.entries"));
+            assertEquals(archive.archiveSize(), completed.get("pvf.hash"));
+            assertEquals(archive.archiveSize(), completed.get("pvf.snapshot"));
+            assertArrayEquals(fixture.definitions.get(0).content, archive.readBytes(TARGET));
+        }
+    }
+
     @Test
     void readsTreeOrderIndependentlyOfPhysicalOrderAndNormalizesLookup() throws Exception {
         Fixture fixture = fixture(false);

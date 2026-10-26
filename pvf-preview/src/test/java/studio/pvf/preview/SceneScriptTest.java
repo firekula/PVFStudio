@@ -5,6 +5,27 @@ import java.io.IOException;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SceneScriptTest {
+    @Test void tileImageOffsetDoesNotChangeWorldGeometryOrExtendedStripOrigin() throws Exception {
+        var tile = SceneScript.tile("[IMAGE] `floor.img` 0 [img pos] 80 [pass type] " + "0 ".repeat(420));
+        assertEquals(80, tile.imageOffset()); assertEquals(-80, tile.imageY());
+        assertEquals(360, tile.worldHeight()); assertEquals(480, tile.height());
+        assertEquals(0, SceneScript.tile("[IMAGE] `floor.img` 0").imageY());
+        assertEquals(20, SceneScript.tile("[img pos] -20").imageY());
+        var extended = SceneScript.tile("[img pos] 80 [tile type] `[extended]` [pass type] " + "0 ".repeat(140));
+        assertEquals(80, extended.imageOffset()); assertEquals(0, extended.imageY()); assertEquals(120, extended.height());
+        assertThrows(IOException.class, () -> SceneScript.tile("[img pos] 1.5"));
+        assertThrows(IOException.class, () -> SceneScript.tile("[img pos] -2147483648"));
+    }
+    @Test void nestedBackgroundInfoSupportsMultipleLayersAlongsideFlatEntries() throws Exception {
+        var map = SceneScript.map("[tile] `a.til` [/tile] [background animation] "
+                + "[ani info] [filename] `Animation/Far.ani` [layer] `[distantback]` [order] `[below]` [/ani info] "
+                + "[ani info] [filename] `Animation/Near.ani` [layer] `[closeback]` [order] `[upper]` [/ani info] [/background animation] "
+                + "[animation] `move.ani` `[normal]` 1 2 3 [/animation]");
+        assertEquals(3, map.animations().size()); assertTrue(map.animations().get(0).repeat());
+        assertEquals("Animation/Far.ani", map.animations().get(0).path()); assertEquals(0, SceneScript.stage(map.animations().get(0)));
+        assertEquals(9, SceneScript.stage(map.animations().get(1))); assertEquals(1, map.animations().get(2).x());
+        assertThrows(java.io.IOException.class, () -> SceneScript.map("[tile] `a.til` [/tile] [background animation] [ani info] [filename] `a.ani` [/ani info] [/background animation]"));
+    }
     @Test void passGridKeepsTypesAndBasicExtendedGeometry() throws Exception {
         var tile = SceneScript.tile("[IMAGE] `tile.img` 2 [IMAGE] `deco.img` 3 [tile type] `[extended]` "
                 + "[pass type] 0 1 2 0 0 0 0 0 0 0 0 0 0 0 " + "0 ".repeat(126));

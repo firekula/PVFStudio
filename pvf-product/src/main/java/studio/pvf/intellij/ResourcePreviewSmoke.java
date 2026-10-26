@@ -81,7 +81,7 @@ final class ResourcePreviewSmoke {
             frame.setSize(520, 760); frame.setLocationRelativeTo(null); frame.setVisible(true);
             panel.mount(preferences, archivePath.getParent()); panel.scan(npk);
             panel.mount(preferences, archivePath.getParent());
-            if (!button(panel, "选择 NPK 目录").isEnabled()) throw new AssertionError("Workspace switch left NPK picker disabled");
+            if (!button(panel, "选择资源目录").isEnabled()) throw new AssertionError("Workspace switch left NPK picker disabled");
             panel.scan(npk);
             panel.setSource(new ResourcePreviewPanel.Source(aniPath, scripts.get(aniPath), scripts::get)); return frame;
         });
@@ -245,7 +245,9 @@ final class ResourcePreviewSmoke {
                     .anyMatch(e -> e.info().definition().equals(objectPath) && !e.problem().isEmpty()));
             edt(() -> { screenshot(panel, output.resolve("preview-entity-edited-obj.png"));
                 panel.setSource(new ResourcePreviewPanel.Source(townPath, scripts.get(townPath), scripts::get)); return null; });
-            await(() -> panel.renderedScene() != null && panel.renderedScene().entities().size() == 2
+            int townNpcCount = EntityScript.placements(scripts.get(townPath)).spawns().size();
+            if (townNpcCount < 1) throw new AssertionError("Town fixture has no NPC placements");
+            await(() -> panel.renderedScene() != null && panel.renderedScene().entities().size() == townNpcCount
                     && panel.renderedScene().entities().stream().allMatch(e -> e.info().spawn().kind() == EntityScript.Kind.NPC && e.info().spawn().mirrored() && e.problem().isEmpty()));
             edt(() -> { screenshot(panel, output.resolve("preview-town-npc.png")); return null; });
             String firstTile = panelPath(mapPath, SceneScript.map(scripts.get(mapPath)).tiles().get(0), scripts);

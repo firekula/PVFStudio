@@ -106,12 +106,20 @@ public final class DungeonScript {
 
     // 0x725CE0 / 0x748D40 compare native two-byte shape codes; A..P encode a four-bit mask.
     static List<Integer> codes(List<String> values) throws IOException {
-        String raw = String.join("", values).replaceAll("\\s+", ""); List<Integer> result = new ArrayList<>();
-        for (int i = 0; i < raw.length(); i += 2) {
+        // Binary-script text projects embedded whitespace as escapes inside the greed string.
+        // Interpret only separators here; shape characters and unknown escapes remain validated below.
+        String raw = String.join("", values).replace("\\r", "\r").replace("\\n", "\n").replace("\\t", "\t").replaceAll("\\s+", "");
+        List<Integer> result = new ArrayList<>();
+        // DNF_Single DNF.exe: table 0x594278, comparisons at 0x483278/0x48539C.
+        // The sixteen glyphs map directly to the same four direction bits as AA..PP.
+        String legacy = "┼┾╀╄┽┿╃╇╁╆╂╊╅╈╉╋";
+        for (int i = 0; i < raw.length();) {
             char c = raw.charAt(i);
+            int mask = legacy.indexOf(c);
+            if (mask >= 0) { result.add(mask); i++; continue; }
             if (c < 'A' || c > 'P' || i + 1 == raw.length() || raw.charAt(i + 1) != c)
-                throw new IOException("无法识别 greed 形状；当前 ACT1 形状码为 AA～PP：" + raw);
-            result.add(c - 'A');
+                throw new IOException("无法识别 greed 形状；支持 AA～PP 及旧版韩文框线形状码：" + raw);
+            result.add(c - 'A'); i += 2;
         }
         return List.copyOf(result);
     }

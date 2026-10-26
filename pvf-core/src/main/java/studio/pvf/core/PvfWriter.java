@@ -18,6 +18,18 @@ public final class PvfWriter {
     private static final long MAX_UNSIGNED_INT = 0xffff_ffffL;
     private PvfWriter() { }
 
+    /** Final virtual path -> source path; an empty source names a new entry with supplied content. */
+    public static void exportStructure(PvfArchive archive, Map<String, String> origins, Map<String, byte[]> changes, Path output) throws IOException {
+        boolean same = origins.size() == archive.fileCount() && origins.entrySet().stream().allMatch(e -> e.getKey().equals(e.getValue()))
+                && archive.entries().stream().allMatch(e -> origins.containsKey(e.path()));
+        if (same) { export(archive, changes, output); return; }
+        Path requested = output.toAbsolutePath().normalize();
+        if (requested.getFileName() == null || requested.getParent() == null) throw new IOException("Output must name a new file");
+        Path target = requested.getParent().toRealPath().resolve(requested.getFileName());
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS) || target.equals(archive.sourcePath())) throw new IOException("Output already exists: " + target);
+        StructureWriter.export(archive, new java.util.LinkedHashMap<>(origins), changes, target);
+    }
+
     /**
      * Exports a new file. Never replaces an existing destination or the source archive.
      * No-op replacements preserve original encrypted padding as well as content.
@@ -37,6 +49,10 @@ public final class PvfWriter {
         }
         Map<String, byte[]> replacements = snapshotChanges(archive, changes);
         archive.verifyUnchanged();
+        if (archive.format() == PvfFormat.LEGACY) {
+            LegacyPvfWriter.export(archive, replacements, target);
+            return;
+        }
         long[] offsets = new long[archive.fileCount()];
         int[] lengths = new int[archive.fileCount()];
         int[] keys = new int[archive.fileCount()];
@@ -52,10 +68,10 @@ public final class PvfWriter {
                 int treeKey = PvfIo.crc32(tree, archive.fileCount());
                 byte[] header = archive.header();
                 ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
-                        .putInt(PvfArchive.MAGIC.length + 4, treeKey);
-                PvfIo.encrypt(tree, treeKey);
+                        .putInt(archive.treeKeyPosition(), treeKey);
+                PvfIo.encrypt(tree, treeKey ^ archive.keyMask());
                 PvfIo.writeFully(destination, ByteBuffer.wrap(header), 0);
-                PvfIo.writeFully(destination, ByteBuffer.wrap(tree), PvfArchive.HEADER_LENGTH);
+                PvfIo.writeFully(destination, ByteBuffer.wrap(tree), header.length);
                 destination.truncate(Math.addExact(archive.bodyOffset(), newBodyLength));
                 destination.force(true);
             }
@@ -146,9 +162,9 @@ public final class PvfWriter {
                     padded = new byte[(int) newPaddedLength];
                 }
                 if (replacement != null) System.arraycopy(replacement, 0, padded, 0, replacement.length);
-                int key = PvfIo.crc32(padded, newCursor);
+                int key = PvfIo.crc32(padded, archive.entrySeed(entry, newCursor));
                 keys[entry.index()] = key;
-                PvfIo.encrypt(padded, key);
+                PvfIo.encrypt(padded, key ^ archive.keyMask());
                 PvfIo.writeFully(destination, ByteBuffer.wrap(padded), archive.bodyOffset() + newCursor);
             }
             oldCursor = entry.offset() + entry.paddedLength();
@@ -165,7 +181,7 @@ public final class PvfWriter {
             byte[] expectedTree = updatedTree(source, offsets, lengths, keys);
             byte[] expectedHeader = source.header();
             ByteBuffer.wrap(expectedHeader).order(ByteOrder.LITTLE_ENDIAN)
-                    .putInt(PvfArchive.MAGIC.length + 4, PvfIo.crc32(expectedTree, source.fileCount()));
+                    .putInt(source.treeKeyPosition(), PvfIo.crc32(expectedTree, source.fileCount()));
             if (exported.fileCount() != source.fileCount()
                     || exported.archiveSize() != source.bodyOffset() + newBodyLength
                     || !Arrays.equals(expectedHeader, exported.header())) {
@@ -224,9 +240,7 @@ public final class PvfWriter {
         byte[] tree = archive.plainTree();
         ByteBuffer fields = ByteBuffer.wrap(tree).order(ByteOrder.LITTLE_ENDIAN);
         for (PvfEntry entry : archive.entries()) {
-            fields.putInt(entry.treePosition() + 4, (int) offsets[entry.index()]);
-            fields.putInt(entry.treePosition() + 8, lengths[entry.index()]);
-            fields.putInt(entry.treePosition() + 12, keys[entry.index()]);
+            archive.updateRecord(fields, entry, offsets[entry.index()], lengths[entry.index()], keys[entry.index()]);
         }
         return tree;
     }

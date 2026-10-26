@@ -4,23 +4,25 @@
 
 # PVF Studio
 
-**面向 DNF ACT1 的 PVF 编辑与资源预览工具。**
+**支持多种 DNF PVF 格式的脚本编辑与资源预览工具。**
 
-PVF Studio 将脚本编辑、全文搜索、游戏资源预览和副本布局检查集中在一个桌面应用中。它基于 IntelliJ Platform 的编辑器构建，提供独立的 Windows 程序、自带运行时和独立草稿工作区，可直接打开已验证的 ACT1 `DNF_SCRIPT_PACK` 配置包，无需安装 IDEA 或运行服务端。
+PVF Studio 将脚本编辑、全文搜索、游戏资源预览和副本布局检查集中在一个桌面应用中。它基于 IntelliJ Platform 的编辑器构建，提供独立的 Windows 程序、自带运行时和独立草稿工作区。**0.13.5** 支持 ACT1 `DNF_SCRIPT_PACK`、DNF_Single 固定目录及 70S2 / DOF86 UUID 容器，并已验证 100 级 UUID 样本的读取和地图、副本预览。经典二进制 ANI 可直接编辑和预览，无需安装 IDEA 或运行服务端。具体边界见 [格式兼容](docs/pvf-compatibility.md)。
 
 [下载最新版](https://github.com/firekula/PVFStudio/releases/latest) · [使用方法](#使用方法) · [源码构建](#源码构建) · [文档](#文档) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/firekula/PVFStudio/issues)
 
 ## Release 下载
 
-当前版本：**[v0.11.1](https://github.com/firekula/PVFStudio/releases/tag/v0.11.1)**。桌面版支持 **Windows 10 / 11 x64**，已包含 JBR 运行时，无需另装 Java、IDEA 或 Visual C++ 运行库。
+最新版本：**[v0.13.5](https://github.com/firekula/PVFStudio/releases/tag/v0.13.5)**。桌面版支持 **Windows 10 / 11 x64**，已包含 JBR 运行时，无需另装 Java、IDEA 或 Visual C++ 运行库。
 
 | 下载 | 适用方式 |
 | --- | --- |
-| [Windows 安装器](https://github.com/firekula/PVFStudio/releases/download/v0.11.1/PVFStudio-0.11.1-windows-x64-setup.exe) | 按向导安装到当前用户目录，提供开始菜单入口和可选桌面快捷方式 |
-| [Windows 便携 ZIP](https://github.com/firekula/PVFStudio/releases/download/v0.11.1/PVFStudio-0.11.1-windows-x64-portable.zip) | 解压后运行 `PVFStudio/PVFStudio.exe`，适合独立目录或多版本使用 |
-| [SHA-256 校验文件](https://github.com/firekula/PVFStudio/releases/download/v0.11.1/PVFStudio-0.11.1-SHA256SUMS.txt) | 核对安装器和便携包的文件完整性 |
+| [Windows 安装器](https://github.com/firekula/PVFStudio/releases/download/v0.13.5/PVFStudio-0.13.5-windows-x64-setup.exe) | 按向导安装到当前用户目录，提供开始菜单入口和可选桌面快捷方式 |
+| [Windows 便携 ZIP](https://github.com/firekula/PVFStudio/releases/download/v0.13.5/PVFStudio-0.13.5-windows-x64-portable.zip) | 解压后运行 `PVFStudio/PVFStudio.exe`，适合独立目录或多版本使用 |
+| [SHA-256 校验文件](https://github.com/firekula/PVFStudio/releases/download/v0.13.5/PVFStudio-0.13.5-SHA256SUMS.txt) | 核对安装器和便携包的文件完整性 |
 
 历史版本和完整发布说明见 [GitHub Releases](https://github.com/firekula/PVFStudio/releases)。发行包不包含游戏 PVF / NPK，打开与预览时选择自己的文件和资源目录。
+
+相较 v0.11.1，本版增加多种 PVF 容器和独立 IMG 支持、经典二进制 ANI 编辑、加载进度及文件树创建/重命名/删除，并修复新版地图的地面偏移、远景平铺、实体显示、DGN 房间关联和图层遮挡。小窗口默认折叠预览设置与详情，保留房间小地图和播放控制；完整变化见 [更新日志](CHANGELOG.md)。
 
 便携版包含以下两项，请一起保留和移动：
 
@@ -38,18 +40,19 @@ PVFStudio/
 | --- | --- |
 | 脚本编辑 | 语法着色、撤销/重做、差异比较、编码选择、文件内查找与替换 |
 | 全文搜索 | 搜索整个 PVF，包含草稿与未保存编辑；支持路径过滤、大小写、编码、取消和行列跳转 |
-| 资源预览 | 直接索引 NPK / IMG，查看图标、ANI 动画和 PTL 粒子，支持播放、逐帧、时间轴与缩放 |
-| 地图与副本 | MAP / TIL 场景组合、实体待机、图层与视差、通行范围、带滚动边界的 640×480 客户端视口；DGN 布局、房间候选和门状态预览 |
+| 资源预览 | 直接索引 NPK / 独立 IMG，编辑经典二进制 ANI，查看图标、动画和 PTL 粒子，支持播放、逐帧、时间轴与缩放 |
+| 地图与副本 | MAP / TIL 场景组合、实体初始待机视觉（含已支持的 ACT）、图层与视差、通行范围、带滚动边界的 640×480 客户端视口；DGN 布局、房间候选和门状态预览 |
 | 草稿与导出 | 独立草稿、持久会话、原文差异、保真导出、CRC 与回读校验、导出前备份及恢复 |
 | 工作区 | 最近文件、单行标签、右键菜单、批量关闭，以及标签顺序、编码、光标和滚动位置恢复 |
+| 文件管理 | 文件树右键创建文件/文件夹、重命名及删除，随草稿持久化并导出到新 PVF |
 
 ## 使用方法
 
 ### 1. 打开与编辑 PVF
 
-1. 运行 `PVFStudio.exe`，选择“文件 → 打开 PVF…”（Ctrl+O）。也可从“打开最近的文件”（Ctrl+R）恢复已有工作区。
-2. 在“文件 → 打开编码”中选择配置实际使用的 GBK / CP936、MS949 / CP949 或 UTF-8。
-3. 双击左侧条目进行编辑；用路径搜索或 Ctrl+P 定位文件，用 Ctrl+F / Ctrl+H 查找和替换正文。
+1. 运行 `PVFStudio.exe`，选择“文件 → 打开 PVF…”（Ctrl+O）。也可从“打开最近的文件”（Ctrl+R）恢复已有工作区。大文件加载时显示阶段、已处理字节或文件数和耗时；NPK/IMG 索引另有独立进度。
+2. “文件 → 打开编码”默认按 PVF 格式选择；也可手动选择 GBK / CP936、MS949 / CP949、UTF-8 或 Big5。DNF_Single 样本使用 MS949，70S2 样本使用 Big5。
+3. 双击左侧条目进行编辑；右键创建、重命名或删除文件/文件夹，也可按 F2 / Delete。用路径搜索或 Ctrl+P 定位文件，用 Ctrl+F / Ctrl+H 查找和替换正文。文件操作写入草稿，导出新包后应用；正文中的路径引用不会自动修改，详见 [文件树操作](docs/file-operations.md)。
 4. 用 Ctrl+Shift+F 搜索整个 PVF。双击结果跳转到文件及具体位置；最多显示 5000 个结果。
 5. 选择“查看 → 查看差异”核对修改，按 Ctrl+S 保存到独立草稿工作区。
 
@@ -63,7 +66,9 @@ PVFStudio/
 
 ### 2. 预览资源、地图与副本
 
-在右侧“资源预览”中选择客户端目录或 `ImagePacks2`。目录关联会保存在当前工作区；PVF 同目录存在 `ImagePacks2` 时可自动关联。
+在右侧“资源预览 → 选择资源目录”中选择同版本客户端目录、`ImagePacks2` 或 `Sprite`。支持 NPK 和独立 IMG；目录关联会保存在当前工作区，PVF 同目录的资源目录可自动关联。DNF_Single 请使用自己的 `Sprite` 资源。
+
+“预览设置”可展开外观参数、缩放、碰撞/对象标记、强制循环及副本布局、起点/Boss 选择；“显示详情”可查看资源路径、房间连接和解析诊断，有提示时按钮显示数量。两项默认折叠，为小窗口保留画布；房间小地图、MAP 选择、客户端视口和播放倍速保持可用。
 
 | 打开的配置 | 预览方式 |
 | --- | --- |
@@ -76,7 +81,7 @@ PVFStudio/
 
 DGN 会按房间连接加入普通门、Boss 门和墙体，并合并门的通行格。“房间已清理”和“Boss 条件已满足”控制预览状态，点击播放或拖动时间轴查看原生开闭动画。副本方案按脚本候选生成，可复现，但不恢复某次在线会话的随机结果，也不执行 AI 或战斗。
 
-预览支持当前脚本及已打开引用配置的未保存快照；资源目录、配置、帧号或格式错误会在面板中显示诊断。具体支持范围见 [资源预览](docs/resource-preview.md)、[地图场景](docs/map-scene-preview.md) 和 [副本预览](docs/dungeon-preview.md)。
+预览支持当前脚本及已打开引用配置的未保存快照；资源目录、配置、帧号或格式错误会在面板中显示诊断。经典二进制 ANI 自动显示为可编辑标签，保存及导出时编译回原格式；尚未支持的结构显示十六进制和具体原因。支持范围见 [二进制 ANI](docs/binary-ani.md)、[资源预览](docs/resource-preview.md)、[地图场景](docs/map-scene-preview.md) 和 [副本预览](docs/dungeon-preview.md)。
 
 ### 3. 导出、备份与恢复
 
@@ -136,7 +141,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build-release.ps1 -Z
 脚本执行测试、原生启动器编译、产品装配和身份检查，然后打包。输出位置：
 
 ```text
-pvf-product/build/product/PVFStudio-0.11.1/      可直接运行的程序目录
+pvf-product/build/product/PVFStudio-0.13.5/      可直接运行的程序目录
 pvf-product/build/distributions/               安装器、便携 ZIP、SHA-256
 ```
 
@@ -148,7 +153,7 @@ pvf-product/build/distributions/               安装器、便携 ZIP、SHA-256
 .\gradlew.bat -PwithIntellij=true :pvf-product:runProduct
 
 python tools/check_product.py `
-  --product 'pvf-product/build/product/PVFStudio-0.11.1' `
+  --product 'pvf-product/build/product/PVFStudio-0.13.5' `
   --archive 'C:\Game\Script.pvf' `
   --npk 'C:\Game\ImagePacks2'
 ```
@@ -173,11 +178,11 @@ $cli = '.\pvf-cli\build\install\pvf-studio\bin\pvf-studio.bat'
 
 ## 支持范围与验证
 
-当前面向已验证的 ACT1 `DNF_SCRIPT_PACK` 样本，支持修改已有条目；暂不支持新增、删除、重命名条目或其他未经验证的 PVF 变体。源路径、条目顺序、补齐和布局按保真规则处理，详情见 [格式说明](docs/pvf-format.md)。
+当前支持已验证的 ACT1、DNF_Single 固定目录和 70S2 / DOF86 UUID 样本，可修改、创建、删除及重命名条目。100 级 UUID 样本已验证读取、地图与副本预览，该样本的结构导出和游戏加载尚未验收；其他未经验证的 PVF 变体仍可能无法打开。`B0 D0` 脚本支持文本投影、数值/字符串编辑及字符串表追加；经典二进制 ANI 支持已识别字段的编辑、编译与预览。尚未识别的 ANI、专用二进制 MAP/TIL 等资源提供只读十六进制视图。存续条目的标识、补齐和不透明数据按原容器规则保留；重命名和删除不会自动改写脚本引用，详情见 [文件树操作](docs/file-operations.md)、[格式兼容](docs/pvf-compatibility.md) 和 [格式说明](docs/pvf-format.md)。
 
 预览展示配置中定义的视觉和通行数据，支持已实现的图层、变换、混合与粒子规则；没有执行角色 AI、战斗、寻路或完整动态碰撞。编码须能无损转换，混合换行条目暂只读。早期 0.1.0 导出的修改包需要从有效原包和草稿重新导出，原因见 [Changelog](CHANGELOG.md)。
 
-发行验证包括 130 项 JVM 测试、14 项独立 Python 测试、产品身份和实际工作台冒烟，以及 ZIP CRC / 内容 / 摘要检查。副本验证样本覆盖 43 个 DGN、49 套布局、178 组起点/Boss 组合和 242 个房间开闭状态。测试范围、历史结果和客户端证据见下列文档。
+发行验证包括 173 项 JVM 测试、14 项独立 Python 测试、产品身份和实际工作台冒烟，以及 ZIP CRC / 内容 / 摘要检查。四份真实 PVF 合计 1,089,250 条目的结构导出通过独立校验；86 样本的 402,701 个二进制 ANI 通过字节一致重编译，431 个 DGN、563 套布局解析成功。86 普鲁兹地图另外验证实体记录、ACT 初始视觉和无标记对照渲染；100 级样本验证三个副本的显式 MAP 关联、8 套默认布局和门坐标，并检查列车地图平铺、地块偏移以及 1264×811 / 1024×720 小窗口。ACT1 副本验证覆盖 43 个 DGN、49 套布局、178 组起点/Boss 组合和 242 个房间开闭状态。测试范围、历史结果和客户端证据见下列文档。
 
 ## 文档
 
@@ -186,9 +191,14 @@ $cli = '.\pvf-cli\build\install\pvf-studio\bin\pvf-studio.bat'
 | [更新日志](CHANGELOG.md) | 版本功能、修复和发布记录 |
 | [资源预览](docs/resource-preview.md) | NPK / IMG、ANI、PTL 与未保存配置联动 |
 | [地图场景](docs/map-scene-preview.md) | MAP / TIL、实体、图层、视差、相机与通行范围 |
+| [ACT 实体预览](docs/action-preview.md) | 二进制 MAP 实体记录、ACT 初始 MOTION 及视觉验证 |
 | [副本预览](docs/dungeon-preview.md) | DGN 布局、房间候选、门对象和预览状态 |
 | [标签与会话](docs/editor-tabs.md) | 标签菜单、快捷键、草稿和重开恢复 |
+| [文件树操作](docs/file-operations.md) | 文件/目录创建、重命名、删除、草稿与结构导出 |
 | [格式说明](docs/pvf-format.md) | 文件格式、CRC、保真边界和导出语义 |
+| [格式兼容](docs/pvf-compatibility.md) | DNF_Single / 70S2、Big5、二进制脚本及新增格式验证 |
+| [二进制 ANI](docs/binary-ani.md) | 经典动画解码、编辑、保真边界及 86 样本验证 |
+| [加载进度](docs/loading-progress.md) | 大 PVF、资源索引、搜索与预览进度及验证 |
 | [独立产品开发](docs/intellij-product.md) | 产品模块、平台基线、构建与二次开发 |
 | [CLI 与开发验证](docs/development-validation.md) | 命令行示例、真实 PVF 验证及历史结果 |
 | [客户端预览证据](docs/client-preview-evidence.md) | 原生函数对照和预览验收 |

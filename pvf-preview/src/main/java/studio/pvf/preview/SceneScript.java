@@ -14,7 +14,7 @@ public final class SceneScript {
 
     public static Tile tile(String text) throws IOException {
         List<ResourceScript.Frame> images = new ArrayList<>(); List<Integer> passes = new ArrayList<>();
-        List<String> warnings = new ArrayList<>(); boolean extended = false, passSeen = false;
+        List<String> warnings = new ArrayList<>(); boolean extended = false, passSeen = false; int imageOffset = 0;
         for (var section : ResourceScript.sections(text)) {
             switch (section.tag()) {
                 case "image" -> {
@@ -26,6 +26,10 @@ public final class SceneScript {
                     String type = flag(value(section, 0));
                     if (!type.equals("basic") && !type.equals("extended")) throw error(section, "未知地块类型：" + type);
                     extended = type.equals("extended");
+                }
+                case "img pos" -> {
+                    imageOffset = integer(section, 0);
+                    if (Math.abs((long) imageOffset) > 1_000_000) throw error(section, "地块图片偏移超出范围");
                 }
                 case "pass type" -> {
                     if (passSeen) throw error(section, "重复的 pass type");
@@ -43,14 +47,14 @@ public final class SceneScript {
         if (passes.size() % COLUMNS != 0 || passes.size() > COLUMNS * 30) throw new IOException("pass type 须按 14 列排列，最多 30 行");
         if (passes.isEmpty()) warnings.add("没有配置 pass type，不推断通行状态");
         else if (extended && passes.size() > COLUMNS * 10) warnings.add("extended 通行格超过 10 行，多余行未用于通行格");
-        return new Tile(List.copyOf(images), List.copyOf(passes), extended, List.copyOf(warnings));
+        return new Tile(List.copyOf(images), List.copyOf(passes), extended, List.copyOf(warnings), imageOffset);
     }
 
     public static MapLayout map(String text) throws IOException {
         List<String> tiles = new ArrayList<>(), extended = new ArrayList<>();
         List<Placement> animations = new ArrayList<>(); List<Rectangle2D.Double> movable = new ArrayList<>();
         double far = 1, middle = 1, near = 1; boolean town = false;
-        for (var section : ResourceScript.sections(text)) {
+        for (var section : mapSections(text)) {
             switch (section.tag()) {
                 case "tile", "extended tile" -> {
                     List<String> target = section.tag().equals("tile") ? tiles : extended;
@@ -113,7 +117,44 @@ public final class SceneScript {
             return base + (placement.repeat() ? (placement.upper() ? 3 : 0) : 2);
         return placement.repeat() ? base + (placement.upper() ? 2 : 0) : base + 1;
     }
-    public static String flag(String value) { return value.replace("[", "").replace("]", "").toLowerCase(Locale.ROOT).trim(); }
+    /** 0x4C53D0 calls the stable Y sort (0x4C5230) only for native layer 1, normal. */
+    public static double sortDepth(int stage, double y) { return stage == 15 ? y : 0; }
+    /** Newer maps wrap a background in ani info rather than storing three flat values. */
+    private static List<ResourceScript.Section> mapSections(String text) throws IOException {
+        List<ResourceScript.Section> result = new ArrayList<>();
+        boolean background = false, info = false;
+        String filename = null, layer = null, order = null;
+        int line = 0;
+        for (var section : ResourceScript.sections(text)) {
+            if (section.tag().equals("background animation")) {
+                background = true; result.add(section); continue;
+            }
+            if (section.tag().equals("/background animation")) {
+                if (info) throw error(section, "ani info 未结束");
+                background = false; result.add(section); continue;
+            }
+            if (background && section.tag().equals("ani info")) {
+                if (info) throw error(section, "重复的 ani info");
+                info = true; filename = layer = order = null; line = section.line(); continue;
+            }
+            if (info) {
+                switch (section.tag()) {
+                    case "filename" -> filename = value(section, 0);
+                    case "layer" -> layer = value(section, 0);
+                    case "order" -> order = value(section, 0);
+                    case "/ani info" -> {
+                        if (filename == null || layer == null || order == null) throw error(section, "ani info 缺少 filename、layer 或 order");
+                        result.add(new ResourceScript.Section("background animation", List.of(filename, layer, order), line, List.of(line, line, line)));
+                        info = false;
+                    }
+                    default -> { }
+                }
+            } else result.add(section);
+        }
+        if (info) throw new IOException("MAP 的 ani info 未结束");
+        return result;
+    }
+    public static String flag(String value) { return ScriptDialect.flag(value); }
     private static String value(ResourceScript.Section section, int index) throws IOException {
         if (index >= section.values().size()) throw error(section, "参数不完整");
         return section.values().get(index);
@@ -132,7 +173,10 @@ public final class SceneScript {
     private static IOException error(ResourceScript.Section section, String message) {
         return new IOException("第 " + section.line() + " 行 [" + section.tag() + "]：" + message);
     }
-    public record Tile(List<ResourceScript.Frame> images, List<Integer> passes, boolean extended, List<String> warnings) {
+    public record Tile(List<ResourceScript.Frame> images, List<Integer> passes, boolean extended, List<String> warnings, int imageOffset) {
+        // Newer basic IMG canvases include img pos extra pixels above the ACT1 floor origin.
+        // Extended images are still 120-pixel strips; their origin is the previous row's bottom.
+        public int imageY() { return extended ? 0 : -imageOffset; }
         public int height() { return worldHeight() + (extended ? 0 : SceneCoordinates.ORIGIN_Y); }
         public int worldHeight() { return (passes.isEmpty() ? (extended ? 10 : 30) : rows()) * SceneCoordinates.CELL_HEIGHT; }
         public int rows() { return Math.min(extended ? 10 : 30, passes.size() / COLUMNS); }

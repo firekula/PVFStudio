@@ -79,6 +79,20 @@ final class PvfIo {
         }
     }
 
+    // DNF_Single client: decode 0x4F5210, encode 0x4F51C0.
+    // The last byte of an odd-sized entry is deliberately left unchanged.
+    static void legacyCrypt(byte[] bytes, boolean encrypt) {
+        for (int i = 0; i + 1 < bytes.length; i += 2) {
+            int word = Byte.toUnsignedInt(bytes[i]) | Byte.toUnsignedInt(bytes[i + 1]) << 8;
+            if (word != 0) {
+                word = encrypt ? (word + 0x0c74) & 0xffff
+                        : (Short.toUnsignedInt(Short.reverseBytes((short) word)) - 0x0c74) & 0xffff;
+                if (encrypt) word = Short.toUnsignedInt(Short.reverseBytes((short) word));
+            }
+            bytes[i] = (byte) word; bytes[i + 1] = (byte) (word >>> 8);
+        }
+    }
+
     static void copy(FileChannel source, long sourcePosition, FileChannel target,
                      long targetPosition, long length) throws IOException {
         ByteBuffer buffer = ByteBuffer.allocate((int) Math.min(BUFFER_SIZE, Math.max(1, length)));
@@ -113,6 +127,10 @@ final class PvfIo {
     }
 
     static String sha256(FileChannel channel) throws IOException {
+        return sha256(channel, ignored -> {});
+    }
+
+    static String sha256(FileChannel channel, java.util.function.LongConsumer progress) throws IOException {
         final MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
@@ -122,6 +140,7 @@ final class PvfIo {
         ByteBuffer buffer = ByteBuffer.allocate(BUFFER_SIZE);
         long position = 0;
         long size = channel.size();
+        progress.accept(0);
         while (position < size) {
             buffer.clear().limit((int) Math.min(buffer.capacity(), size - position));
             readFully(channel, buffer, position);
@@ -129,6 +148,7 @@ final class PvfIo {
             buffer.flip();
             digest.update(buffer);
             position += count;
+            progress.accept(position);
         }
         return HexFormat.of().formatHex(digest.digest());
     }

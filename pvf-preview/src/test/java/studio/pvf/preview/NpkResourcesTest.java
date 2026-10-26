@@ -19,6 +19,29 @@ import static org.junit.jupiter.api.Assertions.*;
 class NpkResourcesTest {
     @TempDir Path temporary;
 
+    @Test void indexProgressCountsFailedPacksAsProcessedAndRetainsUsableImages() throws Exception {
+        pack("good.npk", "sprite/test.img", image(1, new byte[][]{direct(16, 5, new byte[]{1, 2, 3, 4}, 0, 0)}), false);
+        Files.write(temporary.resolve("bad.npk"), new byte[5]);
+        long[] count = {-1, -1}; boolean[] discovery = {false};
+        var resources = NpkResources.scan(temporary, (stage, done, total, detail) -> {
+            if (stage.equals("resources.discover")) discovery[0] = total < 0;
+            if (stage.equals("resources.index")) { assertTrue(done >= 0 && done <= total); count[0] = done; count[1] = total; }
+        });
+        assertTrue(discovery[0]); assertArrayEquals(new long[]{2, 2}, count);
+        assertEquals(1, resources.warnings().size()); assertNotNull(resources.sprite("test.img", 0));
+    }
+
+    @Test void looseSpriteDirectoryWorksFromClientRootAndRetainsChangeDetection() throws Exception {
+        Path sprite = Files.createDirectories(temporary.resolve("Sprite/Map/Test"));
+        Path img = Files.write(sprite.resolve("scene.img"), image(1, new byte[][]{direct(16, 5, new byte[]{1, 2, 3, (byte) 255}, 2, 3)}));
+        var resources = NpkResources.scan(temporary);
+        assertEquals(0, resources.packCount()); assertEquals(1, resources.looseImageCount());
+        assertEquals(0xff030201, resources.sprite("Sprite/Map/Test/SCENE.img", 0).image().getRGB(0, 0));
+        assertEquals(2, resources.info("map/test/scene.img", 0).x());
+        Files.write(img, new byte[]{0}, java.nio.file.StandardOpenOption.APPEND);
+        assertTrue(assertThrows(IOException.class, () -> resources.sprite("map/test/scene.img", 0)).getMessage().contains("已变化"));
+    }
+
     @Test void oldInterleavedFramesDecodeAllColorsAndKeepTrimOffsets() throws Exception {
         byte[] img = image(1, new byte[][] {
                 direct(14, 5, new byte[]{0, (byte) 0xfc}, 2, 3),

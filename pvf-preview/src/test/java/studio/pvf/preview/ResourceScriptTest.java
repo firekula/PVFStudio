@@ -6,6 +6,13 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ResourceScriptTest {
+    @Test void explicitFlipFlagsComposeWithScaleAndUnmodeledClipIsDiagnosed() throws Exception {
+        var animation = ResourceScript.animation("[FRAME MAX] 1 [FRAME000] [IMAGE] `a.img` 0 [IMAGE RATE] -0.5 2 [FLIP TYPE] `ALL` [CLIP] 1 2 3 4 [DELAY] 150");
+        assertEquals(.5, animation.frames().get(0).scaleX()); assertEquals(-2, animation.frames().get(0).scaleY());
+        assertEquals(150, animation.frames().get(0).delay());
+        assertTrue(animation.warnings().stream().anyMatch(w -> w.contains("CLIP")));
+        assertEquals("sprite/map/test.img", NpkResources.normalize("Map\\\\test.img"));
+    }
     @Test void act1FramesRespectParametersAndDoNotParseQuotedOrCommentedTags() throws Exception {
         var animation = ResourceScript.animation("""
                 // [FRAME999] [IMAGE] `bad.img` 10

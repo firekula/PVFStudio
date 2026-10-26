@@ -55,6 +55,57 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
     private static void run(Path archivePath, Path output) {
         try {
             Files.createDirectory(output);
+            if (Boolean.getBoolean("pvf.smoke.dungeon100")) {
+                Dungeon100WorkbenchSmoke.run(archivePath, output);
+                System.out.println("PVF_STUDIO_DUNGEON_100_UI_SMOKE_OK");
+                ApplicationManager.getApplication().invokeLater(() ->
+                        ((ApplicationEx) ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));
+                return;
+            }
+            if (Boolean.getBoolean("pvf.smoke.entities86")) {
+                Entities86WorkbenchSmoke.run(archivePath, output);
+                System.out.println("PVF_STUDIO_ENTITIES_86_UI_SMOKE_OK");
+                ApplicationManager.getApplication().invokeLater(() ->
+                        ((ApplicationEx) ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));
+                return;
+            }
+            if (Boolean.getBoolean("pvf.smoke.dungeon86")) {
+                Dungeon86WorkbenchSmoke.run(archivePath, output);
+                System.out.println("PVF_STUDIO_DUNGEON_86_UI_SMOKE_OK");
+                ApplicationManager.getApplication().invokeLater(() ->
+                        ((ApplicationEx) ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));
+                return;
+            }
+            if (Boolean.getBoolean("pvf.smoke.mapFiles")) {
+                MapFilesWorkbenchSmoke.run(archivePath, output);
+                System.out.println("PVF_STUDIO_MAP_FILES_UI_SMOKE_OK");
+                ApplicationManager.getApplication().invokeLater(() ->
+                        ((ApplicationEx) ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));
+                return;
+            }
+            if (Boolean.getBoolean("pvf.smoke.binaryAni")) {
+                BinaryAniWorkbenchSmoke.run(archivePath, output);
+                System.out.println("PVF_STUDIO_BINARY_ANI_UI_SMOKE_OK");
+                ApplicationManager.getApplication().invokeLater(() ->
+                        ((ApplicationEx) ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));
+                return;
+            }
+            if (Boolean.getBoolean("pvf.smoke.progressOnly")) {
+                ProgressWorkbenchSmoke.run(archivePath, output);
+                System.out.println("PVF_STUDIO_PROGRESS_UI_SMOKE_OK");
+                ApplicationManager.getApplication().invokeLater(() ->
+                        ((ApplicationEx) ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));
+                return;
+            }
+            studio.pvf.core.PvfFormat format;
+            try (var archive = studio.pvf.core.PvfArchive.open(archivePath)) { format = archive.format(); }
+            if (format != studio.pvf.core.PvfFormat.ACT1) {
+                CompatibilityWorkbenchSmoke.run(archivePath, output, format);
+                System.out.println("PVF_STUDIO_COMPATIBILITY_UI_SMOKE_OK " + format);
+                ApplicationManager.getApplication().invokeLater(() ->
+                        ((ApplicationEx) ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));
+                return;
+            }
             verifyNewlineHandling();
             Charset charset = Charset.forName("GBK");
             String entry = "creature/script/creature.lst";

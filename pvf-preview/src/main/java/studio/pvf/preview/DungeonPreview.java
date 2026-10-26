@@ -42,6 +42,8 @@ public final class DungeonPreview {
         if (id < 0) warnings.add("DGN 未注册于 dungeon/dungeon.lst，只使用明确指定的 MAP");
         var catalog = new TreeMap<>(EntityScript.catalog(mapList));
         if (catalog.size() > 8192) throw new IOException("MAP 索引超过预览上限 8192 个");
+        for (int specified : new TreeSet<>(explicit)) if (!catalog.containsKey(specified) && warnings.size() < 100)
+            warnings.add("map/map.lst 未注册 DGN 明确指定的 MAP 编号 " + specified);
         for (var entry : catalog.entrySet()) {
             String mapPath = resolvePath("map/", entry.getValue());
             try {
@@ -50,6 +52,8 @@ public final class DungeonPreview {
                 if (explicit.contains(entry.getKey()) || id >= 0 && info.dungeons().contains(id)) maps.add(new MapChoice(entry.getKey(), mapPath, info));
             } catch (IOException failure) { if (explicit.contains(entry.getKey()) && warnings.size() < 100) warnings.add(mapPath + "：" + failure.getMessage()); }
         }
+        if (maps.isEmpty() && id >= 0 && explicit.isEmpty())
+            warnings.add("DGN 没有指定 MAP；map/map.lst 中的地图也未声明 [dungeon] " + id + " 关联，仅显示副本布局");
         return new DungeonPreview(definition, List.copyOf(maps), List.copyOf(warnings));
     }
     private static String resolvePath(String root, String reference) {
@@ -66,10 +70,15 @@ public final class DungeonPreview {
                     ? maze.bossMaps().get(position) : maze.maps().get(position);
             List<MapChoice> pool = specified == null ? pools.get(mask + (isBoss ? 16 : 0))
                     : specified.stream().map(maps::get).filter(Objects::nonNull)
-                    .filter(m -> (isBoss ? m.info.type().equals("boss") : m.info.type().equals("normal")) && m.info.supports(mask)).toList();
+                    .filter(m -> isBoss ? m.info.type().equals("boss") : m.info.type().equals("normal")).toList();
             // Ordinary coordinate lists often contain no Boss MAP; the separate Boss pool then applies.
             if (isBoss && pool.isEmpty() && !maze.bossMaps().containsKey(position))
                 pool = pools.get(mask + 16);
+            if (specified != null) {
+                var different = pool.stream().filter(m -> !m.info().supports(mask)).map(m -> Integer.toString(m.id())).distinct().toList();
+                if (!different.isEmpty()) problems.add("房间 " + position + " 使用 DGN 明确指定的 MAP " + String.join("、", different)
+                        + "；MAP greed 未列出布局门型 " + (char) ('A' + mask) + "，保留关联并按 DGN 布局判定通路");
+            }
             if (pool.isEmpty()) problems.add("房间 " + position + "（" + (char) ('A' + mask) + "）没有匹配的 " + (isBoss ? "Boss" : "普通") + " MAP");
             for (Direction d : Direction.values()) if ((mask & d.bit) != 0 && !maze.connected(position, d))
                 problems.add("房间 " + position + " " + d.label + "方向连接未与相邻房间对应，预览关闭该出口");

@@ -18,8 +18,12 @@ final class DungeonPanel extends JPanel {
                     + (!layout.maze().connected(room.position(), d) ? "无通路"
                     : (room.boss() || layout.maze().neighbor(room.position(), d).equals(layout.boss()) ? "Boss 门" : "普通门")
                     + (cleared && (bossCondition || !(room.boss() || layout.maze().neighbor(room.position(), d).equals(layout.boss()))) ? "开启" : "关闭"))).toList());
+            String positions = map == null || map.info().gates().size() != 4 ? "" : String.join(" · ",
+                    Arrays.stream(DungeonScript.Direction.values()).filter(d -> layout.maze().connected(room.position(), d))
+                            .map(d -> d.label + " " + map.info().gates().get(d.ordinal()) + " → 房间 " + layout.maze().neighbor(room.position(), d)).toList());
             return "副本布局 " + layout.maze() + " · 方案 " + seed + " · 房间 " + room.position()
                     + (room.start() ? " · 起点" : "") + (room.boss() ? " · Boss" : "") + "\n" + doors + "\n"
+                    + (positions.isEmpty() ? "" : "通路门坐标（MAP 原始坐标）：" + positions + "\n")
                     + (layout.warnings().isEmpty() ? "" : String.join("\n", layout.warnings().stream().limit(4).toList()) + "\n");
         }
     }
@@ -29,6 +33,8 @@ final class DungeonPanel extends JPanel {
     private final JCheckBox cleared = new JCheckBox("房间已清理", true), condition = new JCheckBox("Boss 条件已满足", true);
     private final JButton regenerate = new JButton("换一组房间");
     private final JLabel current = new JLabel();
+    private final JLabel summary = new JLabel();
+    private final JPanel setup = new JPanel();
     private final RoomGrid grid = new RoomGrid();
     private final Consumer<Selection> changed;
     private final Map<DungeonScript.Position, Boolean> clearStates = new HashMap<>();
@@ -37,13 +43,15 @@ final class DungeonPanel extends JPanel {
     private DungeonScript.Position position; private boolean changing; private long seed;
     DungeonPanel(Consumer<Selection> changed) {
         this.changed = changed; setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+        setup.setLayout(new BoxLayout(setup, BoxLayout.Y_AXIS)); setup.setAlignmentX(LEFT_ALIGNMENT);
         JPanel first = row(); mazes.setName("dungeon-maze"); starts.setName("dungeon-start"); bosses.setName("dungeon-boss"); maps.setName("dungeon-map");
-        first.add(new JLabel("副本布局")); first.add(mazes); first.add(regenerate); add(first);
-        JPanel positions = row(); positions.add(new JLabel("起点")); positions.add(starts); positions.add(new JLabel("Boss")); positions.add(bosses); add(positions);
+        first.add(new JLabel("副本布局")); first.add(mazes); first.add(regenerate); setup.add(first);
+        JPanel positions = row(); positions.add(new JLabel("起点")); positions.add(starts); positions.add(new JLabel("Boss")); positions.add(bosses); setup.add(positions);
+        add(setup); summary.setAlignmentX(LEFT_ALIGNMENT); add(summary); setOptionsVisible(false);
         grid.setPreferredSize(new Dimension(300, 105)); grid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 105)); grid.setName("dungeon-rooms"); add(grid);
         JPanel status = row(); status.add(current); status.add(cleared); status.add(condition); add(status);
         maps.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26)); maps.setToolTipText("当前房间的有效 MAP 候选；可逐个检查不同画面"); add(maps);
-        JLabel hint = new JLabel("点击房间切换预览 · 绿：起点 · 橙：Boss · 蓝：当前"); add(hint);
+        current.setToolTipText("点击小地图切换房间 · 绿：起点 · 橙：Boss · 蓝：当前");
         regenerate.setToolTipText("更换可复现的 MAP 候选组合；起点、Boss 和布局保持所选值");
         mazes.addActionListener(e -> { if (!changing && dungeon != null) { clearStates.clear(); mapSelections.clear(); fillPositions(); rebuild(); } });
         starts.addActionListener(e -> { if (!changing) { mapSelections.clear(); rebuild(); } });
@@ -55,6 +63,7 @@ final class DungeonPanel extends JPanel {
         condition.addActionListener(e -> emit()); setVisible(false);
     }
     private static JPanel row() { var row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 1)); row.setAlignmentX(LEFT_ALIGNMENT); return row; }
+    void setOptionsVisible(boolean visible) { setup.setVisible(visible); summary.setVisible(!visible); revalidate(); }
     void install(DungeonPreview value) {
         int previous = Math.max(0, mazes.getSelectedIndex()); dungeon = value; changing = true; mazes.removeAllItems();
         for (int i = 0; i < dungeon.definition().mazes().size(); i++) mazes.addItem((i + 1) + " · " + dungeon.definition().mazes().get(i));
@@ -75,6 +84,10 @@ final class DungeonPanel extends JPanel {
     private void rebuild() {
         if (changing || dungeon == null) return;
         layout = dungeon.arrange(mazes.getSelectedIndex(), coordinate(starts.getSelectedItem()), coordinate(bosses.getSelectedItem()), seed);
+        summary.setText("副本布局 " + (mazes.getSelectedIndex() + 1) + " · " + layout.maze() + " · 起点 " + layout.start() + " · Boss " + layout.boss());
+        summary.setToolTipText(summary.getText());
+        int gridHeight = Math.min(105, Math.max(30, layout.maze().height() * 24));
+        grid.setPreferredSize(new Dimension(300, gridHeight)); grid.setMaximumSize(new Dimension(Integer.MAX_VALUE, gridHeight)); revalidate();
         if (position == null || layout.room(position) == null) position = layout.start();
         if (position == null || layout.room(position) == null) position = layout.rooms().isEmpty() ? null : layout.rooms().get(0).position();
         selectRoom(position);

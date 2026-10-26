@@ -28,9 +28,11 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "pvf-resource-preview"); thread.setDaemon(true); return thread;
     });
-    private final JButton choose = new JButton("选择 NPK 目录");
+    private final JButton choose = new JButton("选择资源目录");
     private final JButton refresh = new JButton("刷新预览");
     private final JLabel root = new JLabel("选择客户端或 ImagePacks2 目录");
+    private final TaskProgress indexProgress = new TaskProgress("resource-index-progress");
+    private final TaskProgress previewProgress = new TaskProgress("resource-load-progress");
     private final JComboBox<Object> references = new JComboBox<>();
     private final JTextField variants = new JTextField("0,0", 5);
     private final JButton play = new JButton("播放");
@@ -43,6 +45,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private final JCheckBox clientViewport = new JCheckBox("客户端视口");
     private final JCheckBox entityMarkers = new JCheckBox("对象标记");
     private final JCheckBox conditionalEntities = new JCheckBox("条件怪物");
+    private final JToggleButton options = new JToggleButton("预览设置");
+    private final JToggleButton showDetails = new JToggleButton("显示详情");
     private final JLabel legend = new JLabel("红：禁行 · 橙：仅浮空");
     private final JSlider timeline = new JSlider(0, 0, 0);
     private final JLabel frameLabel = new JLabel("尚未选择配置");
@@ -62,7 +66,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private long generation;
     private long directoryGeneration;
     private boolean changing, playing, closed;
-    private int currentFrame;
+    private int currentFrame, detailWarnings;
     private Path settings;
     private Path archiveParent;
 
@@ -72,32 +76,49 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         JPanel header = new JPanel(); header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         actions.add(new JLabel("资源预览")); actions.add(choose); actions.add(refresh);
-        header.add(actions); header.add(Box.createVerticalStrut(6)); header.add(root);
+        header.add(actions);
+        header.add(indexProgress);
         references.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
         references.setToolTipText("选择当前配置中的图标、图片或 ANI 引用");
         header.add(Box.createVerticalStrut(6)); header.add(references);
         JPanel parameters = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
         variants.setToolTipText("替换 IMG 路径中的 %02d 等占位符；按顺序输入逗号分隔的整数，回车应用，例如 0,0");
         parameters.add(new JLabel("外观参数")); parameters.add(variants);
-        parameters.add(new JLabel("缩放")); parameters.add(zoom); header.add(parameters);
+        parameters.add(new JLabel("缩放")); parameters.add(zoom);
+        JPanel settingsPanel = new JPanel(); settingsPanel.setLayout(new BoxLayout(settingsPanel, BoxLayout.Y_AXIS));
+        root.setAlignmentX(LEFT_ALIGNMENT); settingsPanel.add(root); settingsPanel.add(parameters);
         JPanel overlays = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         entityMarkers.setToolTipText("显示所有实体的脚下原点及编号；没有可用待机动画的对象始终显示位置标记。");
         conditionalEntities.setToolTipText("同时预览 monster condition 中的候选怪物；不判断游戏中的出现条件，每条配置仅放置一个。");
         clientViewport.setToolTipText("MAP 的原生 640×480 视口；拖动相机受客户端边界限制。缩放只改变显示大小。边框内为实际画面。");
-        overlays.add(collision); overlays.add(entityMarkers); overlays.add(conditionalEntities); header.add(overlays);
-        JPanel cameraControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0)); cameraControls.add(clientViewport); header.add(cameraControls);
+        overlays.add(collision); overlays.add(entityMarkers); overlays.add(conditionalEntities); settingsPanel.add(overlays);
+        JPanel loopOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0)); loopOptions.add(loop); settingsPanel.add(loopOptions);
+        JPanel cameraControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0)); cameraControls.add(clientViewport); cameraControls.add(options); header.add(cameraControls);
+        settingsPanel.setVisible(false); header.add(settingsPanel);
         header.add(dungeonPanel);
-        clientViewport.addActionListener(e -> { canvas.clientViewport = clientViewport.isSelected(); canvas.resetView(); canvas.repaint(); });
-        legend.setVisible(false); header.add(legend);
+        options.setName("preview-options"); options.setToolTipText("展开外观、缩放、叠加显示和副本布局选项");
+        options.addActionListener(e -> {
+            settingsPanel.setVisible(options.isSelected()); dungeonPanel.setOptionsVisible(options.isSelected());
+            options.setText(options.isSelected() ? "收起设置" : "预览设置"); revalidate();
+        });
+        clientViewport.addItemListener(e -> { canvas.clientViewport = clientViewport.isSelected(); canvas.resetView(); canvas.repaint(); });
+        legend.setVisible(false); settingsPanel.add(legend);
         add(header, BorderLayout.NORTH); add(canvas);
         JPanel footer = new JPanel(); footer.setLayout(new BoxLayout(footer, BoxLayout.Y_AXIS));
+        footer.add(previewProgress);
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        controls.add(previous); controls.add(play); controls.add(next); controls.add(loop); controls.add(speed);
-        speed.setSelectedIndex(2); footer.add(controls); footer.add(timeline); footer.add(frameLabel);
+        controls.add(previous); controls.add(play); controls.add(next); controls.add(speed);
+        previous.setPreferredSize(new Dimension(32, 28)); next.setPreferredSize(new Dimension(32, 28));
+        speed.setSelectedIndex(2); footer.add(controls); footer.add(timeline);
+        JPanel summary = new JPanel(new BorderLayout(4, 0)); summary.add(frameLabel); summary.add(showDetails, BorderLayout.EAST); footer.add(summary);
         details.setEditable(false); details.setLineWrap(true); details.setWrapStyleWord(true);
         details.setOpaque(false); details.setFont(UIManager.getFont("Label.font"));
         details.setText("打开 DGN 查看副本布局并切换房间；MAP/TIL 预览完整场景，ANI/PTL 播放动画或粒子。\n拖动平移、滚轮缩放；碰撞层可查看地块及对象碰撞范围。");
-        footer.add(new JScrollPane(details)); add(footer, BorderLayout.SOUTH);
+        JScrollPane detailScroll = new JScrollPane(details); detailScroll.setVisible(false); footer.add(detailScroll); add(footer, BorderLayout.SOUTH);
+        showDetails.setName("preview-details"); showDetails.setToolTipText("展开资源路径、房间连接与解析诊断");
+        showDetails.addActionListener(e -> {
+            detailScroll.setVisible(showDetails.isSelected()); updateDetailsLabel(); revalidate();
+        });
         choose.addActionListener(e -> chooseDirectory());
         refresh.addActionListener(e -> setSource(source));
         references.addActionListener(e -> { if (!changing) loadSelection(); });
@@ -136,10 +157,10 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     }
 
     void mount(Path directory, Path parent) {
+        indexProgress.clear();
         settings = directory.resolve("preview.properties"); archiveParent = parent;
         choose.setEnabled(true);
-        root.setText(resources == null ? "选择客户端或 ImagePacks2 目录"
-                : resources.packCount() + " 个 NPK / " + resources.imageCount() + " 个 IMG");
+        root.setText(resources == null ? "选择客户端、ImagePacks2 或 Sprite 目录" : resourceSummary(resources));
         long version = ++directoryGeneration; Path config = settings;
         worker.execute(() -> {
             Path saved = null;
@@ -150,14 +171,20 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                     String value = properties.getProperty("npk.directory");
                     if (value != null) saved = Path.of(value);
                 } else if (parent != null && Files.isDirectory(parent.resolve("ImagePacks2"))) saved = parent.resolve("ImagePacks2");
+                else if (parent != null && Files.isDirectory(parent.resolve("Sprite"))) saved = parent.resolve("Sprite");
             } catch (IOException | RuntimeException ignored) { /* A stale preference must not prevent editing. */ }
             Path selected = saved;
             SwingUtilities.invokeLater(() -> { if (!closed && version == directoryGeneration && selected != null) scan(selected); });
         });
     }
 
+    private static String resourceSummary(NpkResources resources) {
+        return resources.packCount() + " 个 NPK / " + resources.imageCount() + " 个 IMG"
+                + (resources.looseImageCount() == 0 ? "" : "（" + resources.looseImageCount() + " 个独立文件）");
+    }
+
     private void chooseDirectory() {
-        JFileChooser chooser = new JFileChooser(); chooser.setDialogTitle("选择客户端或 ImagePacks2 目录（只读）");
+        JFileChooser chooser = new JFileChooser(); chooser.setDialogTitle("选择客户端、ImagePacks2 或 Sprite 目录（只读）");
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         Path initial = resources == null ? archiveParent : resources.directory();
         if (initial != null && Files.isDirectory(initial)) chooser.setCurrentDirectory(initial.toFile());
@@ -169,10 +196,11 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     // Also used by the product smoke check, with the same indexing/rendering path as the picker.
     void scan(Path directory) {
         long version = ++directoryGeneration; Path config = settings;
-        root.setText("正在索引 NPK…"); root.setToolTipText(directory.toString()); choose.setEnabled(false);
+        TaskProgress.Ticket progress = indexProgress.start("resources.discover");
+        root.setText("正在索引 NPK / IMG…"); root.setToolTipText(directory.toString()); choose.setEnabled(false);
         worker.execute(() -> {
             try {
-                NpkResources indexed = NpkResources.scan(directory); String preferenceWarning = "";
+                NpkResources indexed = NpkResources.scan(directory, progress::update); String preferenceWarning = "";
                 if (config != null) {
                     try {
                         Properties properties = new Properties(); properties.setProperty("npk.directory", indexed.directory().toString());
@@ -181,9 +209,10 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                 }
                 String suffix = preferenceWarning;
                 SwingUtilities.invokeLater(() -> {
+                    indexProgress.finish(progress);
                     if (closed || version != directoryGeneration) return;
                     resources = indexed; choose.setEnabled(true);
-                    root.setText(indexed.packCount() + " 个 NPK / " + indexed.imageCount() + " 个 IMG"
+                    root.setText(resourceSummary(indexed)
                             + (indexed.warnings().isEmpty() ? "" : " / " + indexed.warnings().size() + " 条索引提示") + suffix);
                     root.setToolTipText("<html>" + html(indexed.directory().toString()) + "<br>"
                             + html(String.join("\n", indexed.warnings().stream().limit(12).toList())).replace("\n", "<br>") + "</html>");
@@ -191,6 +220,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                 });
             } catch (Exception failure) {
                 SwingUtilities.invokeLater(() -> {
+                    indexProgress.finish(progress);
                     if (closed || version != directoryGeneration) return;
                     choose.setEnabled(true); root.setText(resources == null ? "NPK 索引失败" : "索引失败，仍使用之前的 NPK 目录");
                     root.setToolTipText(message(failure)); fail(failure);
@@ -209,7 +239,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         if (snapshot.path().toLowerCase(Locale.ROOT).endsWith(".ani")) {
             changing = true; references.addItem("当前动画 · " + snapshot.path()); changing = false;
             loadSelection();
-        } else submit(() -> ResourceScript.references(snapshot.text()), found -> {
+        } else submit("解析资源引用", () -> ResourceScript.references(snapshot.text()), found -> {
             changing = true;
             if (snapshot.path().toLowerCase(Locale.ROOT).endsWith(".dgn")) references.addItem(new DungeonOption(snapshot.path()));
             if (isScene(snapshot.path())) references.addItem(new SceneOption(snapshot.path()));
@@ -226,24 +256,24 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         invalidatePreview();
         dungeonPanel.setVisible(false); dungeonSelection = null;
         if (source == null) return;
-        if (resources == null) { frameLabel.setText("请先选择 NPK 目录"); return; }
         Source snapshot = source; Object selected = references.getSelectedItem();
         if (selected == null) return;
         if (selected instanceof DungeonOption) {
             frameLabel.setText("读取副本布局与房间候选…"); canvas.error = "加载副本…"; canvas.repaint();
-            submit(() -> DungeonPreview.load(snapshot.path(), snapshot.text(), snapshot.lookup()::read), loaded -> {
+            submit("载入副本布局与房间候选", () -> DungeonPreview.load(snapshot.path(), snapshot.text(), snapshot.lookup()::read), loaded -> {
                 dungeonPanel.install(loaded);
                 if (dungeonPanel.selection() == null) fail(new IOException("布局没有可预览的房间；请检查 greed 与起点配置"));
             });
             return;
         }
+        if (resources == null) { frameLabel.setText("请先选择资源目录（NPK 或 Sprite/IMG）"); return; }
         if (selected instanceof SceneOption || selected instanceof ResourceScript.Reference r && r.particle()) {
             frameLabel.setText("读取场景地块与动画…"); canvas.error = "加载场景…"; canvas.repaint();
             int[] values;
             try { values = variantValues(); } catch (IOException failure) { fail(failure); return; }
             NpkResources indexed = resources;
             boolean conditional = conditionalEntities.isSelected();
-            submit(() -> {
+            submit("载入地图、地块与场景资源", () -> {
                 String path = snapshot.path(), text = snapshot.text();
                 if (selected instanceof ResourceScript.Reference ref) {
                     text = null;
@@ -259,7 +289,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
             });
             return;
         }
-        submit(() -> {
+        submit("载入动画配置", () -> {
             if (selected instanceof ResourceScript.Reference ref) {
                 if (!ref.animation()) return new Loaded(snapshot.path(), new ResourceScript.Animation(false,
                         List.of(ResourceScript.Frame.still(ref.path(), ref.index())), List.of()));
@@ -292,7 +322,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         try {
             values = variantValues();
         } catch (IOException failure) { fail(failure); return; }
-        submit(() -> frame.image().isEmpty() ? null : PreviewRenderer.prepare(frame,
+        submit("解码图片帧", () -> frame.image().isEmpty() ? null : PreviewRenderer.prepare(frame,
                 indexed.sprite(NpkResources.substitute(frame.image(), values), frame.index())), prepared -> {
             canvas.prepared = prepared; canvas.error = "";
             if (prepared != null && canvas.world == null) {
@@ -313,6 +343,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
             description += "\n位置 " + frame.x() + ", " + frame.y() + " · 缩放 " + frame.scaleX() + ", " + frame.scaleY()
                     + " · 旋转 " + frame.rotation() + " rad";
             if (!animation.warnings().isEmpty()) description += "\n" + String.join("\n", animation.warnings().stream().limit(4).toList());
+            detailWarnings = animation.warnings().size(); updateDetailsLabel();
             details.setText(description); details.setCaretPosition(0); canvas.repaint(); scheduleNext();
         });
     }
@@ -335,6 +366,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     }
     private void pause() { playback.stop(); sceneClock.pause(); playing = false; play.setText("播放"); }
     private void invalidatePreview() {
+        previewProgress.clear();
+        detailWarnings = 0; updateDetailsLabel();
         pause(); generation++; if (job != null) job.cancel(false);
         animation = null; scene = null; canvas.scene = null; canvas.camera = null;
         loop.setText("循环"); loop.setToolTipText(null); legend.setVisible(false);
@@ -368,12 +401,20 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         Point cameraPosition = canvas.camera == null ? null : canvas.camera.position();
         double panX = canvas.panX, panY = canvas.panY, freeZoom = canvas.freeZoom;
         invalidatePreview(); dungeonSelection = selection;
-        if (source == null || resources == null) return;
-        if (selection.map() == null) { fail(new IOException(selection.description() + "此房间没有符合配置的 MAP 候选")); return; }
+        if (source == null) return;
+        if (selection.map() == null) {
+            detailWarnings = selection.layout().warnings().size() + 1; updateDetailsLabel();
+            frameLabel.setText("副本布局已加载 · 此房间未关联 MAP");
+            canvas.error = "此房间未关联 MAP"; details.setText(selection.description()
+                    + "此房间没有符合配置的 MAP 候选。请检查 DGN 的 MAP 指定及 MAP 的 [dungeon] 关联。");
+            details.setCaretPosition(0); canvas.repaint(); return;
+        }
+        if (resources == null) { frameLabel.setText("副本布局已加载 · 请选择资源目录显示房间画面");
+            canvas.error = "请选择资源目录"; details.setText(selection.description()); canvas.repaint(); return; }
         Source snapshot = source; var indexed = resources; boolean conditional = conditionalEntities.isSelected(); int[] values;
         try { values = variantValues(); } catch (IOException failure) { fail(failure); return; }
         frameLabel.setText("读取副本房间 " + selection.room().position() + "…"); canvas.error = "加载房间…"; canvas.repaint();
-        submit(() -> {
+        submit("载入副本房间", () -> {
             String path = selection.map().path(), text = snapshot.lookup().read(path);
             if (text == null) throw new IOException("找不到房间 MAP " + path);
             var gates = selection.dungeon().gates(selection.layout(), selection.room(), selection.map(), selection.cleared(), selection.bossCondition());
@@ -393,7 +434,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         loop.setText("强制循环"); loop.setSelected(false);
         loop.setToolTipText("场景时间持续前进。默认各 ANI 遵循自己的 LOOP；勾选后所有动画独立循环。");
         timelineStart = 0; changing = true; timeline.setMaximum(60_000); timeline.setValue(0); changing = false;
-        canvas.world = loaded.rendered().bounds(); acceptScene(loaded.rendered()); updateControls();
+        canvas.clientViewport = clientViewport.isSelected();
+        canvas.world = loaded.rendered().overviewBounds(); canvas.resetView(); acceptScene(loaded.rendered()); updateControls();
     }
     private void acceptScene(ScenePreview.Rendered rendered) {
         canvas.scene = rendered; canvas.overlay = collision.isSelected(); canvas.markers = entityMarkers.isSelected(); canvas.error = "";
@@ -404,6 +446,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         changing = true; timeline.setValue((int) (time - timelineStart)); changing = false;
         timeline.setToolTipText("当前时间窗口 " + timelineStart / 1000 + "–" + (timelineStart / 1000 + 60) + " 秒；拖动可定位，播放持续前进");
         frameLabel.setText(String.format(Locale.ROOT, "场景 %.3f s · %d 个轨道 · 独立计时", time / 1000.0, rendered.trackCount()));
+        detailWarnings = rendered.warnings().size() + (dungeonSelection == null ? 0 : dungeonSelection.layout().warnings().size()); updateDetailsLabel();
         details.setText((dungeonSelection == null ? "" : source.path() + "\n" + dungeonSelection.description())
                 + animationPath + "\n" + rendered.tileCount() + " 个地块 · " + rendered.draws().size()
                 + " 个可绘制图层\n"
@@ -432,24 +475,33 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         String lower = path.toLowerCase(Locale.ROOT); return lower.endsWith(".map") || lower.endsWith(".til") || lower.endsWith(".ptl");
     }
     private <T> void submit(Work<T> work, Consumer<T> success) {
+        submit("更新预览画面", work, success);
+    }
+    private <T> void submit(String label, Work<T> work, Consumer<T> success) {
         long version = ++generation; if (job != null) job.cancel(false);
+        TaskProgress.Ticket progress = previewProgress.start(label, 250);
         job = worker.submit(() -> {
             try {
                 T value = work.run();
-                SwingUtilities.invokeLater(() -> { if (!closed && generation == version) success.accept(value); });
+                SwingUtilities.invokeLater(() -> { previewProgress.finish(progress); if (!closed && generation == version) success.accept(value); });
             } catch (Exception failure) {
-                SwingUtilities.invokeLater(() -> { if (!closed && generation == version) fail(failure); });
+                SwingUtilities.invokeLater(() -> { previewProgress.finish(progress); if (!closed && generation == version) fail(failure); });
             }
         });
     }
     private void fail(Exception failure) {
         pause(); canvas.prepared = null; canvas.scene = null; canvas.error = "预览不可用"; canvas.repaint();
         frameLabel.setText("预览不可用");
+        detailWarnings = 1; updateDetailsLabel();
         details.setText(message(failure)); details.setCaretPosition(0);
+    }
+    private void updateDetailsLabel() {
+        showDetails.setText((showDetails.isSelected() ? "收起详情" : "显示详情") + (detailWarnings == 0 ? "" : " (" + detailWarnings + ")"));
     }
     private static String message(Exception failure) { return failure.getMessage() == null ? failure.toString() : failure.getMessage(); }
     private static String html(String value) { return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"); }
     @Override public void close() {
+        indexProgress.clear(); previewProgress.clear();
         closed = true; ++generation; ++directoryGeneration; pause();
         // Do not interrupt a PVF read: interrupting FileChannel I/O would close the mounted archive's handle.
         if (job != null) job.cancel(false); worker.shutdown();

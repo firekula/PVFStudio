@@ -6,6 +6,32 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EntityScriptTest {
+    @Test void flattenedRecordsKeepEverySpawnIncludingChampionAndOptionalNpcZ() {
+        var layout = EntityScript.placements("[NPC] 4 `[left]` 100 200 30 7 `[right]` 300 400 [/NPC] "
+                + "[monster] 51 1 9 150 250 20 1 1 `[ratio]` `[champion]` 0 52 1 0 99 88 7 1 1 `[fixed]` `[normal]` [/monster] "
+                + "[passive object] 221 175 275 40 222 180 280 45 [/passive object] "
+                + "[monster condition] 53 1 0 1 2 3 1 1 `[fixed]` `[normal]` 54 1 0 4 5 6 1 1 `[fixed]` `[normal]` [/monster condition]");
+        assertTrue(layout.warnings().isEmpty()); assertEquals(List.of(4,7,51,52,221,222,53,54),layout.spawns().stream().map(EntityScript.Spawn::id).toList());
+        assertEquals(0,layout.spawns().get(1).z()); assertEquals(99,layout.spawns().get(3).x()); assertEquals(45,layout.spawns().get(5).z());
+        assertTrue(layout.spawns().get(7).conditional());
+        var partial = EntityScript.placements("[passive object] 1 2 3 4 99 [/passive object]");
+        assertEquals(1,partial.spawns().size()); assertEquals(1,partial.warnings().size());
+    }
+    @Test void flattenedSpecialContainersSkipPayloadWithoutInventingSpawns() {
+        var layout = EntityScript.placements("[special passive object] 221 100 200 0 2 `[monster]` 51 18 3 10 -1 `[item]` 0 2 -1 -1 -1 1032 300 200 0 0 [/special passive object]");
+        assertTrue(layout.warnings().isEmpty()); assertEquals(List.of(221,1032),layout.spawns().stream().map(EntityScript.Spawn::id).toList());
+    }
+    @Test void hellpartyPayloadAndOmittedTextZDoNotBecomeMapEntities() {
+        var flat = EntityScript.placements("[special passive object] 30528 352 270 0 1 `[hellparty]` 125 25 1 126 25 1 `[/hellparty]` 1032 300 200 0 0 [/special passive object]");
+        assertTrue(flat.warnings().isEmpty()); assertEquals(List.of(30528,1032),flat.spawns().stream().map(EntityScript.Spawn::id).toList());
+        var text = EntityScript.placements("[special passive object]\n221 100 200\n0\n[/special passive object]");
+        assertTrue(text.warnings().isEmpty()); assertEquals(0,text.spawns().get(0).z());
+    }
+    @Test void actionReferencesStayTypeSpecificAndDoNotReplaceAnExplicitIdleMotion() throws Exception {
+        var monster = EntityScript.definition("[waiting motion] `body.ani` [waiting action] `stay.act` [basic action] `wrong.act`",EntityScript.Kind.MONSTER);
+        assertEquals("body.ani",monster.idle()); assertEquals("stay.act",monster.action());
+        assertEquals("pipe.act",EntityScript.definition("[basic motion] `` [basic action] `pipe.act`",EntityScript.Kind.PASSIVE).action());
+    }
     @Test void mapRowsUseCorrectNpcMonsterAndPassiveCoordinates() {
         var layout = EntityScript.placements("""
                 [NPC]

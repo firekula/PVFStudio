@@ -58,10 +58,15 @@ class Entry:
     key: int
     raw_path: bytes
     tree_offset: int
+    legacy: bool = False
 
     @property
     def padded_length(self) -> int:
-        return (self.length + 3) & ~3
+        return self.length if self.legacy else (self.length + 3) & ~3
+
+    @property
+    def stored_length(self) -> int:
+        return self.padded_length + (24 if self.legacy else 0)
 
 
 @dataclass
@@ -72,58 +77,101 @@ class Archive:
     tree_key: int
     body_offset: int
     entries: list[Entry]
+    format: str = "ACT1"
+    header_size: int = HEADER_SIZE
+    mask: int = 0
 
     @classmethod
     def read(cls, path: Path) -> "Archive":
         data = path.read_bytes()
-        require(len(data) >= HEADER_SIZE and data.startswith(MAGIC), f"{path}: invalid header")
-        tree_length, tree_key, count = struct.unpack_from("<III", data, len(MAGIC))
+        require(len(data) >= HEADER_SIZE, f"{path}: truncated header")
+        first = U32.unpack_from(data)[0]
+        kind, header_size, mask = "ACT1", HEADER_SIZE, 0
+        if data.startswith(MAGIC):
+            tree_length, tree_key, count = struct.unpack_from("<III", data, len(MAGIC))
+        elif first == 1 and U32.unpack_from(data, 4)[0] == 1028:
+            kind, header_size = "LEGACY", 32
+            tree_length, count, count2 = struct.unpack_from("<III", data, 8)
+            require(count == count2 and tree_length % 1028 == 0 and count <= tree_length // 1028, "invalid legacy directory")
+            tree_key = 0
+        else:
+            require(1 <= first <= 256 and first + 20 <= len(data), f"{path}: invalid UUID header")
+            kind, header_size = "UUID", first + 20
+            tree_length, tree_key, count = struct.unpack_from("<III", data, first + 8)
         require(tree_length > 0 and tree_length % 4 == 0, f"{path}: invalid tree length")
-        body_offset = HEADER_SIZE + tree_length
+        body_offset = header_size + tree_length
         require(body_offset <= len(data), f"{path}: tree extends beyond archive")
         require(count <= tree_length // 21, f"{path}: impossible entry count")
-        tree = decrypt(data[HEADER_SIZE:body_offset], tree_key)
-        require(zlib.crc32(tree, count) == tree_key, f"{path}: client directory CRC mismatch")
+        tree = data[header_size:body_offset]
+        if kind != "LEGACY":
+            tree = decrypt(tree, tree_key)
+            if kind == "UUID" and zlib.crc32(tree, count) != tree_key:
+                mask = 0x81a79011
+                tree = decrypt(data[header_size:body_offset], tree_key ^ mask)
+            require(zlib.crc32(tree, count) == tree_key, f"{path}: client directory CRC mismatch")
         entries = []
         paths = set()
         numbers = set()
         cursor = 0
         for index in range(count):
             require(cursor + RECORD.size <= len(tree), f"{path}: truncated entry {index}")
-            number, offset, length, key, path_length = RECORD.unpack_from(tree, cursor)
             record_start = cursor
-            cursor += RECORD.size
-            require(path_length > 0 and path_length <= len(tree) - cursor,
+            if kind == "LEGACY":
+                record_start = index * 1028
+                raw_path = tree[record_start:record_start + 1024]
+                absolute = U32.unpack_from(tree, record_start + 1024)[0]
+                require(body_offset <= absolute <= len(data) - 24, "legacy block outside archive")
+                flags, active, own, length, stored, link = struct.unpack_from("<6I", data, absolute)
+                require(flags == active == 1 and own == absolute and length == stored, "unsupported legacy block")
+                number, offset, key, path_length = index, absolute - body_offset, 0, 1024
+                cursor = record_start + 1028
+            elif kind == "UUID":
+                number, path_length = struct.unpack_from("<II", tree, cursor)
+                cursor += 8
+                require(0 < path_length <= len(tree) - cursor - 12, "invalid UUID path length")
+                raw_path = tree[cursor:cursor + path_length]; cursor += path_length
+                length, key, offset = struct.unpack_from("<III", tree, cursor); cursor += 12
+            else:
+                number, offset, length, key, path_length = RECORD.unpack_from(tree, cursor)
+                cursor += RECORD.size
+            require(path_length > 0 and (kind != "ACT1" or path_length <= len(tree) - cursor),
                     f"{path}: invalid path length at entry {index}")
-            raw_path = tree[cursor:cursor + path_length]
-            cursor += path_length
+            if kind == "ACT1":
+                raw_path = tree[cursor:cursor + path_length]
+                cursor += path_length
             try:
                 virtual_path = normalize(raw_path.decode("cp949", errors="strict").rstrip("\0"))
             except UnicodeDecodeError as exception:
                 raise VerificationError(f"{path}: entry {index} has invalid CP949 path") from exception
             require(virtual_path and "\0" not in virtual_path, f"{path}: invalid path at entry {index}")
             require(virtual_path not in paths, f"{path}: duplicate path {virtual_path}")
-            require(number not in numbers, f"{path}: duplicate file number {number}")
-            entry = Entry(virtual_path, number, offset, length, key, raw_path, record_start)
-            require(offset + entry.padded_length <= len(data) - body_offset,
+            require(kind != "ACT1" or number not in numbers, f"{path}: duplicate file number {number}")
+            entry = Entry(virtual_path, number, offset, length, key, raw_path, record_start, kind == "LEGACY")
+            require(offset + entry.stored_length <= len(data) - body_offset,
                     f"{path}: out-of-range content for {virtual_path}")
             entries.append(entry)
             paths.add(virtual_path)
             numbers.add(number)
         end = 0
         for entry in sorted(entries, key=lambda item: (item.offset, item.padded_length)):
-            if entry.padded_length:
+            if entry.stored_length:
                 require(entry.offset >= end, f"{path}: overlapping content for {entry.path}")
-                end = entry.offset + entry.padded_length
-        return cls(path, data, tree, tree_key, body_offset, entries)
+                end = entry.offset + entry.stored_length
+        return cls(path, data, tree, tree_key, body_offset, entries, kind, header_size, mask)
 
     def ciphertext(self, entry: Entry) -> bytes:
-        start = self.body_offset + entry.offset
+        start = self.body_offset + entry.offset + (24 if entry.legacy else 0)
         return self.data[start:start + entry.padded_length]
 
     def padded_plaintext(self, entry: Entry) -> bytes:
-        plaintext = decrypt(self.ciphertext(entry), entry.key)
-        require(zlib.crc32(plaintext, entry.offset) == entry.key,
+        if entry.legacy:
+            plaintext = bytearray(self.ciphertext(entry))
+            for i in range(0, len(plaintext) - 1, 2):
+                word = int.from_bytes(plaintext[i:i + 2], "big")
+                plaintext[i:i + 2] = ((word - 0x0c74) & 0xffff if word else 0).to_bytes(2, "little")
+            return bytes(plaintext)
+        plaintext = decrypt(self.ciphertext(entry), entry.key ^ self.mask)
+        require(zlib.crc32(plaintext, entry.number if self.format == "UUID" else entry.offset) == entry.key,
                 f"{self.path}: client entry CRC mismatch: {entry.path}")
         return plaintext
 
@@ -150,11 +198,18 @@ def read_changes(manifest: Path | None) -> dict[str, bytes]:
 
 
 def verify(source: Archive, output: Archive, expected: dict[str, bytes]) -> dict[str, Any]:
+    require(source.format == output.format and source.mask == output.mask, "container format changed")
+    source_header = bytearray(source.data[:source.header_size])
+    output_header = bytearray(output.data[:output.header_size])
+    if source.format != "LEGACY":
+        output_header[-8:-4] = source_header[-8:-4]
+    require(source_header == output_header, "container identity/header changed")
     require(len(source.entries) == len(output.entries), "entry count changed")
     require(len(source.tree) == len(output.tree), "directory length changed")
     source_paths = {entry.path for entry in source.entries}
     require(not (set(expected) - source_paths), f"unknown expected paths: {sorted(set(expected) - source_paths)}")
     output_paths = {entry.path: entry for entry in output.entries}
+    relocated_links = {source.body_offset + e.offset: output.body_offset + output_paths[e.path].offset for e in source.entries}
     normalized_tree = bytearray(output.tree)
     changed_entries = 0
     preserved_ciphertext_entries = 0
@@ -183,8 +238,17 @@ def verify(source: Archive, output: Archive, expected: dict[str, bytes]) -> dict
             else:
                 rekeyed_unchanged_entries += 1
         # Relocation changes the CRC seed/key; opaque bytes, names and IDs stay exact.
-        start = before.tree_offset + 4
-        normalized_tree[start:start + 12] = source.tree[start:start + 12]
+        if source.format == "LEGACY":
+            start, size = before.tree_offset + 1024, 4
+            old_block = source.body_offset + before.offset
+            new_block = output.body_offset + after.offset
+            require(source.data[old_block:old_block + 8] == output.data[new_block:new_block + 8], "legacy block flags changed")
+            old_link = U32.unpack_from(source.data, old_block + 20)[0]
+            require(relocated_links.get(old_link) == U32.unpack_from(output.data, new_block + 20)[0], "legacy link relocation failed")
+        else:
+            start = before.tree_offset + (8 + len(before.raw_path) if source.format == "UUID" else 4)
+            size = 12
+        normalized_tree[start:start + size] = source.tree[start:start + size]
     require(bytes(normalized_tree) == source.tree, "opaque directory bytes or tail changed")
 
     # Check opaque bytes around entries using the original physical order. A resized
@@ -200,8 +264,8 @@ def verify(source: Archive, output: Archive, expected: dict[str, bytes]) -> dict
                 f"physical entry order changed: {before.path}")
         require(source.data[old_cursor:old_start] == output.data[new_cursor:new_start],
                 f"opaque gap bytes changed before: {before.path}")
-        old_cursor = old_start + before.padded_length
-        new_cursor = new_start + after.padded_length
+        old_cursor = old_start + before.stored_length
+        new_cursor = new_start + after.stored_length
     require(source.data[old_cursor:] == output.data[new_cursor:], "trailing archive bytes changed")
     byte_exact = source.data == output.data
     if not changed_entries:
@@ -216,11 +280,12 @@ def verify(source: Archive, output: Archive, expected: dict[str, bytes]) -> dict
         "changed_entries": changed_entries,
         "preserved_ciphertext_entries": preserved_ciphertext_entries,
         "rekeyed_unchanged_entries": rekeyed_unchanged_entries,
-        "seeded_client_crc_verified": True,
+        "format": source.format,
+        "seeded_client_crc_verified": source.format != "LEGACY",
         "byte_exact": byte_exact,
         "directory_metadata_preserved": True,
         "opaque_gaps_and_trailer_preserved": True,
-        "client_compatibility": "binary_crc_rules_verified; runtime_validation_separate",
+        "client_compatibility": ("legacy_layout_codec_verified" if source.format == "LEGACY" else "binary_crc_rules_verified") + "; runtime_validation_separate",
     }
 
 

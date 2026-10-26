@@ -25,45 +25,73 @@ public final class NpkResources implements ScenePreview.SpriteLookup {
     private static final long CACHE_LIMIT = 32L * 1024 * 1024;
     private final Path directory;
     private final int packCount;
+    private final int looseImageCount;
     private final Map<String, List<Entry>> entries;
     private final List<String> warnings;
     private final LinkedHashMap<Entry, ImgArchive> albums = new LinkedHashMap<>(16, .75f, true);
     private final LinkedHashMap<Key, Sprite> pixels = new LinkedHashMap<>(16, .75f, true);
     private long cacheBytes;
 
-    private NpkResources(Path directory, int packCount, Map<String, List<Entry>> entries, List<String> warnings) {
-        this.directory = directory; this.packCount = packCount;
+    private NpkResources(Path directory, int packCount, int looseImageCount, Map<String, List<Entry>> entries, List<String> warnings) {
+        this.directory = directory; this.packCount = packCount; this.looseImageCount = looseImageCount;
         Map<String, List<Entry>> copy = new HashMap<>();
         entries.forEach((name, values) -> copy.put(name, List.copyOf(values)));
         this.entries = Map.copyOf(copy); this.warnings = List.copyOf(warnings);
     }
 
     public static NpkResources scan(Path selected) throws IOException {
+        return scan(selected, (stage, completed, total, detail) -> {});
+    }
+
+    @FunctionalInterface
+    public interface ProgressListener { void update(String stage, long completed, long total, String detail); }
+
+    public static NpkResources scan(Path selected, ProgressListener progress) throws IOException {
+        Objects.requireNonNull(progress, "progress");
         Path root = selected.toRealPath();
         if (Files.isDirectory(root.resolve("ImagePacks2"))) root = root.resolve("ImagePacks2").toRealPath();
-        if (!Files.isDirectory(root)) throw new IOException("请选择 ImagePacks2 或客户端目录");
-        List<Path> packs;
+        else if (Files.isDirectory(root.resolve("Sprite"))) root = root.resolve("Sprite").toRealPath();
+        if (!Files.isDirectory(root)) throw new IOException("请选择 ImagePacks2、Sprite 或客户端目录");
+        List<Path> files = new ArrayList<>();
+        progress.update("resources.discover", 0, -1, root.toString());
         try (var paths = Files.walk(root)) {
-            packs = paths.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".npk"))
-                    .sorted().toList();
+            var iterator = paths.iterator(); long visited = 0;
+            while (iterator.hasNext()) {
+                checkInterrupted(); Path candidate = iterator.next(); String name = candidate.getFileName().toString().toLowerCase(Locale.ROOT);
+                if ((name.endsWith(".npk") || name.endsWith(".img")) && Files.isRegularFile(candidate)) files.add(candidate);
+                if ((++visited & 127) == 0) progress.update("resources.discover", files.size(), -1, candidate.toString());
+            }
         }
-        if (packs.isEmpty()) throw new IOException("目录中没有 NPK 文件：" + root);
+        files.sort(Comparator.naturalOrder());
+        if (files.isEmpty()) throw new IOException("目录中没有 NPK 或 IMG 文件：" + root);
         Map<String, List<Entry>> entries = new HashMap<>(); List<String> warnings = new ArrayList<>();
-        int loaded = 0;
-        for (Path pack : packs) {
+        int loaded = 0, loose = 0, completed = 0;
+        for (Path pack : files) {
             checkInterrupted();
+            progress.update("resources.index", completed, files.size(), pack.getFileName().toString());
             try {
-                List<Entry> found = readDirectory(pack, warnings);
+                if (pack.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".img")) {
+                    BasicFileAttributes attributes = Files.readAttributes(pack, BasicFileAttributes.class);
+                    if (attributes.size() < 32) throw new IOException("IMG 文件被截断");
+                    String name = normalize(root.relativize(pack).toString());
+                    entries.computeIfAbsent(name, unused -> new ArrayList<>()).add(new Entry(pack, name, 0,
+                            attributes.size(), attributes.size(), attributes.lastModifiedTime()));
+                    loose++; continue;
+                }
+                List<Entry> found = readDirectory(pack, warnings, progress, completed, files.size());
                 for (Entry entry : found) entries.computeIfAbsent(entry.name(), unused -> new ArrayList<>()).add(entry);
                 loaded++;
             } catch (IOException failure) { warnings.add(pack.getFileName() + "：" + failure.getMessage()); }
+            finally { progress.update("resources.index", ++completed, files.size(), pack.getFileName().toString()); }
         }
         if (entries.isEmpty()) throw new IOException("未找到可用的 IMG 资源；" + String.join("；", warnings));
-        return new NpkResources(root, loaded, entries, warnings);
+        progress.update("resources.finish", 0, -1, entries.size() + " 个 IMG");
+        NpkResources result = new NpkResources(root, loaded, loose, entries, warnings);
+        progress.update("resources.index", files.size(), files.size(), entries.size() + " 个 IMG");
+        return result;
     }
 
-    private static List<Entry> readDirectory(Path pack, List<String> warnings) throws IOException {
+    private static List<Entry> readDirectory(Path pack, List<String> warnings, ProgressListener progress, int completed, int total) throws IOException {
         BasicFileAttributes attributes = Files.readAttributes(pack, BasicFileAttributes.class);
         try (FileChannel channel = FileChannel.open(pack, StandardOpenOption.READ)) {
             ByteBuffer header = read(channel, 0, 20);
@@ -74,6 +102,9 @@ public final class NpkResources implements ScenePreview.SpriteLookup {
             List<Entry> found = new ArrayList<>();
             for (int i = 0; i < count; i++) {
                 checkInterrupted();
+                if ((i & 255) == 0 || i + 1 == count)
+                    progress.update("resources.index", completed, total, "资源 " + (completed + 1) + " / " + total
+                            + " · " + pack.getFileName() + " · IMG 目录 " + (i + 1) + " / " + count);
                 ByteBuffer record = read(channel, 20L + i * 264L, 264);
                 long offset = Integer.toUnsignedLong(record.getInt()), length = Integer.toUnsignedLong(record.getInt());
                 byte[] nameBytes = new byte[256]; record.get(nameBytes);
@@ -109,6 +140,7 @@ public final class NpkResources implements ScenePreview.SpriteLookup {
 
     public static String normalize(String path) {
         String name = path.replace('\\', '/').toLowerCase(Locale.ROOT);
+        if (name.contains("//")) name = name.replaceAll("/+", "/");
         while (name.startsWith("/")) name = name.substring(1);
         if (name.startsWith("sprite/")) name = name.substring(7);
         return "sprite/" + name;
@@ -150,12 +182,12 @@ public final class NpkResources implements ScenePreview.SpriteLookup {
         checkInterrupted();
         List<Entry> matches = entries.get(normalize(path));
         if (matches == null) throw new IOException("找不到 IMG：" + path);
-        if (matches.size() != 1) throw new IOException("IMG 位于多个 NPK，请使用无重复资源的目录：" + path
+        if (matches.size() != 1) throw new IOException("IMG 位于多个 NPK / IMG 文件，请使用无重复资源的目录：" + path
                 + "（" + String.join("、", matches.stream().map(e -> e.pack().getFileName().toString()).toList()) + "）");
         Entry entry = matches.get(0);
         BasicFileAttributes attributes = Files.readAttributes(entry.pack(), BasicFileAttributes.class);
         if (attributes.size() != entry.packSize() || !attributes.lastModifiedTime().equals(entry.modified()))
-            throw new IOException("NPK 已变化，请重新选择目录：" + entry.pack().getFileName());
+            throw new IOException("资源文件已变化，请重新选择目录：" + entry.pack().getFileName());
         return entry;
     }
 
@@ -184,6 +216,7 @@ public final class NpkResources implements ScenePreview.SpriteLookup {
 
     public Path directory() { return directory; }
     public int packCount() { return packCount; }
+    public int looseImageCount() { return looseImageCount; }
     public int imageCount() { return entries.size(); }
     public List<String> warnings() { return warnings; }
     record Entry(Path pack, String name, long offset, long length, long packSize,

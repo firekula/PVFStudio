@@ -18,6 +18,55 @@ import static org.junit.jupiter.api.Assertions.*;
 class WorkspaceTest {
     @TempDir Path temporary;
 
+    @Test void structuralDraftsPersistRenameUnsavedContentAddDeleteAndExport() throws Exception {
+        Path source = fixture("original".getBytes(StandardCharsets.US_ASCII)); byte[] untouched = Files.readAllBytes(source);
+        Path drafts = temporary.resolve("structure-drafts");
+        try (var workspace = PvfWorkspace.open(source, drafts)) {
+            workspace.stageText("test/item.stk", "edited", StandardCharsets.US_ASCII);
+            workspace.createDirectory("created/empty"); workspace.createTextFile("created/new.etc", StandardCharsets.US_ASCII);
+            workspace.rename("test", "renamed/deep");
+            assertFalse(workspace.contains("test/item.stk")); assertEquals("edited", workspace.readText("renamed/deep/item.stk", StandardCharsets.US_ASCII));
+            assertEquals("original", workspace.readOriginalText("renamed/deep/item.stk", StandardCharsets.US_ASCII));
+            assertThrows(IOException.class, () -> workspace.rename("renamed", "created"));
+            assertThrows(IOException.class, () -> workspace.createTextFile("../bad", StandardCharsets.US_ASCII));
+        }
+        try (var workspace = PvfWorkspace.open(source, drafts)) {
+            assertTrue(workspace.folders().contains("created/empty")); assertTrue(workspace.contains("created/new.etc"));
+            workspace.delete("created"); assertFalse(workspace.contains("created/new.etc"));
+            workspace.createFile("created/raw.bin", new byte[]{1, 2, 3});
+            Path result = temporary.resolve("structured.pvf"); workspace.export(result);
+            try (var archive = studio.pvf.core.PvfArchive.open(result)) {
+                assertEquals(2, archive.fileCount()); assertEquals("edited", new String(archive.readBytes("renamed/deep/item.stk"), StandardCharsets.US_ASCII));
+                assertEquals(11, archive.entry("renamed/deep/item.stk").fileNumber()); assertArrayEquals(new byte[]{1,2,3}, archive.readBytes("created/raw.bin"));
+            }
+            workspace.delete("renamed"); workspace.delete("created"); workspace.export(temporary.resolve("empty.pvf"));
+            try (var empty = studio.pvf.core.PvfArchive.open(temporary.resolve("empty.pvf"))) { assertEquals(0, empty.fileCount()); }
+        }
+        assertArrayEquals(untouched, Files.readAllBytes(source));
+    }
+
+    @Test void binaryAniDraftsRestoreExportAndRejectInvalidEditsWithoutChangingTheDraft() throws Exception {
+        byte[] bytes = BinaryAniCodecTest.fixture().bytes(); Path source = fixture(bytes, "test/preview.ani");
+        Path drafts = temporary.resolve("ani-drafts"); String changed;
+        try (PvfWorkspace workspace = PvfWorkspace.open(source, drafts)) {
+            String original = workspace.readText("test/preview.ani", StandardCharsets.US_ASCII);
+            workspace.stageText("test/preview.ani", original, StandardCharsets.US_ASCII); assertTrue(workspace.dirtyPaths().isEmpty());
+            changed = original.replace("\t80\n", "\t81\n"); workspace.stageText("test/preview.ani", changed, StandardCharsets.US_ASCII);
+            byte[] staged = workspace.readBytes("test/preview.ani");
+            assertThrows(IOException.class, () -> workspace.stageText("test/preview.ani", changed.replace("[IMAGE POS]", "[UNKNOWN]"), StandardCharsets.US_ASCII));
+            assertArrayEquals(staged, workspace.readBytes("test/preview.ani"));
+            assertEquals(original, workspace.readOriginalText("test/preview.ani", StandardCharsets.US_ASCII));
+        }
+        try (PvfWorkspace workspace = PvfWorkspace.open(source, drafts)) {
+            assertEquals(changed, workspace.readText("test/preview.ani", StandardCharsets.US_ASCII));
+            Path exported = temporary.resolve("ani-edited.pvf"); workspace.export(exported);
+            try (var archive = studio.pvf.core.PvfArchive.open(exported)) {
+                assertEquals(changed, BinaryAniCodec.decode(archive.readBytes("test/preview.ani"), StandardCharsets.US_ASCII));
+            }
+        }
+        try (var archive = studio.pvf.core.PvfArchive.open(source)) { assertArrayEquals(bytes, archive.readBytes("test/preview.ani")); }
+    }
+
     @Test void persistedDraftSurvivesRestartAndCanBeExported() throws Exception {
         Path source = fixture("[name]\r\n`原始`\r\n".getBytes(Charset.forName("GBK")));
         byte[] originalArchive = Files.readAllBytes(source);
@@ -180,7 +229,10 @@ class WorkspaceTest {
     }
 
     private Path fixture(byte[] content) throws IOException {
-        byte[] path = "test/item.stk".getBytes(StandardCharsets.US_ASCII);
+        return fixture(content, "test/item.stk");
+    }
+    private Path fixture(byte[] content, String virtualPath) throws IOException {
+        byte[] path = virtualPath.getBytes(StandardCharsets.US_ASCII);
         int treeSize = (20 + path.length + 3) & ~3;
         ByteBuffer tree = ByteBuffer.allocate(treeSize).order(ByteOrder.LITTLE_ENDIAN);
         ByteBuffer body = ByteBuffer.allocate((content.length + 3) & ~3).order(ByteOrder.LITTLE_ENDIAN);

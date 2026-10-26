@@ -188,3 +188,21 @@ DGN 可切换多套布局与起点/Boss，点击布局图切换房间，并选�
 | `PVFStudio-0.11.1-windows-x64-setup.exe` | 186620717 | `731792ed208b4fd6317c98df20079c68d5992913c947927e306c303ecf47f2fa` |
 
 正式产品目录为 `pvf-product/build/product/PVFStudio-0.11.1/`。发布入口为 [v0.11.1 Release](https://github.com/firekula/PVFStudio/releases/tag/v0.11.1)，本地校验记录在 `build/release/package-validation-v0.11.1.json`。
+
+## 2026-10-26：0.13.5 分层排序与小窗口预览
+
+使用同一 ACT1 `DNF.exe` 的独立 IDB 副本提取，原始结果为 `build/client-layer-evidence/order.txt`、`sort.txt`。`0x4C53D0` 遍历指定层的对象数组，仅在原生 layer=1 时调用 `0x4C5230`；`0x718090` 将 normal 映射为 1。`0x4C5230` 按虚函数 +136 返回的地面 Y 做稳定插入排序，相等时不移动。其他层在该绘制流程中沿数组顺序绘制。原“所有层统一按地面 Y 排序”的预览推断作废，地块在 `0x463940` 中的位置保持不变。
+
+0.13.5 的六层像素测试同时覆盖总览和客户端视口，确认 normal 按 Y 排序，其余层按加入顺序。100 级实物资源 `map/kohlepowerstation/18008(4,1)b.map` 在 0/46038ms 无资源诊断，楼梯入口先前被栏杆覆盖的像素恢复，middleback 上行楼梯也恢复。全景前后图在 `build/powerstation-before-0135/`、`build/powerstation-after-0135/`。这轮依据 ACT1 静态函数和新版 PVF/IMG 实物资源核对，没有声称完成 100 级原生客户端运行画面的像素一致性验收。
+
+预览设置和详情默认折叠，保留房间小地图、清理状态、MAP 候选、客户端视口及播放倍速；诊断数量在折叠按钮上仍可见。172 项 JVM 与 14 项 Python 测试通过，实际 100 级工作台覆盖 1264×811、1024×720 窗口、展开/收起和相机保留。
+
+最终工作台证据位于 `build/product-checks/20261026-122941-4a8ba9d8/smoke-results/`：按原分栏宽度测试，1264×811 的画布为 394×355，1024×720 的画布为 288×264。设置/详情收起后恢复原高度与相机，房间小地图及播放控件保持可见。ACT1 完整产品回归通过，日志为 `build/product-checks/20261026-122748-f9119f27/`；同时确认切换碰撞层不会因图例出现而改变画布和自适应缩放。
+
+## 2026-10-26：雪山右门的 bottom 图层核对（无运行时代码改动）
+
+针对 `G:/Game/DNF_ACT1/Client_test2/Script.pvf`、`map/charnakridge/s5601.map` 排查帐篷盖住冰刺。604 号 `01rightnormal.obj` 原配置为 bottom；帐篷 `Animation/Grocery.ani` 在 MAP 中为 normal、Y=299。右门坐标为 (865,399)，其图层优先级低于 normal 帐篷，不能仅按 Y 判断遮挡关系。
+
+原版静态链路：`0x475E30` 将模板图层写入对象 +220（对象信息 +12）；`0x4C7AE0` 按这个字段注册到对应图层，没有把通路门强制改为 normal。`0x556860 → 0x57C6E0` 加载门的各 ANI，调用虚函数 +220 对应的 `0x472FC0` 挂为同对象的附加动画；`0x472400` 在对象的绘制调用中画这些附加动画，不为尖刺建立独立前景对象。原始提取为 `build/client-layer-evidence/gate-layer.txt`、`gate-register.txt`，门加载函数另见 `build/client-coordinate-evidence/tile-and-object-draw.txt`。
+
+开/关门在 0、500、60061ms 的 6 张实际场景 PNG，与 0.13.4 输出逐字节一致。将门图层仅在内存改为 normal 的对照可恢复帐篷前的尖刺，证据目录见 [DGN 说明](dungeon-preview.md#雪山帐篷与冰刺的遮挡)。新增像素回归确认门的常驻和关闭附加动画继承对象图层，bottom 受 normal 场景遮挡，normal 则按地面 Y 排序；这是配置层级核对，不修改原包或改变渲染器的原版分层规则。

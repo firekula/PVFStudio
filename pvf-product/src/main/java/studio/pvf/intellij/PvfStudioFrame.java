@@ -37,7 +37,6 @@ import com.intellij.openapi.editor.colors.EditorColorsManager;
 import studio.pvf.core.PvfEntry;
 import studio.pvf.workspace.PvfWorkspace;
 import studio.pvf.workspace.PvfBackupExport;
-import studio.pvf.workspace.TextCodec;
 
 import javax.swing.*;
 import javax.swing.event.TreeExpansionEvent;
@@ -80,7 +79,7 @@ final class PvfStudioFrame extends JFrame {
     private final JMenu recentMenu = new JMenu("打开最近的文件");
     private final Map<AbstractButton, BooleanSupplier> menuEnabled = new LinkedHashMap<>();
     private final List<JRadioButtonMenuItem> encodingItems = new ArrayList<>();
-    private int encodingIndex;
+    private int encodingIndex = 4;
     private boolean showLineNumbers = true;
     private boolean softWraps;
     private RecentArchives recentArchives = RecentArchives.EMPTY;
@@ -108,6 +107,7 @@ final class PvfStudioFrame extends JFrame {
     private final javax.swing.Timer sessionSave = new javax.swing.Timer(650,
             e -> ApplicationManager.getApplication().invokeLater(this::saveEditorState));
     private final JLabel status = new JLabel("打开 PVF 后可浏览、编辑并导出新包。Ctrl+S 保存到独立草稿工作区。");
+    private final TaskProgress taskProgress = new TaskProgress("pvf-task-progress");
     private final Map<String, Session> sessions = new LinkedHashMap<>();
     private final Map<JDialog, Disposable> diffDialogs = new LinkedHashMap<>();
     private PvfWorkspace workspace;
@@ -150,7 +150,8 @@ final class PvfStudioFrame extends JFrame {
         editorSplit.setResizeWeight(0.7); editorSplit.setDividerLocation(540);
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, editorSplit);
         split.setDividerLocation(280); split.setResizeWeight(0.2);
-        add(split); add(status, BorderLayout.SOUTH);
+        JPanel footer = new JPanel(new BorderLayout()); footer.add(status, BorderLayout.NORTH); footer.add(taskProgress);
+        add(split); add(footer, BorderLayout.SOUTH);
         tree.setRootVisible(true);
         tree.addTreeWillExpandListener(new TreeWillExpandListener() {
             public void treeWillExpand(TreeExpansionEvent event) {
@@ -167,6 +168,7 @@ final class PvfStudioFrame extends JFrame {
         tree.getActionMap().put("pvf-open", new AbstractAction() {
             public void actionPerformed(ActionEvent e) { openSelectedTreeEntry(); }
         });
+        configureFileOperations();
         resultList.addMouseListener(new MouseAdapter() {
             public void mouseClicked(MouseEvent event) {
                 if (event.getClickCount() == 2) openEntry(resultList.getSelectedValue());
@@ -264,12 +266,12 @@ final class PvfStudioFrame extends JFrame {
         save.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK)); fileMenu.add(save);
         command(fileMenu, "全部保存    Ctrl+K S", "save-all", () -> !sessions.isEmpty(), null);
         fileMenu.add(export); fileMenu.add(backupOnExport); fileMenu.addSeparator();
-        ButtonGroup group = new ButtonGroup(); String[] encodings = {"GBK / CP936", "MS949 / CP949", "UTF-8"};
+        ButtonGroup group = new ButtonGroup(); String[] encodings = {"GBK / CP936", "MS949 / CP949", "UTF-8", "Big5 / CP950", "自动（按 PVF 格式）"};
         for (int i = 0; i < encodings.length; i++) {
-            int index = i; var item = new JRadioButtonMenuItem(encodings[i], i == 0);
+            int index = i; var item = new JRadioButtonMenuItem(encodings[i], i == encodingIndex);
             item.addActionListener(e -> selectEncoding(index)); group.add(item); encoding.add(item); encodingItems.add(item);
         }
-        encoding.setToolTipText("用于下一次打开的配置文件；恢复标签时沿用各自原编码。"); fileMenu.add(encoding);
+        encoding.setToolTipText("自动：ACT1 使用 GBK、旧版固定目录使用 MS949、UUID 使用 Big5；手动选择用于下一次打开的文件。"); fileMenu.add(encoding);
         fileMenu.addSeparator(); closeTab.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_W, InputEvent.CTRL_DOWN_MASK)); fileMenu.add(closeTab);
         command(fileMenu, "关闭所有编辑器    Ctrl+K Ctrl+W", "close-all", () -> !sessions.isEmpty(), null);
         fileMenu.addSeparator(); menuItem(fileMenu, "退出", this::requestClose, () -> recentLoaded, null);
@@ -522,7 +524,10 @@ final class PvfStudioFrame extends JFrame {
 
     private Charset selectedCharset() {
         return switch (encodingIndex) {
+            case 4 -> studio.pvf.workspace.PvfTextEncoding.defaultCharset(workspace == null
+                    ? studio.pvf.core.PvfFormat.ACT1 : workspace.archive().format());
             case 1 -> Charset.forName("MS949");
+            case 3 -> Charset.forName("Big5");
             case 2 -> StandardCharsets.UTF_8;
             default -> Charset.forName("GBK");
         };
@@ -566,22 +571,33 @@ final class PvfStudioFrame extends JFrame {
         PvfWorkspace previous = workspace;
         EditorSessionState previousState = captureEditorState();
         pauseEditorState();
-        runTask("读取 PVF 目录及草稿…", () -> {
+        runTask("读取 PVF 目录及草稿…", progress -> {
             if (previous != null) previousState.write(previous.directory());
-            Path directory = workspaceDirectory(archive);
+            Path directory = workspaceDirectory(archive, progress);
             // A timestamp-only change or path alias can retain exactly the same draft identity.
             // Release the old workspace on the UI side before trying to reacquire its lock.
             if (previous != null && previous.directory().equals(directory))
                 return new Loaded(null, Map.of(), true, List.of(), "", List.of());
-            PvfWorkspace loaded = PvfWorkspace.open(archive, directory);
+            PvfWorkspace loaded = PvfWorkspace.open(archive, directory, progress);
             try {
                 EditorSessionState.ReadResult saved = EditorSessionState.read(directory);
                 List<RestoredTab> restored = new ArrayList<>(); List<String> warnings = new ArrayList<>(saved.warnings());
+                int restoredCount = 0;
                 for (EditorSessionState.Tab tab : saved.state().tabs()) {
-                    try { restored.add(new RestoredTab(tab, readEditorText(loaded, tab.path(), Charset.forName(tab.charset())))); }
+                    progress.update("workspace.tabs", restoredCount++, saved.state().tabs().size(), tab.path());
+                    try {
+                        Charset savedCharset = Charset.forName(tab.charset());
+                        Charset actual = studio.pvf.workspace.PvfTextEncoding.restoredCharset(loaded.archive().format(), loaded.readBytes(tab.path()), savedCharset);
+                        EditorSessionState.Tab position = tab;
+                        if (!actual.equals(savedCharset)) {
+                            position = new EditorSessionState.Tab(tab.path(), actual.name(), tab.caret(), tab.scrollX(), tab.scrollY());
+                            warnings.add(tab.path() + "：已按韩文标签将旧 GBK 编码修正为 MS949");
+                        }
+                        restored.add(new RestoredTab(position, readEditorText(loaded, tab.path(), actual)));
+                    }
                     catch (Exception invalid) { warnings.add("未能恢复 " + tab.path() + "：" + invalid.getMessage()); }
                 }
-                return new Loaded(loaded, buildDirectories(loaded.archive().entries()), false,
+                return new Loaded(loaded, buildDirectories(loaded, progress), false,
                         restored, saved.state().selectedPath(), warnings);
             } catch (Throwable failure) { loaded.close(); throw failure; }
         }, loaded -> {
@@ -615,43 +631,58 @@ final class PvfStudioFrame extends JFrame {
             });
             resumeEditorState();
             rememberArchive(workspace.archive().sourcePath());
-            status.setText("已读取 " + workspace.archive().fileCount() + " 个文件；已保存草稿 "
+            status.setText(workspace.archive().format().description() + " | 已读取 " + workspace.archive().fileCount() + " 个文件；已保存草稿 "
                     + workspace.dirtyPaths().size() + " 个；已恢复 " + tabs.getTabCount() + " 个标签。"
                     + (loaded.warnings().isEmpty() ? "" : "恢复提示：" + String.join("；", loaded.warnings())));
             updateButtons();
         }, this::resumeEditorState);
     }
 
-    private Path workspaceDirectory(Path archive) throws Exception {
+    private Path workspaceDirectory(Path archive, studio.pvf.core.ProgressListener progress) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         digest.update(archive.toRealPath().toString().getBytes(StandardCharsets.UTF_8));
         digest.update((byte) 0);
+        long total = Files.size(archive), completed = 0;
+        progress.update("workspace.identity", 0, total, archive.getFileName().toString());
         try (java.io.InputStream stream = Files.newInputStream(archive)) {
             byte[] buffer = new byte[1024 * 1024]; int count;
-            while ((count = stream.read(buffer)) >= 0) if (count > 0) digest.update(buffer, 0, count);
+            while ((count = stream.read(buffer)) >= 0) if (count > 0) {
+                digest.update(buffer, 0, count); completed += count;
+                progress.update("workspace.identity", completed, total, archive.getFileName().toString());
+            }
         }
         byte[] hash = digest.digest();
         Path root = draftsRoot == null ? Path.of(System.getProperty("user.home"), ".pvf-studio", "workspaces") : draftsRoot;
         return root.resolve(HexFormat.of().formatHex(hash, 0, 16));
     }
 
-    private static Map<String, List<Item>> buildDirectories(List<PvfEntry> entries) {
+    private static Map<String, List<Item>> buildDirectories(PvfWorkspace workspace, studio.pvf.core.ProgressListener progress) {
+        Set<String> entries = workspace.paths(), folders = workspace.folders();
+        Set<String> all = new LinkedHashSet<>(entries); all.addAll(folders);
         Map<String, Map<String, Item>> collected = new HashMap<>();
         collected.put("", new HashMap<>());
-        for (PvfEntry entry : entries) {
-            String[] parts = entry.path().split("/"); String parent = "";
+        int completed = 0; progress.update("workspace.tree", 0, all.size(), "");
+        for (String entry : all) {
+            String[] parts = entry.split("/"); String parent = "";
             for (int i = 0; i < parts.length; i++) {
                 String path = parent.isEmpty() ? parts[i] : parent + "/" + parts[i];
-                boolean directory = i < parts.length - 1;
+                boolean directory = i < parts.length - 1 || folders.contains(entry);
                 collected.computeIfAbsent(parent, unused -> new HashMap<>())
                         .putIfAbsent(parts[i], new Item(parts[i], path, directory));
                 if (directory) collected.computeIfAbsent(path, unused -> new HashMap<>());
                 parent = path;
             }
+            if ((++completed & 1023) == 0 || completed == all.size())
+                progress.update("workspace.tree", completed, all.size(), entry);
         }
         Map<String, List<Item>> result = new HashMap<>();
-        collected.forEach((path, children) -> result.put(path, children.values().stream()
-                .sorted(Comparator.comparing(Item::directory).reversed().thenComparing(Item::label)).toList()));
+        completed = 0; progress.update("workspace.sort", 0, collected.size(), "");
+        for (var directory : collected.entrySet()) {
+            result.put(directory.getKey(), directory.getValue().values().stream()
+                    .sorted(Comparator.comparing(Item::directory).reversed().thenComparing(Item::label)).toList());
+            if ((++completed & 127) == 0 || completed == collected.size())
+                progress.update("workspace.sort", completed, collected.size(), directory.getKey());
+        }
         return result;
     }
 
@@ -675,6 +706,155 @@ final class PvfStudioFrame extends JFrame {
                 && node.getUserObject() instanceof Item item && !item.directory()) openEntry(item.path());
     }
 
+    private void configureFileOperations() {
+        for (JComponent navigation : List.of(tree, resultList)) {
+            navigation.addMouseListener(new MouseAdapter() {
+                private void popup(MouseEvent event) {
+                    if (!event.isPopupTrigger() || workspace == null || busy) return;
+                    Item item;
+                    if (navigation == tree) {
+                        var path = tree.getPathForLocation(event.getX(), event.getY());
+                        if (path != null) tree.setSelectionPath(path);
+                        item = path == null ? new Item("Script.pvf", "", true) : selectedFileItem(tree);
+                    } else {
+                        int index = resultList.locationToIndex(event.getPoint());
+                        if (index >= 0) resultList.setSelectedIndex(index);
+                        item = index < 0 || !resultList.getCellBounds(index, index).contains(event.getPoint())
+                                ? new Item("Script.pvf", "", true) : selectedFileItem(resultList);
+                    }
+                    if (item == null) return;
+                    JPopupMenu menu = new JPopupMenu();
+                    JMenuItem file = new JMenuItem("新建文件…"), directory = new JMenuItem("新建文件夹…"), rename = new JMenuItem("重命名…"), delete = new JMenuItem("删除…");
+                    file.addActionListener(e -> chooseCreate(item, false)); directory.addActionListener(e -> chooseCreate(item, true));
+                    rename.addActionListener(e -> chooseRename(item)); delete.addActionListener(e -> chooseDelete(item));
+                    rename.setEnabled(!item.path().isEmpty()); delete.setEnabled(!item.path().isEmpty());
+                    menu.add(file); menu.add(directory); menu.addSeparator(); menu.add(rename); menu.add(delete); menu.show(navigation, event.getX(), event.getY());
+                }
+                @Override public void mousePressed(MouseEvent event) { popup(event); }
+                @Override public void mouseReleased(MouseEvent event) { popup(event); }
+            });
+            navigation.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_F2, 0), "pvf-rename");
+            navigation.getActionMap().put("pvf-rename", new AbstractAction() { public void actionPerformed(ActionEvent e) { chooseRename(selectedFileItem(navigation)); } });
+            navigation.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "pvf-delete");
+            navigation.getActionMap().put("pvf-delete", new AbstractAction() { public void actionPerformed(ActionEvent e) { chooseDelete(selectedFileItem(navigation)); } });
+            navigation.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK), "pvf-create");
+            navigation.getActionMap().put("pvf-create", new AbstractAction() { public void actionPerformed(ActionEvent e) { chooseCreate(selectedFileItem(navigation), false); } });
+        }
+    }
+    private Item selectedFileItem(JComponent component) {
+        if (component == resultList) { String path = resultList.getSelectedValue(); return path == null ? null : new Item(shortName(path), path, false); }
+        if (tree.getLastSelectedPathComponent() instanceof DefaultMutableTreeNode node && node.getUserObject() instanceof Item item) return item;
+        return new Item("Script.pvf", "", true);
+    }
+    private void chooseCreate(Item item, boolean directory) {
+        if (workspace == null || busy || item == null) return;
+        String parent = item.directory() ? item.path() : item.path().contains("/") ? item.path().substring(0, item.path().lastIndexOf('/')) : "";
+        String path = JOptionPane.showInputDialog(this, "PVF 内的新路径：", directory ? "新建文件夹" : "新建文件", JOptionPane.PLAIN_MESSAGE,
+                null, null, (parent.isEmpty() ? "" : parent + "/") + (directory ? "new_folder" : "new.etc")) instanceof String text ? text : null;
+        if (path == null) return;
+        createEntry(path, directory);
+    }
+    void createEntry(String path, boolean directory) {
+        if (workspace == null || busy) return;
+        PvfWorkspace current = workspace; Charset charset = selectedCharset();
+        runTask(directory ? "创建文件夹…" : "创建文件…", progress -> {
+            if (directory) current.createDirectory(path); else current.createTextFile(path, charset);
+            return buildDirectories(current, progress);
+        }, updated -> {
+            refreshFileTree(updated, path);
+            status.setText("已在草稿中创建：" + path + (directory ? "；空文件夹仅保存在工作区，加入文件后随导出写入。" : ""));
+            if (!directory) openEntry(path);
+        }, () -> {});
+    }
+    private void chooseRename(Item item) {
+        if (workspace == null || busy || item == null || item.path().isEmpty()) return;
+        String path = JOptionPane.showInputDialog(this, "PVF 内的新路径（配置正文中的引用不会自动改写）：", item.path());
+        if (path != null) renameEntry(item.path(), path);
+    }
+    void renameEntry(String from, String to) {
+        if (workspace == null || busy) return;
+        PvfWorkspace current = workspace;
+        boolean subtree;
+        try { subtree = !current.contains(from); } catch (IOException invalid) { showError(invalid); return; }
+        runTask("重命名并保存目录草稿…", progress -> {
+            current.rename(from, to); return buildDirectories(current, progress);
+        }, updated -> {
+            String oldPath, newPath;
+            try { oldPath = studio.pvf.core.PvfArchive.normalizePath(from); newPath = studio.pvf.core.PvfArchive.normalizePath(to); }
+            catch (IOException invalid) { throw new IllegalStateException(invalid); }
+            Map<String, Session> renamed = new LinkedHashMap<>();
+            for (Session session : sessions.values()) {
+                if (session.path.equals(oldPath) || subtree && within(session.path, oldPath)) {
+                    session.path = newPath + session.path.substring(oldPath.length());
+                    int index = tabs.indexOfComponent(session.editor.getComponent());
+                    if (index >= 0) { tabs.setToolTipTextAt(index, session.path + " [" + session.charset.name() + "]"); tabs.decorate(session.editor.getComponent(), PvfFileIcons.forEntry(session.path, false, false)); }
+                    updateSessionTitle(session);
+                }
+                renamed.put(session.path, session);
+            }
+            sessions.clear(); sessions.putAll(renamed); closedTabs.removeIf(tab -> tab.path().equals(oldPath) || subtree && within(tab.path(), oldPath));
+            if (contentSearch != null) { contentSearch.dispose(); contentSearch = null; }
+            refreshFileTree(updated, newPath); updatePreview(); scheduleEditorStateSave();
+            status.setText("已在草稿中重命名：" + oldPath + " → " + newPath + "；请按需修改配置正文中的引用。");
+        }, () -> {});
+    }
+    private static boolean within(String path, String parent) { return path.equals(parent) || path.startsWith(parent + "/"); }
+    private void chooseDelete(Item item) {
+        if (workspace == null || busy || item == null || item.path().isEmpty()) return;
+        long count = item.directory() ? workspace.paths().stream().filter(path -> within(path, item.path())).count() : 1;
+        long unsaved = sessions.values().stream().filter(session -> (session.path.equals(item.path()) || item.directory() && within(session.path, item.path())) && session.isUnsaved()).count();
+        if (JOptionPane.showConfirmDialog(this, "从草稿中删除 " + item.path() + "？\n包含 " + count + " 个文件"
+                + (unsaved == 0 ? "。" : "，并放弃 " + unsaved + " 个标签页的未保存编辑。")
+                + "\n导出时会移除这些条目，原包保持只读。", "删除文件或目录", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.OK_OPTION)
+            deleteEntry(item.path());
+    }
+    void deleteEntry(String path) {
+        if (workspace == null || busy) return;
+        PvfWorkspace current = workspace;
+        boolean subtree;
+        try { subtree = !current.contains(path); } catch (IOException invalid) { showError(invalid); return; }
+        runTask("删除并保存目录草稿…", progress -> {
+            current.delete(path); return buildDirectories(current, progress);
+        }, updated -> {
+            String canonical;
+            try { canonical = studio.pvf.core.PvfArchive.normalizePath(path); } catch (IOException invalid) { throw new IllegalStateException(invalid); }
+            tabs.runBatch(() -> {
+                for (Session session : List.copyOf(sessions.values())) if (session.path.equals(canonical) || subtree && within(session.path, canonical)) {
+                    sessions.remove(session.path); tabs.remove(session.editor.getComponent()); releaseSession(session);
+                }
+            });
+            closedTabs.removeIf(tab -> tab.path().equals(canonical) || subtree && within(tab.path(), canonical));
+            if (contentSearch != null) { contentSearch.dispose(); contentSearch = null; }
+            refreshFileTree(updated, canonical.contains("/") ? canonical.substring(0, canonical.lastIndexOf('/')) : "");
+            updatePreview(); scheduleEditorStateSave(); status.setText("已在草稿中删除：" + canonical + "；导出新包后生效。");
+        }, () -> {});
+    }
+    private void refreshFileTree(Map<String,List<Item>> updated, String selection) {
+        Set<String> expanded = new TreeSet<>(Comparator.comparingInt(String::length).thenComparing(String::compareTo));
+        for (int row = 0; row < tree.getRowCount(); row++) {
+            var path = tree.getPathForRow(row);
+            if (tree.isExpanded(path) && path.getLastPathComponent() instanceof DefaultMutableTreeNode node && node.getUserObject() instanceof Item item) expanded.add(item.path());
+        }
+        directories = updated;
+        DefaultMutableTreeNode root = node(new Item(workspace.archive().sourcePath().getFileName().toString(), "", true));
+        tree.setModel(new DefaultTreeModel(root)); loadChildren(root); tree.expandRow(0);
+        for (String path : expanded) { var node = findTreeNode(root, path); if (node != null) tree.expandPath(new javax.swing.tree.TreePath(node.getPath())); }
+        String normalized = selection.replace('\\', '/').toLowerCase(Locale.ROOT);
+        var selected = findTreeNode(root, normalized);
+        if (selected != null) { var path = new javax.swing.tree.TreePath(selected.getPath()); tree.setSelectionPath(path); tree.scrollPathToVisible(path); }
+        updatePathSearch(); updateButtons();
+    }
+    private DefaultMutableTreeNode findTreeNode(DefaultMutableTreeNode root, String path) {
+        DefaultMutableTreeNode node = root;
+        if (path.isEmpty()) return root;
+        for (String segment : path.split("/")) {
+            loadChildren(node); DefaultMutableTreeNode next = null;
+            for (int i = 0; i < node.getChildCount(); i++) if (node.getChildAt(i) instanceof DefaultMutableTreeNode child && child.getUserObject() instanceof Item item && item.label().equals(segment)) { next = child; break; }
+            if (next == null) return null; node = next;
+        }
+        return node;
+    }
+
     private void updatePathSearch() {
         String query = pathSearch.getText().toLowerCase(Locale.ROOT).trim();
         long version = ++searchVersion;
@@ -684,7 +864,7 @@ final class PvfStudioFrame extends JFrame {
         PvfWorkspace current = workspace;
         // Metadata-only search: do not create documents or decrypt payloads.
         io.execute(() -> {
-            List<String> matches = current.archive().entries().stream().map(PvfEntry::path)
+            List<String> matches = current.paths().stream()
                     .filter(path -> path.contains(query)).sorted().toList();
             ApplicationManager.getApplication().invokeLater(() -> {
                 if (version != searchVersion || workspace != current) return;
@@ -700,16 +880,29 @@ final class PvfStudioFrame extends JFrame {
     }
     private void openEntry(String path, Charset charset, ClosedTab restore) {
         if (path == null || workspace == null || busy) return;
-        Session existing = sessions.get(path);
+        String canonical;
+        try { canonical = studio.pvf.core.PvfArchive.normalizePath(path); }
+        catch (IOException invalid) { showError(invalid); return; }
+        Session existing = sessions.get(canonical);
         if (existing != null) { tabs.finishCycle(); tabs.setSelectedComponent(existing.editor.getComponent()); focusSelectedEditor(); return; }
         PvfWorkspace current = workspace;
-        runTask("读取 " + path + "…", () -> readEditorText(current, path, charset),
-                raw -> createSession(path, charset, raw, restore));
+        runTask("读取 " + canonical + "…", () -> readEditorText(current, canonical, charset),
+                raw -> createSession(canonical, charset, raw, restore));
     }
 
     private static String readEditorText(PvfWorkspace workspace, String path, Charset charset) throws IOException {
+        byte[] bytes = workspace.readBytes(path);
+        if (studio.pvf.workspace.BinaryAniCodec.isBinary(path, bytes)) {
+            try { return workspace.readText(path, charset); }
+            catch (studio.pvf.workspace.BinaryAniCodec.FormatException unsupported) {
+                return studio.pvf.workspace.BinaryView.render(bytes, unsupported.getMessage());
+            }
+        }
+        if (!studio.pvf.workspace.BinaryScriptCodec.isScript(bytes)) {
+            for (byte b : bytes) if (b == 0) return studio.pvf.workspace.BinaryView.render(bytes);
+        }
         String raw = workspace.readText(path, charset);
-        if (raw.indexOf('\0') >= 0) throw new IOException("内容包含 NUL，当前只支持文本编辑：" + path);
+        if (raw.indexOf('\0') >= 0) return studio.pvf.workspace.BinaryView.render(bytes);
         return raw;
     }
 
@@ -720,7 +913,8 @@ final class PvfStudioFrame extends JFrame {
         Project editorProject = ProjectManager.getInstance().getDefaultProject();
         Document document = EditorFactory.getInstance().createDocument(normalized);
         Newlines lineEndings = new Newlines(raw);
-        Editor editor = lineEndings.isMixed() ? EditorFactory.getInstance().createViewer(document, editorProject)
+        boolean binary = studio.pvf.workspace.BinaryView.isView(raw);
+        Editor editor = lineEndings.isMixed() || binary ? EditorFactory.getInstance().createViewer(document, editorProject)
                 : EditorFactory.getInstance().createEditor(document, editorProject);
         editor.getSettings().setLineNumbersShown(showLineNumbers);
         editor.getSettings().setUseSoftWraps(softWraps);
@@ -770,7 +964,7 @@ final class PvfStudioFrame extends JFrame {
             tabs.decorate(editor.getComponent(), PvfFileIcons.forEntry(path, false, false)); tabs.setSelectedComponent(editor.getComponent());
         });
         status.setText(path + " | " + charset.name() + " | " + session.newlines.description()
-                + (lineEndings.isMixed() ? " | 混合换行暂只读，避免隐式改写行尾" : " | Ctrl+S 保存草稿；导出生成新包"));
+                + (binary ? " | 二进制只读预览" : lineEndings.isMixed() ? " | 混合换行暂只读，避免隐式改写行尾" : " | Ctrl+S 保存草稿；导出生成新包"));
         updateButtons();
     }
 
@@ -854,8 +1048,9 @@ final class PvfStudioFrame extends JFrame {
         Session session = selectedSession(); if (session == null || busy) return;
         // Compare the mounted archive with this editor, not merely the last saved draft.
         runTask("读取原始内容…", () -> {
-            byte[] bytes = workspace.archive().readBytes(session.path);
-            return TextCodec.decode(bytes, session.charset);
+            if (studio.pvf.workspace.BinaryView.isView(session.persistedText))
+                return studio.pvf.workspace.BinaryView.render(workspace.readOriginalBytes(session.path));
+            return workspace.readOriginalText(session.path, session.charset);
         }, original -> showDiffDialog(new SimpleDiffRequest(session.path,
                 DiffContentFactory.getInstance().create(normalizeNewlines(original)),
                 DiffContentFactory.getInstance().create(session.editor.getDocument().getText()),
@@ -974,11 +1169,11 @@ final class PvfStudioFrame extends JFrame {
     private void updatePreview() {
         previewRefresh.stop(); Session selected = selectedSession();
         if (selected == null || workspace == null) { preview.setSource(null); return; }
+        if (studio.pvf.workspace.BinaryView.isView(selected.persistedText)) { preview.setSource(null); return; }
         PvfWorkspace current = workspace;
         Map<String, String> editors = new HashMap<>();
         for (Session session : sessions.values()) editors.put(session.path, session.editor.getDocument().getText());
-        Set<String> paths = new HashSet<>();
-        for (PvfEntry entry : current.archive().entries()) paths.add(entry.path());
+        Set<String> paths = current.paths();
         preview.setSource(new ResourcePreviewPanel.Source(selected.path, selected.editor.getDocument().getText(), path -> {
             String text = editors.get(path);
             return text != null ? text : paths.contains(path) ? current.readText(path, selected.charset) : null;
@@ -1075,6 +1270,7 @@ final class PvfStudioFrame extends JFrame {
         io.shutdown(); dispose(); if (exitOnClose) ApplicationManager.getApplication().exit();
     }
     @Override public void dispose() {
+        taskProgress.clear();
         KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(tabKeyDispatcher);
         tabShortcuts.keySet().forEach(action -> action.unregisterCustomShortcutSet(getRootPane())); super.dispose();
     }
@@ -1111,17 +1307,24 @@ final class PvfStudioFrame extends JFrame {
     }
 
     private <T> void runTask(String label, IoTask<T> task, Consumer<T> success, Runnable onFailure) {
+        runTask(label, ignored -> task.run(), success, onFailure);
+    }
+
+    private <T> void runTask(String label, ProgressTask<T> task, Consumer<T> success, Runnable onFailure) {
         busy = true; status.setText(label); updateButtons();
+        TaskProgress.Ticket progress = taskProgress.start(label);
         io.execute(() -> {
             try {
-                T value = task.run();
+                T value = task.run(progress::update);
                 ApplicationManager.getApplication().invokeLater(() -> {
+                    taskProgress.finish(progress);
                     busy = false; updateButtons();
                     try { success.accept(value); }
                     catch (Throwable callbackFailure) { onFailure.run(); showError(callbackFailure); }
                 });
             } catch (Throwable failure) {
                 ApplicationManager.getApplication().invokeLater(() -> {
+                    taskProgress.finish(progress);
                     busy = false; updateButtons(); onFailure.run(); showError(failure);
                 });
             }
@@ -1146,9 +1349,10 @@ final class PvfStudioFrame extends JFrame {
     private record Snapshot(Session session, String editorText, String encodedText, long stamp) {}
     private record ClosedTab(String path, Charset charset, int index, int caret, int scrollX, int scrollY) {}
     @FunctionalInterface private interface IoTask<T> { T run() throws Exception; }
+    @FunctionalInterface private interface ProgressTask<T> { T run(studio.pvf.core.ProgressListener progress) throws Exception; }
 
     private static final class Session {
-        final String path; final Charset charset; final Editor editor; final Newlines newlines;
+        String path; final Charset charset; final Editor editor; final Newlines newlines;
         AnAction saveAction;
         AnAction undoAction;
         AnAction redoAction;

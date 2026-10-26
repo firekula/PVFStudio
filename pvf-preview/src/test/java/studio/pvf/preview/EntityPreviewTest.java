@@ -10,6 +10,24 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EntityPreviewTest {
+    @Test void actionBodySubLayersAndOffsetsRenderForEveryFlattenedMapSpawn() throws Exception {
+        Map<String,String> data=base();data.put("monster/monster.lst","1 `g/a.mob`");data.put("passiveobject/passiveobject.lst","2 `g/b.obj`");
+        data.put("monster/g/a.mob","[waiting action] `action/stay.act`");data.put("passiveobject/g/b.obj","[basic action] `action/stay.act`");
+        for(String prefix:List.of("monster/g/","passiveobject/g/")) {
+            data.put(prefix+"action/stay.act","[MOTION] [BASE ANI] `../animation/body.ani` [SUB ANI] `../animation/back.ani` 0 -10 [/SUB ANI] "
+                    +"[SUB ANI WITH XYZ] `../animation/front.ani` 0 100 3 2 5 [/SUB ANI WITH XYZ] [SUB ANI] `../animation/delayed.ani` 1 101 [/SUB ANI] [/MOTION] "
+                    +"[BEHAVIOR] [SET ACTION] `never.act` [/BEHAVIOR]");
+            data.put(prefix+"animation/body.ani",ani("green.img",0,-4,1));data.put(prefix+"animation/back.ani",ani("blue.img",-1,-5,1));
+            data.put(prefix+"animation/front.ani",ani("yellow.img",0,-3,1));
+        }
+        var frame=scene(data,"[monster] 1 1 0 20 30 0 1 1 `[fixed]` `[normal]` 1 1 0 60 30 0 1 1 `[fixed]` `[normal]` [/monster] "
+                +"[passive object] 2 100 30 0 2 140 30 0 [/passive object]").render(0,false);
+        assertEquals(4,frame.entities().size());assertEquals(12,frame.draws().size());
+        assertTrue(frame.entities().stream().allMatch(e->e.problem().isEmpty()&&e.info().animations().size()==3));
+        assertTrue(frame.warnings().stream().allMatch(w->w.contains("非零起始帧")));
+        var image=paint(frame);assertEquals(Color.BLUE.getRGB(),image.getRGB(19,145));assertEquals(Color.GREEN.getRGB(),image.getRGB(20,146));
+        assertEquals(Color.YELLOW.getRGB(),image.getRGB(23,144));assertEquals(Color.YELLOW.getRGB(),image.getRGB(143,144));
+    }
     @Test void clientGolemRecipesSupplyMissingLimbsAndReplaceInheritedSteelSlots() throws Exception {
         Map<String, String> data = base(); data.put("monster/monster.lst", "31 `stone.mob` 34 `bronze.mob`");
         data.put("monster/stone.mob", "[waiting motion] `body.ani`"); data.put("monster/bronze.mob", "[waiting motion] `body.ani`");

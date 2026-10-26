@@ -15,10 +15,11 @@ public final class PvfTextSearch {
         if (query.isEmpty() || limit < 1) throw new IllegalArgumentException("需要搜索内容和正数结果上限");
         var pattern = Pattern.compile(Pattern.quote(query), matchCase ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
         String filter = pathFilter.toLowerCase(Locale.ROOT).trim();
-        List<Hit> hits = new ArrayList<>(); int scanned = 0, skipped = 0;
+        List<Hit> hits = new ArrayList<>(); int scanned = 0, skipped = 0, processed = 0;
         for (String path : paths) {
             if (cancelled.getAsBoolean()) return new Result(List.copyOf(hits), scanned, skipped, true, false);
             if (!path.toLowerCase(Locale.ROOT).contains(filter)) continue;
+            if ((++processed & 127) == 0) progress.accept(processed);
             String text;
             try { text = reader.read(path); }
             catch (CharacterCodingException invalid) { skipped++; continue; }
@@ -34,8 +35,9 @@ public final class PvfTextSearch {
                         (start > lineStart ? "…" : "") + text.substring(start, Math.min(end, start + 200))));
                 if (hits.size() >= limit) return new Result(List.copyOf(hits), scanned + 1, skipped, false, true);
             }
-            scanned++; if ((scanned & 127) == 0) progress.accept(scanned);
+            scanned++;
         }
+        progress.accept(processed);
         return new Result(List.copyOf(hits), scanned, skipped, cancelled.getAsBoolean(), false);
     }
     @FunctionalInterface public interface Reader { String read(String path) throws IOException; }
