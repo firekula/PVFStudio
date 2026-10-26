@@ -10,6 +10,15 @@ import static org.junit.jupiter.api.Assertions.*;
 class EditorSessionStateTest {
     @TempDir Path directory;
 
+    @Test void viewMetadataRoundTripsAndUnknownMetadataKeepsTheTab() throws Exception {
+        var state = new EditorSessionState(List.of(new EditorSessionState.Tab("x.map", "GBK", 7, 4, 8, "SPLIT", .7)), "x.map");
+        state.write(directory); assertEquals(state, EditorSessionState.read(directory).state());
+        String raw = Files.readString(directory.resolve(EditorSessionState.FILE_NAME));
+        Files.writeString(directory.resolve(EditorSessionState.FILE_NAME), raw.replace("SPLIT", "FUTURE"));
+        var tab = EditorSessionState.read(directory).state().tabs().getFirst();
+        assertEquals("x.map", tab.path()); assertEquals("CODE", tab.viewMode());
+    }
+
     @Test void roundTripPreservesOrderUnicodeEncodingActiveTabAndIndependentPositions() throws Exception {
         var original = new EditorSessionState(List.of(
                 new EditorSessionState.Tab("map/森林/104.map", "GBK", 400, 80, 1200),

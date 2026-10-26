@@ -36,6 +36,19 @@ final class TabWorkbenchSmoke {
             }
             var initial = edt(() -> order(tabs));
             edt(() -> {
+                var surface = (VisualEditorSurface) initial.get(5); Editor mapEditor = editor(surface);
+                var document = mapEditor.getDocument(); String text = document.getText(); long stamp = document.getModificationStamp();
+                mapEditor.getCaretModel().moveToOffset(12);
+                for (var mode : VisualEditorSurface.Mode.values()) {
+                    surface.setMode(mode); check(editor(surface) == mapEditor && mapEditor.getDocument() == document, "Mode recreated editor/document");
+                }
+                check(document.getText().equals(text) && document.getModificationStamp() == stamp && mapEditor.getCaretModel().getOffset() == 12,
+                        "Mode switching edited source or caret");
+                frame.openEntry("MAP/LORIEN/104.MAP");
+                check(tabs.getTabCount() == paths.size() && tabs.getSelectedComponent() == surface, "Duplicate MAP navigation created a second editor");
+                surface.setMode(VisualEditorSurface.Mode.CODE); return null;
+            });
+            edt(() -> {
                 for (int i : new int[]{0, 9, 2, 8, 1, 0}) {
                     tabs.setSelectedIndex(i); check(order(tabs).equals(initial), "Selection changed tab order");
                     check(tabs.getTabRunCount() == 1, "Tabs wrapped into moving rows");
@@ -148,7 +161,7 @@ final class TabWorkbenchSmoke {
         stroke(target, KeyEvent.VK_TAB, InputEvent.CTRL_DOWN_MASK);
         queue.postEvent(new KeyEvent(target, KeyEvent.KEY_RELEASED, now, 0, KeyEvent.VK_CONTROL, KeyEvent.CHAR_UNDEFINED));
     }
-    static Editor editor(Component tab) { return Arrays.stream(EditorFactory.getInstance().getAllEditors()).filter(e -> e.getComponent() == tab).findFirst().orElseThrow(); }
+    static Editor editor(Component tab) { return Arrays.stream(EditorFactory.getInstance().getAllEditors()).filter(e -> e.getComponent() == (tab instanceof VisualEditorSurface surface ? surface.code() : tab)).findFirst().orElseThrow(); }
     static void edit(Editor editor, String text) {
         CommandProcessor.getInstance().executeCommand(editor.getProject(), () -> ApplicationManager.getApplication().runWriteAction(() ->
                 editor.getDocument().insertString(editor.getDocument().getTextLength(), text)), "Tab scope smoke edit", null);

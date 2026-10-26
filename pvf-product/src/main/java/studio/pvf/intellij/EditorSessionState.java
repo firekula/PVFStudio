@@ -21,10 +21,13 @@ record EditorSessionState(List<EditorSessionState.Tab> tabs, String selectedPath
             selectedPath = tabs.isEmpty() ? "" : tabs.getFirst().path();
     }
 
-    record Tab(String path, String charset, int caret, int scrollX, int scrollY) {
+    record Tab(String path, String charset, int caret, int scrollX, int scrollY, String viewMode, double splitRatio) {
+        Tab(String path, String charset, int caret, int scrollX, int scrollY) { this(path, charset, caret, scrollX, scrollY, "CODE", .5); }
         Tab {
             Objects.requireNonNull(path); Objects.requireNonNull(charset);
             caret = Math.max(0, caret); scrollX = Math.max(0, scrollX); scrollY = Math.max(0, scrollY);
+            if (!Set.of("CODE", "SPLIT", "DESIGN").contains(viewMode == null ? "" : viewMode)) viewMode = "CODE";
+            splitRatio = Double.isFinite(splitRatio) ? Math.clamp(splitRatio, .1, .9) : .5;
         }
     }
     record ReadResult(EditorSessionState state, List<String> warnings) {
@@ -54,7 +57,8 @@ record EditorSessionState(List<EditorSessionState.Tab> tabs, String selectedPath
                 catch (IllegalArgumentException invalid) { warnings.add("已跳过编码无效的标签：" + path); continue; }
                 paths.add(path);
                 tabs.add(new Tab(path, charset, offset(properties, prefix + "caret"),
-                        offset(properties, prefix + "scrollX"), offset(properties, prefix + "scrollY")));
+                        offset(properties, prefix + "scrollX"), offset(properties, prefix + "scrollY"),
+                        properties.getProperty(prefix + "viewMode", "CODE"), ratio(properties, prefix + "splitRatio")));
             }
             return new ReadResult(new EditorSessionState(tabs, properties.getProperty("selected", "")), warnings);
         } catch (IOException | IllegalArgumentException failure) {
@@ -65,6 +69,10 @@ record EditorSessionState(List<EditorSessionState.Tab> tabs, String selectedPath
     private static int offset(Properties properties, String key) {
         try { return Math.max(0, Integer.parseInt(properties.getProperty(key, "0"))); }
         catch (NumberFormatException invalid) { return 0; }
+    }
+    private static double ratio(Properties properties, String key) {
+        try { return Double.parseDouble(properties.getProperty(key, ".5")); }
+        catch (NumberFormatException invalid) { return .5; }
     }
 
     void write(Path directory) throws IOException {
@@ -77,6 +85,8 @@ record EditorSessionState(List<EditorSessionState.Tab> tabs, String selectedPath
             properties.setProperty(prefix + "caret", Integer.toString(tab.caret()));
             properties.setProperty(prefix + "scrollX", Integer.toString(tab.scrollX()));
             properties.setProperty(prefix + "scrollY", Integer.toString(tab.scrollY()));
+            properties.setProperty(prefix + "viewMode", tab.viewMode());
+            properties.setProperty(prefix + "splitRatio", Double.toString(tab.splitRatio()));
         }
         Path temporary = Files.createTempFile(directory, "editor-session-", ".tmp");
         try {

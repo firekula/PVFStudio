@@ -68,6 +68,9 @@ final class PvfStudioFrame extends JFrame {
     private final ExecutorService io = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "pvf-studio-io"); t.setDaemon(true); return t;
     });
+    private final ExecutorService sceneWorker = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "pvf-scene-parser"); t.setDaemon(true); return t;
+    });
     private final JMenuItem open = new JMenuItem("打开 PVF…");
     private final JMenuItem save = new JMenuItem("保存草稿");
     private final JMenuItem diff = new JMenuItem("查看差异");
@@ -252,7 +255,10 @@ final class PvfStudioFrame extends JFrame {
     private void focusSelectedEditor() {
         Session selected = selectedSession();
         if (selected != null) ApplicationManager.getApplication().invokeLater(() -> {
-            if (!selected.editor.isDisposed() && selected == selectedSession()) selected.editor.getContentComponent().requestFocusInWindow();
+            if (!selected.editor.isDisposed() && selected == selectedSession()) {
+                if (selected.surface != null && selected.surface.mode() == VisualEditorSurface.Mode.DESIGN) selected.surface.focusContent();
+                else selected.editor.getContentComponent().requestFocusInWindow();
+            }
         });
     }
 
@@ -359,6 +365,7 @@ final class PvfStudioFrame extends JFrame {
 
     private void findInEditor(boolean replace) {
         Session selected = selectedSession(); if (selected == null || replace && selected.editor.isViewer()) return;
+        if (selected.surface != null && selected.surface.mode() == VisualEditorSurface.Mode.DESIGN) selected.surface.setMode(VisualEditorSurface.Mode.SPLIT);
         EditorSearchSession search = EditorSearchSession.get(selected.editor);
         if (search == null) search = EditorSearchSession.start(selected.editor, selected.editor.getProject());
         search.getFindModel().setReplaceState(replace);
@@ -380,7 +387,8 @@ final class PvfStudioFrame extends JFrame {
     private void openSearchHit(studio.pvf.workspace.PvfTextSearch.Hit hit, Charset charset, String query, boolean matchCase) {
         if (workspace == null || busy) return;
         Consumer<Session> navigate = session -> {
-            tabs.setSelectedComponent(session.editor.getComponent());
+            if (session.surface != null && session.surface.mode() == VisualEditorSurface.Mode.DESIGN) session.surface.setMode(VisualEditorSurface.Mode.SPLIT);
+            tabs.setSelectedComponent(session.component());
             String text = session.editor.getDocument().getText();
             if (hit.end() > text.length() || !text.regionMatches(!matchCase, hit.start(), query, 0, query.length())) {
                 status.setText("搜索后正文已变化，请重新搜索：" + hit.path()); return;
@@ -590,7 +598,7 @@ final class PvfStudioFrame extends JFrame {
                         Charset actual = studio.pvf.workspace.PvfTextEncoding.restoredCharset(loaded.archive().format(), loaded.readBytes(tab.path()), savedCharset);
                         EditorSessionState.Tab position = tab;
                         if (!actual.equals(savedCharset)) {
-                            position = new EditorSessionState.Tab(tab.path(), actual.name(), tab.caret(), tab.scrollX(), tab.scrollY());
+                            position = new EditorSessionState.Tab(tab.path(), actual.name(), tab.caret(), tab.scrollX(), tab.scrollY(), tab.viewMode(), tab.splitRatio());
                             warnings.add(tab.path() + "：已按韩文标签将旧 GBK 编码修正为 MS949");
                         }
                         restored.add(new RestoredTab(position, readEditorText(loaded, tab.path(), actual)));
@@ -623,10 +631,10 @@ final class PvfStudioFrame extends JFrame {
                 for (RestoredTab restored : loaded.tabs()) {
                     EditorSessionState.Tab tab = restored.position();
                     createSession(tab.path(), Charset.forName(tab.charset()), restored.raw(),
-                            new ClosedTab(tab.path(), Charset.forName(tab.charset()), tabs.getTabCount(), tab.caret(), tab.scrollX(), tab.scrollY()));
+                            new ClosedTab(tab.path(), Charset.forName(tab.charset()), tabs.getTabCount(), tab.caret(), tab.scrollX(), tab.scrollY(), tab.viewMode(), tab.splitRatio()));
                 }
                 Session selected = sessions.get(loaded.selectedPath());
-                if (selected != null) tabs.setSelectedComponent(selected.editor.getComponent());
+                if (selected != null) tabs.setSelectedComponent(selected.component());
                 else if (tabs.getTabCount() > 0) tabs.setSelectedIndex(0);
             });
             resumeEditorState();
@@ -786,8 +794,8 @@ final class PvfStudioFrame extends JFrame {
             for (Session session : sessions.values()) {
                 if (session.path.equals(oldPath) || subtree && within(session.path, oldPath)) {
                     session.path = newPath + session.path.substring(oldPath.length());
-                    int index = tabs.indexOfComponent(session.editor.getComponent());
-                    if (index >= 0) { tabs.setToolTipTextAt(index, session.path + " [" + session.charset.name() + "]"); tabs.decorate(session.editor.getComponent(), PvfFileIcons.forEntry(session.path, false, false)); }
+                    int index = tabs.indexOfComponent(session.component());
+                    if (index >= 0) { tabs.setToolTipTextAt(index, session.path + " [" + session.charset.name() + "]"); tabs.decorate(session.component(), PvfFileIcons.forEntry(session.path, false, false)); }
                     updateSessionTitle(session);
                 }
                 renamed.put(session.path, session);
@@ -820,7 +828,7 @@ final class PvfStudioFrame extends JFrame {
             try { canonical = studio.pvf.core.PvfArchive.normalizePath(path); } catch (IOException invalid) { throw new IllegalStateException(invalid); }
             tabs.runBatch(() -> {
                 for (Session session : List.copyOf(sessions.values())) if (session.path.equals(canonical) || subtree && within(session.path, canonical)) {
-                    sessions.remove(session.path); tabs.remove(session.editor.getComponent()); releaseSession(session);
+                    sessions.remove(session.path); tabs.remove(session.component()); releaseSession(session);
                 }
             });
             closedTabs.removeIf(tab -> tab.path().equals(canonical) || subtree && within(tab.path(), canonical));
@@ -884,7 +892,7 @@ final class PvfStudioFrame extends JFrame {
         try { canonical = studio.pvf.core.PvfArchive.normalizePath(path); }
         catch (IOException invalid) { showError(invalid); return; }
         Session existing = sessions.get(canonical);
-        if (existing != null) { tabs.finishCycle(); tabs.setSelectedComponent(existing.editor.getComponent()); focusSelectedEditor(); return; }
+        if (existing != null) { tabs.finishCycle(); tabs.setSelectedComponent(existing.component()); focusSelectedEditor(); return; }
         PvfWorkspace current = workspace;
         runTask("读取 " + canonical + "…", () -> readEditorText(current, canonical, charset),
                 raw -> createSession(canonical, charset, raw, restore));
@@ -922,37 +930,40 @@ final class PvfStudioFrame extends JFrame {
         if (editor instanceof EditorEx ex) ex.setHighlighter(new LexerEditorHighlighter(
                 new PvfSyntaxHighlighter(), EditorColorsManager.getInstance().getGlobalScheme()));
         Session session = new Session(path, charset, raw, editor);
+        configureVisualSession(session);
         session.fileEditor = TextEditorProvider.getInstance().getTextEditor(editor);
         session.saveAction = new DumbAwareAction() {
             @Override public void actionPerformed(AnActionEvent event) { if (!busy) saveSessions(List.of(session), null); }
         };
         session.saveAction.registerCustomShortcutSet(new CustomShortcutSet(
-                KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK)), editor.getComponent());
+                KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK)), session.component());
         session.undoAction = createUndoAction(session, false);
         session.undoAction.registerCustomShortcutSet(new CustomShortcutSet(
-                KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK)), editor.getComponent());
+                KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK)), session.component());
         session.redoAction = createUndoAction(session, true);
         session.redoAction.registerCustomShortcutSet(new CustomShortcutSet(
                 new KeyboardShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_Y, InputEvent.CTRL_DOWN_MASK), null),
                 new KeyboardShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_Z,
                         InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), null)),
-                editor.getComponent());
-        tabShortcuts.forEach((action, shortcut) -> action.registerCustomShortcutSet(shortcut, editor.getComponent()));
+                session.component());
+        tabShortcuts.forEach((action, shortcut) -> action.registerCustomShortcutSet(shortcut, session.component()));
         sessions.put(path, session);
         document.addDocumentListener(new DocumentListener() {
             public void documentChanged(DocumentEvent event) {
                 updateSessionTitle(session); previewRefresh.restart(); scheduleEditorStateSave();
+                if (session.bridge != null) session.bridge.refresh();
             }
         });
         editor.getCaretModel().addCaretListener(new CaretListener() {
             @Override public void caretPositionChanged(CaretEvent event) { scheduleEditorStateSave(); }
         });
         editor.getScrollingModel().addVisibleAreaListener(event -> scheduleEditorStateSave());
-        editor.getComponent().addComponentListener(new ComponentAdapter() {
+        session.component().addComponentListener(new ComponentAdapter() {
             @Override public void componentShown(ComponentEvent event) { restoreSelectedViewport(); }
             @Override public void componentResized(ComponentEvent event) { restoreSelectedViewport(); }
         });
         if (restore != null) {
+            if (session.surface != null) session.surface.restore(restore.viewMode(), restore.splitRatio());
             session.pendingViewport = new Point(restore.scrollX(), restore.scrollY());
             editor.getCaretModel().moveToOffset(Math.min(restore.caret(), document.getTextLength()));
         }
@@ -960,12 +971,35 @@ final class PvfStudioFrame extends JFrame {
         tabs.finishCycle();
         tabs.runBatch(() -> {
             int index = restore == null ? tabs.getTabCount() : Math.min(restore.index(), tabs.getTabCount());
-            tabs.insertTab(shortName(path), null, editor.getComponent(), path + " [" + charset.name() + "]", index);
-            tabs.decorate(editor.getComponent(), PvfFileIcons.forEntry(path, false, false)); tabs.setSelectedComponent(editor.getComponent());
+            tabs.insertTab(shortName(path), null, session.component(), path + " [" + charset.name() + "]", index);
+            tabs.decorate(session.component(), PvfFileIcons.forEntry(path, false, false)); tabs.setSelectedComponent(session.component());
         });
         status.setText(path + " | " + charset.name() + " | " + session.newlines.description()
                 + (binary ? " | 二进制只读预览" : lineEndings.isMixed() ? " | 混合换行暂只读，避免隐式改写行尾" : " | Ctrl+S 保存草稿；导出生成新包"));
         updateButtons();
+    }
+
+    private void configureVisualSession(Session session) {
+        if (!(session.path.endsWith(".map") || session.path.endsWith(".dgn")) || studio.pvf.workspace.BinaryView.isView(session.persistedText)) return;
+        JLabel visual = new JLabel("正在解析场景…", SwingConstants.CENTER);
+        session.surface = new VisualEditorSurface(session.editor.getComponent(), visual, this::scheduleEditorStateSave);
+        session.bridge = new SceneDocumentBridge<>(new SceneDocumentBridge.Port() {
+            public String text() { return session.editor.getDocument().getText(); }
+            public long version() { return session.editor.getDocument().getModificationStamp(); }
+            public boolean writable() { return !busy && !session.editor.isViewer() && !session.editor.isDisposed(); }
+            public void write(String label, String value) {
+                com.intellij.openapi.command.CommandProcessor.getInstance().executeCommand(null,
+                    () -> ApplicationManager.getApplication().runWriteAction(() -> session.editor.getDocument().setText(value)), label, null);
+            }
+        }, text -> {
+            var source = studio.pvf.sceneedit.SourceDocument.parse(text);
+            if (!source.diagnostics().isEmpty()) throw new IOException(source.diagnostics().getFirst().message());
+            return session.path.endsWith(".map") ? studio.pvf.sceneedit.MapDocument.parse(session.path, text)
+                    : studio.pvf.sceneedit.DungeonDocument.parse(session.path, text);
+        }, sceneWorker, SwingUtilities::invokeLater, state -> {
+            visual.setText(state.error().isEmpty() ? "场景已解析 · 可切换代码与设计" : state.error());
+        });
+        session.bridge.refresh();
     }
 
     private void saveDrafts(Runnable after) {
@@ -1102,7 +1136,7 @@ final class PvfStudioFrame extends JFrame {
     private Session selectedSession() {
         return sessionFor(tabs.getSelectedComponent());
     }
-    private Session sessionFor(Component component) { return sessions.values().stream().filter(s -> s.editor.getComponent() == component).findFirst().orElse(null); }
+    private Session sessionFor(Component component) { return sessions.values().stream().filter(s -> s.component() == component).findFirst().orElse(null); }
 
     private EditorSessionState captureEditorState() {
         List<EditorSessionState.Tab> saved = new ArrayList<>();
@@ -1112,7 +1146,8 @@ final class PvfStudioFrame extends JFrame {
             Point pending = session.pendingViewport;
             saved.add(new EditorSessionState.Tab(session.path, session.charset.name(), session.editor.getCaretModel().getOffset(),
                     pending == null ? session.editor.getScrollingModel().getHorizontalScrollOffset() : pending.x,
-                    pending == null ? session.editor.getScrollingModel().getVerticalScrollOffset() : pending.y));
+                    pending == null ? session.editor.getScrollingModel().getVerticalScrollOffset() : pending.y,
+                    session.surface == null ? "CODE" : session.surface.mode().name(), session.surface == null ? .5 : session.surface.ratio()));
         }
         Session selected = selectedSession();
         return new EditorSessionState(saved, selected == null ? "" : selected.path);
@@ -1198,14 +1233,14 @@ final class PvfStudioFrame extends JFrame {
         if (targets.isEmpty()) return;
         tabs.finishCycle();
         Runnable close = () -> {
-            List<Component> components = targets.stream().map(s -> (Component) s.editor.getComponent()).toList();
+            List<Component> components = targets.stream().map(s -> (Component) s.component()).toList();
             Component preferred = tabs.preferredAfterClosing(components);
-            List<ClosedTab> history = targets.stream().map(s -> new ClosedTab(s.path, s.charset, tabs.indexOfComponent(s.editor.getComponent()),
+            List<ClosedTab> history = targets.stream().map(s -> new ClosedTab(s.path, s.charset, tabs.indexOfComponent(s.component()),
                     s.editor.getCaretModel().getOffset(), s.pendingViewport == null ? s.editor.getScrollingModel().getHorizontalScrollOffset() : s.pendingViewport.x,
-                    s.pendingViewport == null ? s.editor.getScrollingModel().getVerticalScrollOffset() : s.pendingViewport.y)).toList();
+                    s.pendingViewport == null ? s.editor.getScrollingModel().getVerticalScrollOffset() : s.pendingViewport.y, s.surface == null ? "CODE" : s.surface.mode().name(), s.surface == null ? .5 : s.surface.ratio())).toList();
             tabs.runBatch(() -> {
                 for (Session session : targets) {
-                    sessions.remove(session.path); tabs.remove(session.editor.getComponent()); releaseSession(session);
+                    sessions.remove(session.path); tabs.remove(session.component()); releaseSession(session);
                 }
                 if (preferred != null && tabs.indexOfComponent(preferred) >= 0) tabs.setSelectedComponent(preferred);
             });
@@ -1224,7 +1259,7 @@ final class PvfStudioFrame extends JFrame {
     }
 
     private void updateSessionTitle(Session session) {
-        int index = tabs.indexOfComponent(session.editor.getComponent());
+        int index = tabs.indexOfComponent(session.component());
         if (index >= 0) tabs.setTitleAt(index, (session.isUnsaved() ? "* " : "") + shortName(session.path));
         updateButtons();
     }
@@ -1267,7 +1302,7 @@ final class PvfStudioFrame extends JFrame {
         preview.close();
         releaseEditors();
         try { if (workspace != null) workspace.close(); } catch (IOException e) { showError(e); }
-        io.shutdown(); dispose(); if (exitOnClose) ApplicationManager.getApplication().exit();
+        io.shutdown(); sceneWorker.shutdownNow(); dispose(); if (exitOnClose) ApplicationManager.getApplication().exit();
     }
     @Override public void dispose() {
         taskProgress.clear();
@@ -1285,10 +1320,11 @@ final class PvfStudioFrame extends JFrame {
 
     private void releaseSession(Session session) {
         EditorSearchSession search = EditorSearchSession.get(session.editor); if (search != null) search.close();
-        tabShortcuts.keySet().forEach(action -> action.unregisterCustomShortcutSet(session.editor.getComponent()));
-        if (session.saveAction != null) session.saveAction.unregisterCustomShortcutSet(session.editor.getComponent());
-        if (session.undoAction != null) session.undoAction.unregisterCustomShortcutSet(session.editor.getComponent());
-        if (session.redoAction != null) session.redoAction.unregisterCustomShortcutSet(session.editor.getComponent());
+        tabShortcuts.keySet().forEach(action -> action.unregisterCustomShortcutSet(session.component()));
+        if (session.saveAction != null) session.saveAction.unregisterCustomShortcutSet(session.component());
+        if (session.undoAction != null) session.undoAction.unregisterCustomShortcutSet(session.component());
+        if (session.redoAction != null) session.redoAction.unregisterCustomShortcutSet(session.component());
+        if (session.bridge != null) session.bridge.close();
         EditorFactory.getInstance().releaseEditor(session.editor);
     }
 
@@ -1347,7 +1383,7 @@ final class PvfStudioFrame extends JFrame {
                           List<RestoredTab> tabs, String selectedPath, List<String> warnings) {}
     private record RestoredTab(EditorSessionState.Tab position, String raw) {}
     private record Snapshot(Session session, String editorText, String encodedText, long stamp) {}
-    private record ClosedTab(String path, Charset charset, int index, int caret, int scrollX, int scrollY) {}
+    private record ClosedTab(String path, Charset charset, int index, int caret, int scrollX, int scrollY, String viewMode, double splitRatio) {}
     @FunctionalInterface private interface IoTask<T> { T run() throws Exception; }
     @FunctionalInterface private interface ProgressTask<T> { T run(studio.pvf.core.ProgressListener progress) throws Exception; }
 
@@ -1357,6 +1393,9 @@ final class PvfStudioFrame extends JFrame {
         AnAction undoAction;
         AnAction redoAction;
         TextEditor fileEditor;
+        VisualEditorSurface surface;
+        SceneDocumentBridge<Object> bridge;
+        JComponent component() { return surface == null ? editor.getComponent() : surface; }
         String persistedText;
         long persistedStamp;
         Point pendingViewport;
