@@ -49,5 +49,5 @@
 
 - [x] Update native smoke for dropdowns and no scrolling, preserving candidate apply/undo/redo/export and all newline provenance checks.
 - [x] Verify real Client_test2 Lorien and NPK rendering at 1264 and 1024, all tabs, multiple roles and fallback. Run full Gradle check/product verification and Python validation.
-- [ ] One fresh final independent review; fix material findings with regression tests.
+- [x] One fresh final independent review; fix material findings with regression tests.
 - [ ] Package 0.14.2 and verify extracted portable product; document evidence and commit.

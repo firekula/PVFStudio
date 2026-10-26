@@ -133,6 +133,20 @@ class DungeonEditorPanelTest {
             assertTrue(hasColor(image,64,128,new Color(245,157,66)));assertTrue(hasColor(image,128,192,new Color(245,157,66)));
         }catch(Exception e){throw new RuntimeException(e);}});
     }
+    @Test void changingBossPoolPreservesUntouchedExplicitDuplicatesAndSource()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.text=h.text.replace("[map specification] 0 0 10", "[map specification] 0  0\t+10 10   0011");h.install();String before=h.text;
+            h.value("dgn-room-boss-maps","20, 21");h.click("dgn-apply-maps");
+            String expected=DungeonDocument.parse("dungeon/x.dgn",before).setCandidates(0,new Position(0,0),true,List.of(20,21)).applyTo(before);
+            assertEquals(expected,h.text,"Untouched ordinary IDs, multiplicity and formatting must survive a Boss edit");
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    @Test void diagnosticsDoNotReserveExtraRowsBelowFixedInspector()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.text="[maze info] [size] 3 1 [greed] `AAAAAA` [map specification] 0 0 10 [/map specification] [map specification] 1 0 11 [/map specification] [map specification] 2 0 20 [/map specification] [start map] 0 0 [/start map] [boss map] 2 0 [/boss map]";h.install();
+            assertTrue(h.document().diagnostics().size()>=3);var footer=((BorderLayout)h.panel.getLayout()).getLayoutComponent(BorderLayout.SOUTH);assertTrue(footer.getPreferredSize().height<40,"Diagnostics must not steal rows from fixed-page actions");
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
     @Test void largeLayoutKeepsFixedMapHeightAndEveryCellReachableByDropdown()throws Exception{
         SwingUtilities.invokeAndWait(() -> {try{
             var h=new Harness();h.text="[maze info] [size] 50 50 [greed] `"+"AA".repeat(2500)+"` [map specification] 49 49 10 [/map specification]";h.install();
