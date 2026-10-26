@@ -20,7 +20,9 @@ public final class EntityScript {
 
     public static Layout placements(String text) {
         List<Spawn> spawns = new ArrayList<>(); List<String> warnings = new ArrayList<>();
+        Map<String,Integer> occurrences = new HashMap<>();
         for (var section : ResourceScript.sections(text)) {
+            int occurrence=occurrences.merge(section.tag(),1,Integer::sum)-1, ordinal=0;
             Kind kind = switch (section.tag()) {
                 case "npc" -> Kind.NPC;
                 case "monster", "monster condition" -> Kind.MONSTER;
@@ -33,6 +35,7 @@ public final class EntityScript {
             try { rows = placementRows(section, kind, special); }
             catch (IOException failure) { warnings.add("第 " + section.line() + " 行 [" + section.tag() + "]：" + failure.getMessage()); continue; }
             for (int i = 0; i < rows.size(); i++) {
+                int recordOrdinal=ordinal++;
                 if (spawns.size() >= 8192) { warnings.add("实体超过 8192 个，后续未加载"); return new Layout(List.copyOf(spawns), List.copyOf(warnings)); }
                 var row = rows.get(i); var fields = row.values();
                 try {
@@ -45,7 +48,7 @@ public final class EntityScript {
                     String facing = kind == Kind.NPC ? SceneScript.flag(fields.get(1)) : "right";
                     if (!facing.equals("left") && !facing.equals("right")) throw new IOException("未知朝向：" + facing);
                     spawns.add(new Spawn(kind, id, x, y, z, facing.equals("left"),
-                            section.tag().equals("monster condition"), special, row.line()));
+                            section.tag().equals("monster condition"), special, row.line(), new SceneSource(section.tag(),occurrence,recordOrdinal)));
                     if (special) {
                         // The following count/payload rows describe the container's contents, not extra map spawns.
                         int count;
@@ -231,7 +234,10 @@ public final class EntityScript {
         } catch (NumberFormatException | IndexOutOfBoundsException failure) { throw new IOException("需要坐标参数"); }
     }
     public record Spawn(Kind kind, int id, double x, double y, double z, boolean mirrored, boolean conditional,
-                        boolean special, int line) {
+                        boolean special, int line, SceneSource source) {
+        public Spawn(Kind kind,int id,double x,double y,double z,boolean mirrored,boolean conditional,boolean special,int line) {
+            this(kind,id,x,y,z,mirrored,conditional,special,line,null);
+        }
         public String label() { return kind.label() + " #" + id; }
     }
     public record Layout(List<Spawn> spawns, List<String> warnings) {}

@@ -55,6 +55,12 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
     private static void run(Path archivePath, Path output) {
         try {
             Files.createDirectory(output);
+            if (Boolean.getBoolean("pvf.smoke.visualMap")) {
+                VisualMapWorkbenchSmoke.run(archivePath,output);
+                System.out.println("PVF_STUDIO_VISUAL_MAP_UI_SMOKE_OK");
+                ApplicationManager.getApplication().invokeLater(() -> ((ApplicationEx)ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));
+                return;
+            }
             if (Boolean.getBoolean("pvf.smoke.visualDungeon")) {
                 VisualDungeonWorkbenchSmoke.run(archivePath,output);
                 System.out.println("PVF_STUDIO_VISUAL_DUNGEON_UI_SMOKE_OK");

@@ -7,6 +7,14 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class MapDocumentTest {
+    @Test void malformedPlacementSectionBlocksStructuralEditsButKeepsKnownCoordinatesEditable() throws Exception {
+        String text="[tile] `a.til` [/tile]\n[passive object] 1 100 120 0 2 20 [/passive object]\n[unknown] @9(7)";
+        var model=MapDocument.parse("map/a.map",text);var id=model.entries().get(0).id();
+        assertFalse(model.diagnostics().isEmpty());
+        assertThrows(java.io.IOException.class,() -> model.addEntity(studio.pvf.preview.EntityScript.Kind.PASSIVE,3,200,120,0));
+        assertThrows(java.io.IOException.class,() -> model.copy(id));assertThrows(java.io.IOException.class,() -> model.remove(id));
+        String moved=model.move(id,200,120,0).applyTo(text);assertTrue(moved.contains("200 120 0 2 20"));assertTrue(moved.contains("[unknown] @9(7)"));
+    }
     private static MapDocument parse(String text) throws IOException { return MapDocument.parse("map/test/a.map", text); }
 
     @Test void movesOnlyTheSecondIdenticalFlatEntityAndPreservesUnknownSource() throws Exception {

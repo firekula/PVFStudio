@@ -51,6 +51,7 @@ public final class MapDocument {
     }
 
     public ScriptEdit copy(EntryId id) throws IOException {
+        structuralSection(id.section());
         var entry = entry(id); var ai = aiForStructuralChange(entry);
         List<ScriptEdit.Replacement> changes = new ArrayList<>(); int at = entry.range().end();
         changes.add(source.replacement(new SourceDocument.Range(at, at), source.newline() + source.slice(entry.range())));
@@ -61,6 +62,7 @@ public final class MapDocument {
         return edit("复制对象", changes);
     }
     public ScriptEdit remove(EntryId id) throws IOException {
+        structuralSection(id.section());
         var entry = entry(id); var ai = aiForStructuralChange(entry);
         List<ScriptEdit.Replacement> changes = new ArrayList<>(); changes.add(source.replacement(entry.range(), ""));
         if (ai != null) changes.add(source.replacement(ai.values().get(monsterOrdinal(entry)).range(), ""));
@@ -98,6 +100,7 @@ public final class MapDocument {
             case MONSTER -> { tag = "monster"; record = id + " 1 0 " + xyz + " 1 1 `[fixed]` `[normal]`"; ai = checkedAi(false); }
             default -> throw new IOException("不支持的对象类型");
         }
+        structuralSection(ScriptDialect.tag(tag));
         List<ScriptEdit.Replacement> changes = new ArrayList<>(); changes.add(EditSupport.appendRecord(source, tag, record));
         if (ai != null) {
             var old = ai.values(); int at = old.isEmpty() ? ai.heading().range().end() : old.get(old.size() - 1).range().end();
@@ -106,10 +109,15 @@ public final class MapDocument {
         return edit("添加" + kind.label(), changes);
     }
     public ScriptEdit addAnimation(String reference, String layer, boolean background, boolean upper, double x, double y, double z) throws IOException {
+        structuralSection(background?"background animation":"animation");
         EditSupport.reference(reference, ".ani"); layer = ScriptDialect.flag(layer); checkLayer(layer);
         String record = EditSupport.quote(reference) + " " + EditSupport.flag(layer) + " "
                 + (background ? EditSupport.flag(upper ? "upper" : "below") : EditSupport.number(x) + " " + EditSupport.number(y) + " " + EditSupport.number(z));
         return edit("添加动画", List.of(EditSupport.appendRecord(source, background ? "background animation" : "animation", record)));
+    }
+    private void structuralSection(String tag) throws IOException {
+        if(records.diagnostics.stream().anyMatch(d -> d.startsWith("["+tag+"]")||tag.equals("background animation")&&d.startsWith("[ani info]")))
+            throw new IOException("["+tag+"] 尚未完整解析，请先修正源码再增删记录；已识别坐标仍可调整");
     }
 
     public ScriptEdit setField(EntryId id, String field, String value) throws IOException {

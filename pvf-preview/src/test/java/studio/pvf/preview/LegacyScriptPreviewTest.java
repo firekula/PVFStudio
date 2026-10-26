@@ -12,7 +12,8 @@ class LegacyScriptPreviewTest {
         var map = SceneScript.map(text);
         assertEquals(List.of("Tile/bar00.til"), map.tiles()); assertEquals(.7, map.farScroll());
         assertEquals(.9, map.middleScroll()); assertEquals(1.1, map.nearScroll());
-        assertEquals(new SceneScript.Placement("Animation/far.ani", "distantback", true, false, 0, 0, 0), map.animations().get(0));
+        assertEquals(new SceneScript.Placement("Animation/far.ani", "distantback", true, false, 0, 0, 0,
+                new SceneSource("background animation",0,0)), map.animations().get(0));
         var tile = SceneScript.tile("[IMAGE] `Map/타일.img` 0 [통과 속성] " + "2 ".repeat(420));
         assertEquals(30, tile.rows()); assertEquals(2, tile.pass(0, 0)); assertEquals("Map/타일.img", tile.images().get(0).image());
         assertEquals(List.of("[타일].til"), SceneScript.map("[tile] `[타일].til`").tiles());

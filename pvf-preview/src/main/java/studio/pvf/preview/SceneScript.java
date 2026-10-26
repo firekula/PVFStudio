@@ -1,5 +1,8 @@
 package studio.pvf.preview;
 
+import java.util.Map;
+import java.util.HashMap;
+
 import java.awt.geom.Rectangle2D;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -54,7 +57,8 @@ public final class SceneScript {
         List<String> tiles = new ArrayList<>(), extended = new ArrayList<>();
         List<Placement> animations = new ArrayList<>(); List<Rectangle2D.Double> movable = new ArrayList<>();
         double far = 1, middle = 1, near = 1; boolean town = false;
-        for (var section : mapSections(text)) {
+        for (var mapped : mapSections(text)) {
+            var section=mapped.section();
             switch (section.tag()) {
                 case "tile", "extended tile" -> {
                     List<String> target = section.tag().equals("tile") ? tiles : extended;
@@ -75,7 +79,7 @@ public final class SceneScript {
                         if (repeat && !side.equals("below") && !side.equals("upper")) throw error(section, "背景顺序须为 below 或 upper");
                         animations.add(new Placement(path, layer, repeat, side.equals("upper"),
                                 repeat ? 0 : number(section, i + 2), repeat ? 0 : number(section, i + 3),
-                                repeat ? 0 : number(section, i + 4)));
+                                repeat ? 0 : number(section, i + 4), new SceneSource(section.tag(),mapped.source().sectionOccurrence(),mapped.source().recordOrdinal()+i/stride)));
                     }
                 }
                 case "virtual movable area" -> {
@@ -120,39 +124,39 @@ public final class SceneScript {
     /** 0x4C53D0 calls the stable Y sort (0x4C5230) only for native layer 1, normal. */
     public static double sortDepth(int stage, double y) { return stage == 15 ? y : 0; }
     /** Newer maps wrap a background in ani info rather than storing three flat values. */
-    private static List<ResourceScript.Section> mapSections(String text) throws IOException {
-        List<ResourceScript.Section> result = new ArrayList<>();
-        boolean background = false, info = false;
-        String filename = null, layer = null, order = null;
-        int line = 0;
-        for (var section : ResourceScript.sections(text)) {
-            if (section.tag().equals("background animation")) {
-                background = true; result.add(section); continue;
+    private record MapSection(ResourceScript.Section section,SceneSource source) {}
+    private static List<MapSection> mapSections(String text) throws IOException {
+        List<MapSection> result=new ArrayList<>(); Map<String,Integer> occurrences=new HashMap<>();
+        boolean background=false,info=false; int backgroundOccurrence=0,nestedOrdinal=0,line=0;
+        String filename=null,layer=null,order=null;
+        for(var section:ResourceScript.sections(text)) {
+            int occurrence=occurrences.merge(section.tag(),1,Integer::sum)-1;
+            SceneSource source=new SceneSource(section.tag(),occurrence,0);
+            if(section.tag().equals("background animation")) {
+                background=true; backgroundOccurrence=occurrence; nestedOrdinal=section.values().size()/3;
+                result.add(new MapSection(section,source)); continue;
             }
-            if (section.tag().equals("/background animation")) {
-                if (info) throw error(section, "ani info 未结束");
-                background = false; result.add(section); continue;
+            if(section.tag().equals("/background animation")) {
+                if(info)throw error(section,"ani info 未结束"); background=false; result.add(new MapSection(section,source)); continue;
             }
-            if (background && section.tag().equals("ani info")) {
-                if (info) throw error(section, "重复的 ani info");
-                info = true; filename = layer = order = null; line = section.line(); continue;
+            if(background&&section.tag().equals("ani info")) {
+                if(info)throw error(section,"重复的 ani info"); info=true; filename=layer=order=null; line=section.line(); continue;
             }
-            if (info) {
-                switch (section.tag()) {
-                    case "filename" -> filename = value(section, 0);
-                    case "layer" -> layer = value(section, 0);
-                    case "order" -> order = value(section, 0);
+            if(info) {
+                switch(section.tag()) {
+                    case "filename" -> filename=value(section,0);
+                    case "layer" -> layer=value(section,0);
+                    case "order" -> order=value(section,0);
                     case "/ani info" -> {
-                        if (filename == null || layer == null || order == null) throw error(section, "ani info 缺少 filename、layer 或 order");
-                        result.add(new ResourceScript.Section("background animation", List.of(filename, layer, order), line, List.of(line, line, line)));
-                        info = false;
+                        if(filename==null||layer==null||order==null)throw error(section,"ani info 缺少 filename、layer 或 order");
+                        result.add(new MapSection(new ResourceScript.Section("background animation",List.of(filename,layer,order),line,List.of(line,line,line)),
+                                new SceneSource("background animation",backgroundOccurrence,nestedOrdinal++))); info=false;
                     }
-                    default -> { }
+                    default -> {}
                 }
-            } else result.add(section);
+            } else result.add(new MapSection(section,source));
         }
-        if (info) throw new IOException("MAP 的 ani info 未结束");
-        return result;
+        if(info)throw new IOException("MAP 的 ani info 未结束"); return result;
     }
     public static String flag(String value) { return ScriptDialect.flag(value); }
     private static String value(ResourceScript.Section section, int index) throws IOException {
@@ -182,7 +186,9 @@ public final class SceneScript {
         public int rows() { return Math.min(extended ? 10 : 30, passes.size() / COLUMNS); }
         public int pass(int column, int row) { return passes.get(row * COLUMNS + column); }
     }
-    public record Placement(String path, String layer, boolean repeat, boolean upper, double x, double y, double z) {}
+    public record Placement(String path, String layer, boolean repeat, boolean upper, double x, double y, double z, SceneSource source) {
+        public Placement(String path,String layer,boolean repeat,boolean upper,double x,double y,double z) { this(path,layer,repeat,upper,x,y,z,null); }
+    }
     public record MapLayout(List<String> tiles, List<String> extended, List<Placement> animations,
                             List<Rectangle2D.Double> movable, double farScroll, double middleScroll, double nearScroll, boolean town) {}
 }

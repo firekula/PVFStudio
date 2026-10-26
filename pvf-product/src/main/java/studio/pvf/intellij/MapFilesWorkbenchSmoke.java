@@ -32,12 +32,13 @@ final class MapFilesWorkbenchSmoke {
                 screenshot(frame,output.resolve("volcano-overview.png"));return null;
             });
             BufferedImage before=edt(()->capture(canvas));
+            edt(()->{state("before",canvas);javax.imageio.ImageIO.write(before,"png",output.resolve("volcano-before-canvas.png").toFile());return null;});
             edt(()->{viewport.doClick();check(canvas.usingClient(),"Client mode not activated");screenshot(frame,output.resolve("volcano-client.png"));frame.openEntry(far);return null;});
             await(()->ready(frame)&&panel.hasPreparedFrame());
             // Disabling while an ANI is active used to leave the canvas' cached mode behind.
             edt(()->{viewport.setSelected(false);frame.openEntry(map);return null;});
             await(()->ready(frame)&&panel.renderedScene()!=null&&panel.previewDetails().contains(map));
-            edt(()->{check(!canvas.usingClient(),"Client clipping survived a source switch");check(same(before,capture(canvas)),"Overview changed after client/ANI/off/MAP cycle");return null;});
+            edt(()->{state("after",canvas);javax.imageio.ImageIO.write(capture(canvas),"png",output.resolve("volcano-after-canvas.png").toFile());check(!canvas.usingClient(),"Client clipping survived a source switch");check(same(before,capture(canvas)),"Overview changed after client/ANI/off/MAP cycle");return null;});
             String other=workspace.paths().stream().filter(p->p.startsWith("map/247_blackvolcano/")&&p.endsWith(".map")&&!p.equals(map)).findFirst().orElseThrow();
             edt(()->{viewport.doClick();frame.openEntry(other);return null;});await(()->ready(frame)&&panel.renderedScene()!=null&&panel.previewDetails().contains(other));
             edt(()->{viewport.doClick();frame.openEntry(map);return null;});await(()->ready(frame)&&panel.renderedScene()!=null&&panel.previewDetails().contains(map));
@@ -74,6 +75,11 @@ final class MapFilesWorkbenchSmoke {
             check(restored.contains("renamed_test/new.ani")&&!restored.contains(map)&&restored.folders().contains("renamed_test/empty"),"Structural manifest did not restore");
             Files.writeString(output.resolve("map-files-result.txt"),"PASS: real 86 nested Far IMG; identical full overview after client/ANI/MAP and client/MAP/MAP cycles; tree context actions; new binary ANI, directory rename preserving unsaved editor, save, original rename, deletion, persistent reopen and export\n");
         } finally {edt(()->{respond("放弃未保存编辑");frame.dispatchEvent(new WindowEvent(frame,WindowEvent.WINDOW_CLOSING));return null;});await(()->!frame.isDisplayable());}
+    }
+    private static void state(String label,ResourcePreviewPanel.Canvas canvas) throws Exception {
+        var window=(Container)SwingUtilities.getWindowAncestor(canvas);var map=SwingUtilities.getAncestorOfClass(MapEditorPanel.class,canvas);
+        Object saved=null;if(map!=null){var field=MapEditorPanel.class.getDeclaredField("paneLayout");field.setAccessible(true);saved=field.get(map);}
+        System.err.println("MAP_FILES_CANVAS "+label+" size="+canvas.getSize()+" map="+(map==null?null:map.getSize())+" saved="+saved+" panes="+components(window,JSplitPane.class).stream().map(p -> p.getWidth()+"/"+p.getDividerLocation()).toList()+" world="+canvas.world+" pan="+canvas.panX+","+canvas.panY+" zoom="+canvas.zoom+" free="+canvas.freeZoom+" client="+canvas.clientViewport+" camera="+(canvas.camera==null?null:canvas.camera.position())+" time="+(canvas.scene==null?null:canvas.scene.milliseconds()));
     }
     private static boolean workspaceContains(PvfWorkspace workspace,String path){try{return workspace.contains(path);}catch(Exception e){return false;}}
     private static boolean ready(PvfStudioFrame frame){return frame.isEnabled()&&button(frame,"打开 PVF…").isEnabled();}

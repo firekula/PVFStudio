@@ -8,11 +8,22 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SceneDocumentBridgeTest {
     static final class Port implements SceneDocumentBridge.Port {
-        String text = "1"; long version; int commands;
+        String text = "1"; long version; int commands; boolean allowed=true;
         public String text() { return text; }
         public long version() { return version; }
-        public boolean writable() { return true; }
+        public boolean writable() { return allowed; }
         public void write(String label, String value) { text = value; version++; commands++; }
+    }
+    @Test void validButReadOnlySourceDisablesGraphicalWritesAndThawRefreshRestoresThem() {
+        Port port=new Port();port.allowed=false;
+        var bridge=new SceneDocumentBridge<>(port,Integer::parseInt,Runnable::run,Runnable::run,s -> {});
+        bridge.refresh();assertEquals(1,bridge.state().model());assertFalse(bridge.state().writable());
+        port.allowed=true;bridge.refresh();assertTrue(bridge.state().writable());
+    }
+    @Test void unchangedCommandDoesNotWriteOrCreateAnUndoUnit() throws Exception {
+        Port port=new Port();var bridge=new SceneDocumentBridge<>(port,Integer::parseInt,Runnable::run,Runnable::run,s -> {});
+        bridge.refresh();bridge.apply(0,SourceDocument.parse("1").replace("same",new SourceDocument.Range(0,1),"1"));
+        assertEquals(0,port.commands);assertTrue(bridge.state().writable());
     }
     @Test void rejectsOutOfOrderResultsAndDragFromAnEarlierSnapshot() throws Exception {
         Port port = new Port(); List<Runnable> work = new ArrayList<>();

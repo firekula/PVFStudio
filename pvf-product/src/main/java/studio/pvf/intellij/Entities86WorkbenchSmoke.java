@@ -54,6 +54,9 @@ final class Entities86WorkbenchSmoke {
                 screenshot(frame, output.resolve("entities-map-overlays.png")); button(panel, "播放").doClick(); return null; });
             await(() -> panel.renderedScene() != null && panel.renderedScene().milliseconds() > 2300);
             edt(() -> { button(panel, "暂停").doClick(); frame.openEntry("dungeon/act9/fruz_station.dgn"); return null; });
+            await(() -> ready(frame));
+            edt(() -> { ((VisualEditorSurface)components(frame,EditorTabs.class).getFirst().getSelectedComponent()).setMode(VisualEditorSurface.Mode.CODE); return null; });
+            await(() -> !components(frame,DungeonPanel.class).isEmpty());
             var controls = edt(() -> components(frame, DungeonPanel.class).getFirst());
             await(() -> ready(frame) && controls.isVisible() && panel.renderedScene() != null && panel.previewDetails().contains("dungeon/act9/fruz_station.dgn"));
             edt(() -> { controls.selectRoom(new DungeonScript.Position(3,2)); return null; });

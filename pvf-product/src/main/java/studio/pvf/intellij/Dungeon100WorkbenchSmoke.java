@@ -78,7 +78,9 @@ final class Dungeon100WorkbenchSmoke {
                 return null;
             });
             edt(() -> { frame.openEntry("dungeon/act8/pirateonthetrain.dgn"); return null; });
-            await(() -> ready(frame)&&panel.renderedScene()!=null&&panel.previewDetails().contains("dungeon/act8/pirateonthetrain.dgn"));
+            await(() -> ready(frame));
+            edt(() -> { ((VisualEditorSurface)components(frame,EditorTabs.class).getFirst().getSelectedComponent()).setMode(VisualEditorSurface.Mode.CODE); return null; });
+            await(() -> ready(frame)&&controls.isVisible()&&panel.renderedScene()!=null&&panel.previewDetails().contains("dungeon/act8/pirateonthetrain.dgn"));
             edt(() -> { controls.selectRoom(new DungeonScript.Position(1,0)); return null; });
             await(() -> panel.renderedScene()!=null&&controls.selection().map().path().equals("map/pirateonthetrain/(1,0)normal.map"));
             edt(() -> {
@@ -93,7 +95,9 @@ final class Dungeon100WorkbenchSmoke {
                 screenshot(frame,output.resolve("hundred-sea-train-right-viewport.png")); return null;
             });
             edt(() -> { frame.openEntry("dungeon/act9/kohlepowerstation.dgn"); return null; });
-            await(() -> ready(frame)&&panel.renderedScene()!=null&&panel.previewDetails().contains("dungeon/act9/kohlepowerstation.dgn"));
+            await(() -> ready(frame));
+            edt(() -> { ((VisualEditorSurface)components(frame,EditorTabs.class).getFirst().getSelectedComponent()).setMode(VisualEditorSurface.Mode.CODE); return null; });
+            await(() -> ready(frame)&&controls.isVisible()&&panel.renderedScene()!=null&&panel.previewDetails().contains("dungeon/act9/kohlepowerstation.dgn"));
             edt(() -> { controls.selectRoom(new DungeonScript.Position(4,1)); return null; });
             await(() -> panel.renderedScene()!=null&&controls.selection().map().path().equals("map/kohlepowerstation/18008(4,1)b.map"));
             edt(() -> {
@@ -110,7 +114,7 @@ final class Dungeon100WorkbenchSmoke {
                     components(frame,JSplitPane.class).forEach(p->p.setResizeWeight(0));
                     frame.setSize(size); frame.validate();
                     var panes=components(frame,JSplitPane.class); panes.getFirst().setDividerLocation(280);
-                    var editorPane=panes.stream().filter(p->p.getRightComponent()==panel).findFirst().orElseThrow();
+                    var editorPane=panes.stream().filter(p->p.getRightComponent()==panel||p.getRightComponent()==panel.getParent()).findFirst().orElseThrow();
                     editorPane.setDividerLocation(Math.min(540,editorPane.getMaximumDividerLocation()));
                     frame.validate(); return null;
                 });

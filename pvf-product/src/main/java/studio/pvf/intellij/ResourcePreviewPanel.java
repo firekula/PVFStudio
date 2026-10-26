@@ -59,6 +59,9 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private Source source;
     private DungeonEditorPanel.Preview editorDungeon;
     private Consumer<DungeonPanel.Selection> editorResolved;
+    private MapEditorPanel editorMap;
+    private Future<?> thumbnailJob;
+    private Runnable resourcesChanged=() -> {};
     private ResourceScript.Animation animation;
     private String animationPath;
     private ScenePreview scene;
@@ -214,6 +217,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                     indexProgress.finish(progress);
                     if (closed || version != directoryGeneration) return;
                     resources = indexed; choose.setEnabled(true);
+                    resourcesChanged.run();
                     root.setText(resourceSummary(indexed)
                             + (indexed.warnings().isEmpty() ? "" : " / " + indexed.warnings().size() + " 条索引提示") + suffix);
                     root.setToolTipText("<html>" + html(indexed.directory().toString()) + "<br>"
@@ -232,7 +236,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     }
 
     void setSource(Source value) {
-        editorDungeon=null; editorResolved=null; references.setVisible(true);
+        if(editorMap!=null)editorMap.captureView(canvas);
+        editorDungeon=null; editorResolved=null; editorMap=null; canvas.interaction=null; references.setVisible(true);
         source = value; invalidatePreview();
         dungeonPanel.setVisible(false); dungeonSelection = null;
         Object selected = references.getSelectedItem(); String selectedName = selected == null ? "" : selected.toString();
@@ -256,10 +261,17 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     }
 
     private void reloadSource() {
-        if(editorDungeon!=null)setDungeonEditorSource(source,editorDungeon,editorResolved); else setSource(source);
+        if(editorDungeon!=null)setDungeonEditorSource(source,editorDungeon,editorResolved);
+        else if(editorMap!=null)setMapEditorSource(source,editorMap); else setSource(source);
+    }
+
+    void setMapEditorSource(Source value,MapEditorPanel panel) {
+        setSource(value); editorMap=panel; panel.attach(canvas); references.setVisible(false);
     }
 
     void setDungeonEditorSource(Source value, DungeonEditorPanel.Preview selected, Consumer<DungeonPanel.Selection> resolved) {
+        if(editorMap!=null)editorMap.captureView(canvas);
+        editorMap=null; canvas.interaction=null;
         editorDungeon=selected; editorResolved=resolved; references.setVisible(false);
         source=value; invalidatePreview(); dungeonPanel.setVisible(false); dungeonSelection=null;
         if(value==null||selected==null)return;
@@ -282,7 +294,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         invalidatePreview();
         dungeonPanel.setVisible(false); dungeonSelection = null;
         if (source == null) return;
-        Source snapshot = source; Object selected = references.getSelectedItem();
+        Source snapshot = source; Object selected = editorMap==null?references.getSelectedItem():new SceneOption(snapshot.path());
         if (selected == null) return;
         if (selected instanceof DungeonOption) {
             frameLabel.setText("读取副本布局与房间候选…"); canvas.error = "加载副本…"; canvas.repaint();
@@ -462,6 +474,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         timelineStart = 0; changing = true; timeline.setMaximum(60_000); timeline.setValue(0); changing = false;
         canvas.clientViewport = clientViewport.isSelected();
         canvas.world = loaded.rendered().overviewBounds(); canvas.resetView(); acceptScene(loaded.rendered()); updateControls();
+        if(editorMap!=null) { editorMap.restoreView(canvas); canvas.repaint(); }
     }
     private void acceptScene(ScenePreview.Rendered rendered) {
         canvas.scene = rendered; canvas.overlay = collision.isSelected(); canvas.markers = entityMarkers.isSelected(); canvas.error = "";
@@ -500,6 +513,49 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private static boolean isScene(String path) {
         String lower = path.toLowerCase(Locale.ROOT); return lower.endsWith(".map") || lower.endsWith(".til") || lower.endsWith(".ptl");
     }
+    void onResourcesChanged(Runnable listener) { resourcesChanged=listener; }
+    void thumbnail(Source snapshot,SceneResourceBrowser.Asset asset,Consumer<SceneResourceBrowser.Thumbnail> result) {
+        NpkResources indexed=resources; long directory=directoryGeneration;
+        if(snapshot==null||indexed==null) { result.accept(new SceneResourceBrowser.Thumbnail(null,"选择资源目录后显示原生缩略图\n"+asset)); return; }
+        if(thumbnailJob!=null)thumbnailJob.cancel(false);
+        thumbnailJob=worker.submit(() -> {
+            SceneResourceBrowser.Thumbnail loaded;
+            try {
+                String raw=snapshot.lookup().read(asset.path()); if(raw==null)throw new IOException("找不到 "+asset.path());
+                java.awt.image.BufferedImage image=new java.awt.image.BufferedImage(128,96,java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g=image.createGraphics(); String description=asset.toString();
+                try {
+                    if(asset.category()==SceneResourceBrowser.Category.ANIMATION) {
+                        var ani=ResourceScript.animation(raw); if(ani.frames().isEmpty())throw new IOException("ANI 没有帧");
+                        var frame=ani.frames().getFirst(); if(frame.image().isEmpty())throw new IOException("首帧没有 IMAGE");
+                        var prepared=PreviewRenderer.prepare(frame,indexed.sprite(NpkResources.substitute(frame.image(),new int[]{0,0}),frame.index()));
+                        var bounds=prepared.bounds(); double scale=Math.min(4,Math.min(120/Math.max(1,bounds.getWidth()),88/Math.max(1,bounds.getHeight())));
+                        prepared.paint(g,64-bounds.getCenterX()*scale,48-bounds.getCenterY()*scale,scale);
+                    } else {
+                        String scenePath=asset.path(),text=raw;
+                        if(asset.category()!=SceneResourceBrowser.Category.TILE) {
+                            var kind=asset.category()==SceneResourceBrowser.Category.NPC?EntityScript.Kind.NPC:asset.category()==SceneResourceBrowser.Category.MONSTER?EntityScript.Kind.MONSTER:EntityScript.Kind.PASSIVE;
+                            scenePath="map/__thumbnail__.map";
+                            text="[tile] `__thumbnail__.til` [/tile]";
+                            text=studio.pvf.sceneedit.MapDocument.parse(scenePath,text).addEntity(kind,asset.id(),112,120,0).applyTo(text);
+                            if(kind==EntityScript.Kind.PASSIVE) {
+                                var factory=EntityScript.particleFactory(raw,asset.id());
+                                if(factory!=null)description+="\n已识别粒子工厂 → "+factory.path();
+                            }
+                        }
+                        var scene=ScenePreview.load(scenePath,text,p -> p.equals("map/__thumbnail__.til")?"[pass type] "+"0 ".repeat(420):snapshot.lookup().read(p),indexed,0,0).render(200,false,true);
+                        Rectangle2D bounds=null;
+                        for(var draw:scene.draws()) { var part=draw.prepared().bounds(draw.mirrored()); var positioned=new Rectangle2D.Double(draw.x()+part.getX(),draw.y()+part.getY(),part.getWidth(),part.getHeight()); bounds=bounds==null?positioned:bounds.createUnion(positioned); }
+                        if(bounds==null)throw new IOException("逻辑对象或当前帧没有图像；仍可放置并编辑原生参数");
+                        double scale=Math.min(4,Math.min(120/Math.max(1,bounds.getWidth()),88/Math.max(1,bounds.getHeight())));
+                        scene.paint(g,new Rectangle(0,0,128,96),64-bounds.getCenterX()*scale,48-bounds.getCenterY()*scale,scale,0,0,false);
+                    }
+                } finally { g.dispose(); }
+                loaded=new SceneResourceBrowser.Thumbnail(image,description);
+            } catch(Exception failure) { loaded=new SceneResourceBrowser.Thumbnail(null,asset+"\n"+message(failure)); }
+            var value=loaded; SwingUtilities.invokeLater(() -> { if(!closed&&directory==directoryGeneration)result.accept(value); });
+        });
+    }
     private <T> void submit(Work<T> work, Consumer<T> success) {
         submit("更新预览画面", work, success);
     }
@@ -527,6 +583,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private static String message(Exception failure) { return failure.getMessage() == null ? failure.toString() : failure.getMessage(); }
     private static String html(String value) { return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"); }
     @Override public void close() {
+        if(thumbnailJob!=null)thumbnailJob.cancel(false);
         indexProgress.clear(); previewProgress.clear();
         closed = true; ++generation; ++directoryGeneration; pause();
         // Do not interrupt a PVF read: interrupting FileChannel I/O would close the mounted archive's handle.
@@ -545,101 +602,5 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private record DungeonOption(String path) { @Override public String toString() { return "副本布局 · " + path; } }
     @FunctionalInterface private interface Work<T> { T run() throws Exception; }
 
-    static final class Canvas extends JPanel {
-        PreviewRenderer.Prepared prepared; ScenePreview.Rendered scene;
-        SceneCamera camera;
-        Rectangle2D world; String error = ""; int zoom;
-        boolean overlay, markers, clientViewport; double panX, panY, freeZoom; Point drag;
-        Canvas() {
-            setPreferredSize(new Dimension(400, 360)); setToolTipText("拖动平移，滚轮缩放");
-            MouseAdapter mouse = new MouseAdapter() {
-                @Override public void mousePressed(MouseEvent event) {
-                    if (!SwingUtilities.isLeftMouseButton(event) || usingClient() && !clientBounds(view().scale()).contains(event.getPoint())) return;
-                    drag = event.getPoint(); setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
-                }
-                @Override public void mouseReleased(MouseEvent event) { drag = null; setCursor(Cursor.getDefaultCursor()); }
-                @Override public void mouseDragged(MouseEvent event) {
-                    if (drag == null) return;
-                    if (usingClient()) camera.move((drag.x - event.getX()) / view().scale(), (drag.y - event.getY()) / view().scale());
-                    else { panX += event.getX() - drag.x; panY += event.getY() - drag.y; }
-                    drag = event.getPoint(); repaint();
-                }
-                @Override public void mouseMoved(MouseEvent event) {
-                    View view = view();
-                    if (usingClient() && !clientBounds(view.scale()).contains(event.getPoint())) { setToolTipText("客户端视口外；在边框内拖动移动相机"); return; }
-                    double x = (event.getX() - view.x() - (usingClient() ? 0 : panX)) / view.scale(),
-                            y = (event.getY() - view.y() - (usingClient() ? 0 : panY)) / view.scale();
-                    String entity = scene == null ? "" : scene.entityAt(x, y);
-                    String grid = scene != null && overlay ? scene.collisionAt(x, y) : "";
-                    String tooltip = entity + (!entity.isEmpty() && !grid.isEmpty() ? "；" : "") + grid;
-                    setToolTipText(tooltip.isEmpty() ? usingClient() ? "拖动相机，到达地图边界后停止；滚轮缩放视口" : "拖动平移，滚轮缩放" : tooltip);
-                }
-                @Override public void mouseWheelMoved(MouseWheelEvent event) {
-                    View old = view();
-                    if (usingClient()) {
-                        if (!clientBounds(old.scale()).contains(event.getPoint())) return;
-                        freeZoom = Math.max(.02, Math.min(8, old.scale() * Math.pow(1.2, -event.getPreciseWheelRotation()))); repaint(); return;
-                    }
-                    double wx = (event.getX() - old.x() - panX) / old.scale(), wy = (event.getY() - old.y() - panY) / old.scale();
-                    freeZoom = Math.max(.02, Math.min(8, old.scale() * Math.pow(1.2, -event.getPreciseWheelRotation())));
-                    View current = view(); panX = event.getX() - current.x() - wx * current.scale();
-                    panY = event.getY() - current.y() - wy * current.scale(); repaint();
-                }
-            };
-            addMouseListener(mouse); addMouseMotionListener(mouse); addMouseWheelListener(mouse);
-        }
-        void resetView() { panX = 0; panY = 0; freeZoom = 0; drag = null; if (camera != null) camera.reset(); }
-        boolean usingClient() { return clientViewport && scene != null && scene.cameraLimits() != null && camera != null; }
-        Rectangle clientBounds(double scale) {
-            int width = Math.max(1, (int) Math.round(SceneCamera.WIDTH * scale)), height = Math.max(1, (int) Math.round(SceneCamera.HEIGHT * scale));
-            return new Rectangle((getWidth() - width) / 2, (getHeight() - height) / 2, width, height);
-        }
-        private View view() {
-            double scale = freeZoom > 0 ? freeZoom : new double[]{1, .25, .5, 1, 2, 4}[zoom];
-            double ox = getWidth() / 2.0, oy = getHeight() * .72;
-            if (world != null && (scene != null || zoom == 0 || freeZoom > 0)) {
-                if (zoom == 0 && freeZoom == 0) scale = Math.min(4,
-                        Math.min(Math.max(1, getWidth() - 40) / (usingClient() ? SceneCamera.WIDTH : Math.max(1, world.getWidth())),
-                                Math.max(1, getHeight() - 40) / (usingClient() ? SceneCamera.HEIGHT : Math.max(1, world.getHeight()))));
-                ox = getWidth() / 2.0 - world.getCenterX() * scale;
-                oy = getHeight() / 2.0 - world.getCenterY() * scale;
-            }
-            if (usingClient()) {
-                Rectangle viewport = clientBounds(scale); Point position = camera.position();
-                ox = viewport.x - position.x * scale; oy = viewport.y - position.y * scale;
-            }
-            return new View(ox, oy, scale);
-        }
-        @Override protected void paintComponent(Graphics graphics) {
-            super.paintComponent(graphics); Graphics2D g = (Graphics2D) graphics.create();
-            try {
-                for (int y = 0; y < getHeight(); y += 16) for (int x = 0; x < getWidth(); x += 16) {
-                    g.setColor(((x / 16 + y / 16) & 1) == 0 ? new Color(54, 57, 62) : new Color(63, 66, 72));
-                    g.fillRect(x, y, 16, 16);
-                }
-                View view = view();
-                if (scene != null) {
-                    if (usingClient()) {
-                        Rectangle viewport = clientBounds(view.scale()); Point position = camera.position();
-                        g.setColor(new Color(0, 0, 0, 100)); g.fillRect(0, 0, getWidth(), getHeight());
-                        scene.paintClient(g, viewport, view.scale(), position, overlay, markers);
-                        // Draw after the scene using the canvas clip, so scene clipping cannot hide the frame.
-                        g.setStroke(new BasicStroke(1)); g.setColor(new Color(15, 20, 27));
-                        g.drawRect(viewport.x - 2, viewport.y - 2, viewport.width + 3, viewport.height + 3);
-                        g.setColor(new Color(125, 195, 250)); g.drawRect(viewport.x - 1, viewport.y - 1, viewport.width + 1, viewport.height + 1);
-                        String label = "客户端视口 640×480 · 相机 " + position.x + "/" + camera.limits().maxX() + ", " + position.y + "/" + camera.limits().maxY();
-                        g.drawString(label, Math.max(6, viewport.x), Math.max(14, viewport.y - 6));
-                    } else scene.paint(g, new Rectangle(0, 0, getWidth(), getHeight()), view.x(), view.y(), view.scale(), panX, panY, overlay, markers);
-                }
-                else {
-                    g.setColor(new Color(140, 147, 158, 120));
-                    g.drawLine(0, (int) (view.y() + panY), getWidth(), (int) (view.y() + panY));
-                    g.drawLine((int) (view.x() + panX), 0, (int) (view.x() + panX), getHeight());
-                    if (prepared != null) prepared.paint(g, view.x() + panX, view.y() + panY, view.scale());
-                }
-                if (!error.isEmpty()) { g.setColor(Color.LIGHT_GRAY); g.drawString(error, 16, 28); }
-            } finally { g.dispose(); }
-        }
-        private record View(double x, double y, double scale) {}
-    }
+    static final class Canvas extends SceneCanvas {}
 }

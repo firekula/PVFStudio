@@ -95,7 +95,7 @@ public final class ScenePreview {
                         default -> 1;
                     };
                     scene.addTrack(resolved.path(), animation, placement.x(), placement.repeat() ? 0 : SceneCoordinates.screenY(placement.y(), placement.z()),
-                            SceneScript.stage(placement), placement.y(), scroll, placement.repeat());
+                            SceneScript.stage(placement), placement.y(), scroll, placement.repeat(), false, -1, 0, placement.source());
                 } catch (IOException failure) { scene.warn(placement.path() + "：" + failure.getMessage()); }
             }
             EntityScript.Layout layout = EntityScript.placements(text);
@@ -195,9 +195,13 @@ public final class ScenePreview {
     }
     private void addTrack(String path, ResourceScript.Animation animation, double x, double y, int stage,
                           double depth, double scroll, boolean repeat, boolean mirrored, int entity, double repeatPeriod) {
+        addTrack(path,animation,x,y,stage,depth,scroll,repeat,mirrored,entity,repeatPeriod,null);
+    }
+    private void addTrack(String path, ResourceScript.Animation animation, double x, double y, int stage,
+                          double depth, double scroll, boolean repeat, boolean mirrored, int entity, double repeatPeriod, SceneSource source) {
         if (tracks.size() >= 8192) { warn("场景超过 8192 个图层，后续图层未加载"); return; }
         animation.warnings().forEach(warning -> warn(path + "：" + warning));
-        tracks.add(new Track(path, animation, new AnimationTimeline(animation), x, y, stage, depth, scroll, repeat, tracks.size(), mirrored, entity, repeatPeriod));
+        tracks.add(new Track(path, animation, new AnimationTimeline(animation), x, y, stage, depth, scroll, repeat, tracks.size(), mirrored, entity, repeatPeriod, source));
         // MAP extent comes from its tile rows: decorative/backdrop ANI may intentionally extend far outside it.
         if (!repeat && expandBounds) for (ResourceScript.Frame frame : animation.frames()) {
             if (frame.image().isEmpty()) continue;
@@ -280,7 +284,7 @@ public final class ScenePreview {
             // Native creates translated animation copies at int data[0] intervals. Tile at paint time
             // to also cover an overview wider than the native camera, retaining the ANI phase and anchor.
             for (IdlePart part : parts) addTrack(part.path(), part.animation(), spawn.x() + (spawn.mirrored() ? -part.x() : part.x()),
-                    SceneCoordinates.screenY(spawn.y() + part.y(), spawn.z() + part.z()), stage, spawn.y(), scroll, false, spawn.mirrored(), index, period);
+                    SceneCoordinates.screenY(spawn.y() + part.y(), spawn.z() + part.z()), stage, spawn.y(), scroll, false, spawn.mirrored(), index, period, spawn.source());
             if (parts.isEmpty() && !particle && problem.isEmpty()) problem = "待机动画为空";
         } catch (IOException failure) { problem = failure.getMessage(); }
         if (!problem.isEmpty()) warn(spawn.label() + "：" + problem);
@@ -396,7 +400,7 @@ public final class ScenePreview {
                 if (images.add(prepared.image())) imageBytes += bytes(prepared);
                 if (imageBytes > FRAME_LIMIT) { warn("当前场景像素超过 96 MiB，部分图层未显示"); continue; }
                 draws.add(new Draw(prepared, track.x(), track.y(), track.scroll(), track.repeat() || track.repeatPeriod() > 0, frame.scaleX(), frame.scaleY(),
-                        track.mirrored(), 1, track.stage(), track.depth(), track.order(), track.repeatPeriod()));
+                        track.mirrored(), 1, track.stage(), track.depth(), track.order(), track.repeatPeriod(), track.source()));
                 if (track.entity() >= 0) {
                     Rectangle2D b = prepared.bounds(track.mirrored());
                     Rectangle2D world = new Rectangle2D.Double(track.x() + b.getX(),
@@ -456,7 +460,7 @@ public final class ScenePreview {
                     if (state.bytes > FRAME_LIMIT) { warn("当前场景像素超过 96 MiB，部分粒子未显示"); continue; }
                     double partX = particle.x() + (mirrored ? -part.x() : part.x()), partY = screenY + part.y() - part.z();
                     state.draws.add(new Draw(prepared, partX, partY, visual.scroll(), false, frame.scaleX(), frame.scaleY(),
-                            mirrored, alpha, visual.stage(), particle.y(), state.order++));
+                            mirrored, alpha, visual.stage(), particle.y(), state.order++, 0, entity>=0?entities.get(entity).spawn().source():null));
                     if (entity >= 0) {
                         var b = prepared.bounds(mirrored);
                         state.entityBounds.merge(entity, new Rectangle2D.Double(partX + b.getX(), partY + b.getY(), b.getWidth(), b.getHeight()), Rectangle2D::createUnion);
@@ -643,7 +647,11 @@ public final class ScenePreview {
         public Rectangle2D.Double bounds() { return new Rectangle2D.Double(spawn.x() - width / 2, SceneCoordinates.screenY(spawn.y(), 0) - depth / 2, width, depth); }
     }
     public record Draw(PreviewRenderer.Prepared prepared, double x, double y, double scroll,
-                       boolean repeat, double scaleX, double scaleY, boolean mirrored, double opacity, int stage, double depth, int order, double repeatPeriod) {
+                       boolean repeat, double scaleX, double scaleY, boolean mirrored, double opacity, int stage, double depth, int order, double repeatPeriod, SceneSource source) {
+        public Draw(PreviewRenderer.Prepared prepared,double x,double y,double scroll,boolean repeat,double scaleX,double scaleY,
+                    boolean mirrored,double opacity,int stage,double depth,int order,double repeatPeriod) {
+            this(prepared,x,y,scroll,repeat,scaleX,scaleY,mirrored,opacity,stage,depth,order,repeatPeriod,null);
+        }
         public Draw(PreviewRenderer.Prepared prepared, double x, double y, double scroll, boolean repeat, double scaleX, double scaleY,
                     boolean mirrored, double opacity, int stage, double depth, int order) {
             this(prepared, x, y, scroll, repeat, scaleX, scaleY, mirrored, opacity, stage, depth, order, 0);
@@ -655,7 +663,7 @@ public final class ScenePreview {
     public record EntityInfo(EntityScript.Spawn spawn, String definition, List<String> animations, String problem) {}
     public record EntityView(EntityInfo info, Rectangle2D bounds, String problem) {}
     private record Track(String path, ResourceScript.Animation animation, AnimationTimeline timeline, double x, double y,
-                         int stage, double depth, double scroll, boolean repeat, int order, boolean mirrored, int entity, double repeatPeriod) {}
+                         int stage, double depth, double scroll, boolean repeat, int order, boolean mirrored, int entity, double repeatPeriod, SceneSource source) {}
     private record IdlePart(String path, ResourceScript.Animation animation, int layer, double x, double y, double z) {
         IdlePart(String path, ResourceScript.Animation animation, int layer) { this(path, animation, layer, 0, 0, 0); }
     }

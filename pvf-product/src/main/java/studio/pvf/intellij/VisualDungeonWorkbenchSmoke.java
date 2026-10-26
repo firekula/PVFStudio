@@ -44,6 +44,7 @@ final class VisualDungeonWorkbenchSmoke {
                 check(components(preview,DungeonPanel.class).stream().noneMatch(JComponent::isVisible),"Resource scan replaced the design room preview with old layout controls");
                 check(components(preview,ResourcePreviewPanel.Canvas.class).getFirst().getHeight()>=60,"Design preview pixels are clipped by controls"); return null;
             });
+            edt(() -> { captureCanvas(preview,output); return null; });
             edt(() -> { screenshot(frame,output.resolve("dgn-design-1264.png")); frame.setSize(1024,720); return null; });
             edt(() -> { screenshot(frame,output.resolve("dgn-design-1024.png")); return null; });
             String baseline=edt(() -> code.getDocument().getText());
@@ -89,5 +90,15 @@ final class VisualDungeonWorkbenchSmoke {
         }
     }
     private static boolean ready(PvfStudioFrame f) { return f.isEnabled()&&button(f,"打开 PVF…").isEnabled(); }
+    private static void captureCanvas(ResourcePreviewPanel preview,Path output) throws Exception {
+        var canvas=components(preview,ResourcePreviewPanel.Canvas.class).getFirst();
+        var size=canvas.getSize(); boolean client=canvas.clientViewport; double zoom=canvas.freeZoom;
+        try {
+            canvas.setSize(900,650); canvas.freeZoom=1;
+            for(boolean mode:java.util.List.of(false,true)) {
+                canvas.clientViewport=mode; screenshot(canvas,output.resolve(mode?"canvas-client.png":"canvas-overview.png"));
+            }
+        } finally { canvas.setSize(size); canvas.clientViewport=client; canvas.freeZoom=zoom; }
+    }
     static <T> T named(java.awt.Container root,String name,Class<T> type) { return components(root,java.awt.Component.class).stream().filter(c -> name.equals(c.getName())&&type.isInstance(c)).map(type::cast).findFirst().orElseThrow(); }
 }
