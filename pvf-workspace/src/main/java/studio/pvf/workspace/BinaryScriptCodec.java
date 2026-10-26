@@ -120,6 +120,17 @@ public final class BinaryScriptCodec {
     }
 
     public record Compiled(byte[] script, byte[] stringTable) {}
+    /** True when every older raw string retains its index; encoding is irrelevant to this check. */
+    static boolean preservesStringIndices(byte[] older, byte[] newer) {
+        try {
+            var a = new StringTable(older, java.nio.charset.StandardCharsets.UTF_8);
+            var b = new StringTable(newer, java.nio.charset.StandardCharsets.UTF_8);
+            if (a.offsets.length > b.offsets.length) return false;
+            for (int i = 0; i < a.offsets.length - 1; i++)
+                if (Arrays.mismatch(a.bytes,4+a.offsets[i],4+a.offsets[i+1],b.bytes,4+b.offsets[i],4+b.offsets[i+1]) != -1) return false;
+            return true;
+        } catch (IOException invalid) { return false; }
+    }
     public static Compiled encode(String text, byte[] original, StringTable strings) throws IOException {
         List<Token> before = tokens(original, strings);
         List<String> lexemes = lex(text);

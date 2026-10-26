@@ -24,6 +24,9 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
@@ -151,6 +154,122 @@ public final class PvfWorkspace implements AutoCloseable {
 
     public synchronized void stageBytes(String path, byte[] content) throws IOException {
         stageBatch(Map.of(path, content));
+    }
+
+    public record TextChange(String path, String text, Charset charset, byte[] expectedBytes) {
+        public TextChange {
+            Objects.requireNonNull(path); Objects.requireNonNull(text); Objects.requireNonNull(charset);
+            expectedBytes = expectedBytes == null ? null : expectedBytes.clone();
+        }
+        @Override public byte[] expectedBytes() { return expectedBytes == null ? null : expectedBytes.clone(); }
+    }
+    private record BatchState(boolean present, String origin, byte[] bytes) {
+        private BatchState { bytes = bytes == null ? null : bytes.clone(); }
+        boolean same(BatchState other) { return present == other.present && Objects.equals(origin,other.origin) && Arrays.equals(bytes,other.bytes); }
+    }
+    /** In-memory undo state, bound to the exact open workspace; no mutable byte arrays escape. */
+    public static final class BatchSnapshot {
+        private final PvfWorkspace owner;
+        private final Map<String,BatchState> before, after;
+        private BatchSnapshot(PvfWorkspace owner, Map<String,BatchState> before, Map<String,BatchState> after) {
+            this.owner = owner; this.before = Map.copyOf(before); this.after = Map.copyOf(after);
+        }
+        public Set<String> paths() { return before.keySet(); }
+    }
+
+    /** Prepares all text/string-table bytes before publishing file structure and drafts together. */
+    public synchronized BatchSnapshot applyTextBatch(Map<String,byte[]> createdFiles, List<TextChange> changes) throws IOException {
+        ensureOpen(); Map<String,byte[]> created = new LinkedHashMap<>();
+        for (var item : createdFiles.entrySet()) {
+            String path = PvfArchive.normalizePath(item.getKey()); checkDestination(path,Set.of());
+            if (created.putIfAbsent(path,Objects.requireNonNull(item.getValue()).clone()) != null) throw new IOException("重复的新建路径："+path);
+        }
+        List<String> createdPaths = new ArrayList<>(created.keySet()); createdPaths.sort(String::compareTo);
+        for (int i=1;i<createdPaths.size();i++) if (createdPaths.get(i).startsWith(createdPaths.get(i-1)+"/")) throw new IOException("新建路径之间存在文件/目录冲突");
+        Map<String,byte[]> prepared = new LinkedHashMap<>(created); Set<String> changed = new LinkedHashSet<>();
+        byte[] table = created.get("stringtable.bin");
+        if (table == null && origins.containsKey("stringtable.bin")) table = readBytes("stringtable.bin");
+        for (TextChange change : changes) {
+            String path = PvfArchive.normalizePath(change.path);
+            if (path.equals("stringtable.bin")) throw new IOException("字符串表由二进制脚本编译器统一管理");
+            if (!changed.add(path)) throw new IOException("批次中同一路径重复修改："+path);
+            byte[] before;
+            if (created.containsKey(path)) {
+                if (change.expectedBytes != null) throw new IOException("新建文件不能带已有文件快照");
+                before = created.get(path);
+            } else {
+                before = readBytes(path);
+                if (change.expectedBytes == null || !Arrays.equals(before,change.expectedBytes)) throw new IOException("文件快照已变化："+path);
+            }
+            byte[] output;
+            if (BinaryScriptCodec.isScript(before)) {
+                if (table == null) throw new IOException("二进制脚本缺少 stringtable.bin");
+                var compiled = BinaryScriptCodec.encode(change.text,before,new BinaryScriptCodec.StringTable(table,change.charset));
+                output = compiled.script();
+                if (!Arrays.equals(table,compiled.stringTable())) { table = compiled.stringTable(); prepared.put("stringtable.bin",table); }
+            } else if (BinaryAniCodec.isBinary(path,before)) output = BinaryAniCodec.encode(change.text,before,change.charset);
+            else output = TextCodec.encode(change.text,change.charset);
+            prepared.put(path,output);
+        }
+        Map<String,BatchState> before = new LinkedHashMap<>(), after = new LinkedHashMap<>();
+        for (var item : prepared.entrySet()) {
+            String path = item.getKey(); BatchState previous = batchState(path);
+            BatchState next = new BatchState(true,created.containsKey(path)?"":origins.get(path),item.getValue());
+            if (!previous.same(next)) { before.put(path,previous); after.put(path,next); }
+        }
+        publishBatch(after); return new BatchSnapshot(this,before,after);
+    }
+
+    public synchronized void restoreBatch(BatchSnapshot snapshot, boolean toAfter) throws IOException {
+        ensureOpen();
+        if (snapshot.owner != this) throw new IOException("撤销快照不属于当前工作区");
+        var expected = toAfter ? snapshot.before : snapshot.after;
+        Map<String,BatchState> target = new LinkedHashMap<>(toAfter?snapshot.after:snapshot.before);
+        for (var item : expected.entrySet()) {
+            BatchState current = batchState(item.getKey());
+            if (current.same(item.getValue())) continue;
+            BatchState wanted = target.get(item.getKey());
+            if (item.getKey().equals("stringtable.bin") && current.present && item.getValue().present && wanted.present
+                    && Objects.equals(current.origin,item.getValue().origin)
+                    && BinaryScriptCodec.preservesStringIndices(item.getValue().bytes,current.bytes)
+                    && BinaryScriptCodec.preservesStringIndices(wanted.bytes,current.bytes)) {
+                // Later drafts can refer to appended indices. Retain their table, including harmless unused strings.
+                target.remove(item.getKey());
+            } else throw new IOException("文件已变化，不能覆盖为旧快照："+item.getKey());
+        }
+        publishBatch(target);
+    }
+    private BatchState batchState(String path) throws IOException {
+        return origins.containsKey(path) ? new BatchState(true,origins.get(path),readBytes(path)) : new BatchState(false,null,null);
+    }
+    private void publishBatch(Map<String,BatchState> target) throws IOException {
+        if (target.isEmpty()) return;
+        Map<String,String> nextDrafts = new LinkedHashMap<>(drafts), nextOrigins = new LinkedHashMap<>(origins);
+        Set<String> preparedBlobs = new LinkedHashSet<>();
+        try {
+            for (var item : target.entrySet()) {
+                String path = item.getKey(); BatchState state = item.getValue();
+                if (!state.present) { nextDrafts.remove(path); nextOrigins.remove(path); continue; }
+                nextOrigins.put(path,state.origin);
+                if (!state.origin.isEmpty() && Arrays.equals(state.bytes,archive.readBytes(state.origin))) { nextDrafts.remove(path); continue; }
+                String previous = drafts.get(path);
+                if (previous != null && Arrays.equals(state.bytes,readBlob(previous))) continue;
+                String blob = digest(state.bytes)+"-"+UUID.randomUUID()+".bin"; preparedBlobs.add(blob);
+                try (FileChannel channel = FileChannel.open(directory.resolve(blob),StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE)) {
+                    var buffer = java.nio.ByteBuffer.wrap(state.bytes); while (buffer.hasRemaining()) channel.write(buffer); channel.force(true);
+                }
+                nextDrafts.put(path,blob);
+            }
+            persist(nextDrafts,nextOrigins,folders);
+        } catch (IOException | RuntimeException failure) {
+            for (String blob : preparedBlobs) try { Files.deleteIfExists(directory.resolve(blob)); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+        Set<String> obsolete = new LinkedHashSet<>(drafts.values()); obsolete.removeAll(nextDrafts.values());
+        drafts.clear(); drafts.putAll(nextDrafts); origins.clear(); origins.putAll(nextOrigins);
+        if (target.containsKey("stringtable.bin")) scriptTables.clear();
+        // Publication has succeeded. A locked obsolete blob must not turn success into a false rollback signal.
+        for (String blob : obsolete) try { Files.deleteIfExists(directory.resolve(blob)); } catch (IOException ignored) { }
     }
 
     /** Publish related script/string-table drafts in a single manifest transaction. */
