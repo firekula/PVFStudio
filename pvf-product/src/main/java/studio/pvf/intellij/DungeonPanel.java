@@ -2,6 +2,8 @@ package studio.pvf.intellij;
 
 import studio.pvf.preview.DungeonPreview;
 import studio.pvf.preview.DungeonScript;
+import studio.pvf.preview.DungeonMinimap;
+import studio.pvf.preview.NpkResources;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
@@ -40,6 +42,8 @@ final class DungeonPanel extends JPanel {
     private final Map<DungeonScript.Position, Boolean> clearStates = new HashMap<>();
     private final Map<DungeonScript.Position, Integer> mapSelections = new HashMap<>();
     private DungeonPreview dungeon; private DungeonPreview.Layout layout;
+    private String minimapImage="",minimapDescription="示意布局 · 未选择 NPK / IMG 目录";
+    private DungeonMinimap minimap;
     private DungeonScript.Position position; private boolean changing; private long seed;
     DungeonPanel(Consumer<Selection> changed) {
         this.changed = changed; setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
@@ -64,11 +68,19 @@ final class DungeonPanel extends JPanel {
     }
     private static JPanel row() { var row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 1)); row.setAlignmentX(LEFT_ALIGNMENT); return row; }
     void setOptionsVisible(boolean visible) { setup.setVisible(visible); summary.setVisible(!visible); revalidate(); }
-    void install(DungeonPreview value) {
+    void install(DungeonPreview value) { install(value,""); }
+    void install(DungeonPreview value,String image) {
+        if(!NpkResources.normalize(image).equals(NpkResources.normalize(minimapImage))){minimap=null;minimapDescription="示意布局 · 等待小地图资源";}minimapImage=image;
         int previous = Math.max(0, mazes.getSelectedIndex()); dungeon = value; changing = true; mazes.removeAllItems();
         for (int i = 0; i < dungeon.definition().mazes().size(); i++) mazes.addItem((i + 1) + " · " + dungeon.definition().mazes().get(i));
         mazes.setSelectedIndex(Math.min(previous, mazes.getItemCount() - 1)); changing = false;
         clearStates.clear(); mapSelections.clear(); condition.setVisible(value.definition().bossCondition()); condition.setSelected(true); fillPositions(); setVisible(true); rebuild();
+    }
+    String minimapImage(){return minimapImage;}
+    boolean nativeMinimap(){return minimap!=null;}
+    void setMinimap(String path,DungeonMinimap atlas,String reason){
+        if(!NpkResources.normalize(path).equals(NpkResources.normalize(minimapImage)))return;
+        minimap=atlas;minimapDescription=atlas==null?"示意布局 · "+reason:"原生 NPK 小地图 · "+path;summary.setToolTipText(summary.getText()+" · "+minimapDescription);grid.repaint();
     }
     private void fillPositions() {
         var maze = dungeon.definition().mazes().get(mazes.getSelectedIndex()); Object start = starts.getSelectedItem(), boss = bosses.getSelectedItem();
@@ -109,6 +121,7 @@ final class DungeonPanel extends JPanel {
     private void emit() { Selection selection = selection(); if (selection != null && !changing) changed.accept(selection); }
     private final class RoomGrid extends JComponent {
         RoomGrid() {
+            setOpaque(true);setBackground(Optional.ofNullable(UIManager.getColor("Panel.background")).orElse(new Color(45,48,53)));
             setToolTipText(""); addMouseListener(new MouseAdapter() { @Override public void mousePressed(MouseEvent e) {
                 if (layout != null) selectRoom(at(e.getPoint()));
             }});
@@ -121,14 +134,25 @@ final class DungeonPanel extends JPanel {
         }
         @Override public String getToolTipText(MouseEvent e) {
             if (layout == null) return null; var room = layout.room(at(e.getPoint()));
-            return room == null ? null : "房间 " + room.position() + " · " + room.choices().size() + " 个 MAP 候选";
+            return room == null ? null : "房间 " + room.position() + " · " + room.choices().size() + " 个 MAP 候选 · "+minimapDescription;
         }
         @Override protected void paintComponent(Graphics graphics) {
-            super.paintComponent(graphics); if (layout == null) return; Graphics2D g = (Graphics2D) graphics.create();
+            super.paintComponent(graphics);graphics.setColor(getBackground());graphics.fillRect(0,0,getWidth(),getHeight());if (layout == null) return; Graphics2D g = (Graphics2D) graphics.create();
             try {
                 int cell = cell(), ox = left(cell); g.setStroke(new BasicStroke(2));
                 for (var room : layout.rooms()) {
                     int x = ox + room.position().x() * cell, y = room.position().y() * cell;
+                    var tile=minimap==null?null:minimap.tile(room.mask());
+                    if(tile!=null){
+                        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);g.drawImage(tile,x,y,cell,cell,null);
+                        if(room.boss()&&minimap.boss()!=null){int width=Math.max(8,cell*3/8),height=Math.max(7,cell*21/64);g.drawImage(minimap.boss(),x+(cell-width)/2,y+(cell-height)/2,width,height,null);}
+                        int badgeX=x+2;
+                        if(cell>=20&&room.start()){badge(g,"S",badgeX,y+2,new Color(66,190,125));badgeX+=11;}
+                        if(cell>=20&&room.boss()){badge(g,"B",badgeX,y+2,new Color(245,157,66));badgeX+=11;}
+                        if(cell>=20&&room.hell())badge(g,"H",badgeX,y+2,new Color(194,123,235));
+                        if(room.position().equals(position)){g.setColor(new Color(90,185,255));g.drawRect(x+1,y+1,Math.max(1,cell-2),Math.max(1,cell-2));}
+                        continue;
+                    }
                     g.setColor(room.position().equals(position) ? new Color(70, 150, 220) : room.boss() ? new Color(190, 110, 40)
                             : room.start() ? new Color(60, 150, 95) : new Color(80, 85, 95));
                     g.fillRect(x + 3, y + 3, Math.max(1, cell - 6), Math.max(1, cell - 6));
@@ -140,5 +164,6 @@ final class DungeonPanel extends JPanel {
                 }
             } finally { g.dispose(); }
         }
+        private void badge(Graphics2D g,String text,int x,int y,Color color){g.setColor(color);g.fillRoundRect(x,y,10,11,3,3);g.setColor(new Color(20,30,35));g.setFont(g.getFont().deriveFont(Font.BOLD,9f));g.drawString(text,x+2,y+9);}
     }
 }

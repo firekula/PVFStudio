@@ -15,6 +15,10 @@ class DungeonMinimapTest {
             if(!path.equals("map/minimap/act1.img"))throw new IOException("optional icon absent");loaded.add(frame);var image=new BufferedImage(18,18,2);image.setRGB(0,0,0xff000000|frame);return new NpkResources.Sprite(image,0,0,18,18,Path.of("test.npk"),path,frame,frame);
         }
     }
+    @Test void bothModesUseTheSameNativeImageTagResolution(){
+        assertEquals("",DungeonMinimap.image("[maze info] [size] 1 1"));
+        assertEquals("Map/MiniMap/Act1.img",DungeonMinimap.image("[minimap image] `old.img`\n[minimap image] `Map/MiniMap/Act1.img`\n[maze info]"));
+    }
     @Test void verifiedMaskOrderLoadsOnlyLitTilesAndNeverInventsZeroMask()throws Exception{
         var lookup=new Lookup();var atlas=DungeonMinimap.load("map/minimap/act1.img",lookup);
         assertNull(atlas.tile(0));assertNull(atlas.tile(16));

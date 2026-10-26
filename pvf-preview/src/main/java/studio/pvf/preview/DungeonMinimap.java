@@ -9,6 +9,7 @@ public final class DungeonMinimap {
     private final List<BufferedImage> tiles;
     private final BufferedImage boss;
     private DungeonMinimap(List<BufferedImage> tiles,BufferedImage boss){this.tiles=List.copyOf(tiles);this.boss=boss;}
+    public static String image(String text){return ResourceScript.sections(text).stream().filter(s -> s.tag().equals("minimap image")&&!s.values().isEmpty()).reduce((a,b) -> b).map(s -> s.values().get(0)).orElse("");}
     public static DungeonMinimap load(String path,ScenePreview.SpriteLookup lookup)throws IOException{
         // Check the full shape table before displaying any native tile from a different format.
         for(int frame=0;frame<120;frame++){

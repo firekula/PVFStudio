@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
+import java.util.function.BooleanSupplier;
 
 /** One active preview, with its own background queue and stale-result guards. All public calls use EDT. */
 final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
@@ -209,6 +210,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         long version = ++directoryGeneration; Path config = settings;
         resourcesLoading=true;++minimapGeneration;minimaps.clear();
         if(editorDungeonPanel!=null)editorDungeonPanel.setMinimap(editorDungeonPanel.minimapImage(),null,"正在索引资源…");
+        if(dungeonPanel.isVisible())dungeonPanel.setMinimap(dungeonPanel.minimapImage(),null,"正在索引资源…");
         TaskProgress.Ticket progress = indexProgress.start("resources.discover");
         root.setText("正在索引 NPK / IMG…"); root.setToolTipText(directory.toString()); choose.setEnabled(false);
         worker.execute(() -> {
@@ -304,7 +306,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         if (selected instanceof DungeonOption) {
             frameLabel.setText("读取副本布局与房间候选…"); canvas.error = "加载副本…"; canvas.repaint();
             submit("载入副本布局与房间候选", () -> DungeonPreview.load(snapshot.path(), snapshot.text(), snapshot.lookup()::read), loaded -> {
-                dungeonPanel.install(loaded);
+                String image=studio.pvf.preview.DungeonMinimap.image(snapshot.text());dungeonPanel.install(loaded,image);
+                loadMinimap(image,result -> dungeonPanel.setMinimap(image,result.atlas(),result.reason()),() -> source==snapshot&&editorDungeonPanel==null&&dungeonPanel.isVisible());
                 if (dungeonPanel.selection() == null) fail(new IOException("布局没有可预览的房间；请检查 greed 与起点配置"));
             });
             return;
@@ -524,17 +527,20 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     void onViewChanged(Runnable listener){canvas.viewChanged=listener;}
     void onResourcesChanged(Runnable listener) { resourcesChanged=listener; }
     private void loadMinimap(DungeonEditorPanel panel){
-        long request=++minimapGeneration,directory=directoryGeneration;String path=panel.minimapImage();
+        String path=panel.minimapImage();loadMinimap(path,result -> panel.setMinimap(path,result.atlas(),result.reason()),() -> editorDungeonPanel==panel);
+    }
+    private void loadMinimap(String path,Consumer<MinimapResult> accept,BooleanSupplier active){
+        long request=++minimapGeneration,directory=directoryGeneration;
         if(minimapJob!=null)minimapJob.cancel(false);
-        if(resources==null||resourcesLoading||path.isBlank()){panel.setMinimap(path,null,path.isBlank()?"副本未指定小地图图像":resourcesLoading?"正在索引资源…":"未选择 NPK / IMG 目录");return;}
-        String key=NpkResources.normalize(path);var cached=minimaps.get(key);if(cached!=null){panel.setMinimap(path,cached.atlas(),cached.reason());return;}
-        NpkResources indexed=resources;panel.setMinimap(path,null,"正在读取原生小地图…");
+        if(resources==null||resourcesLoading||path.isBlank()){accept.accept(new MinimapResult(null,path.isBlank()?"副本未指定小地图图像":resourcesLoading?"正在索引资源…":"未选择 NPK / IMG 目录"));return;}
+        String key=NpkResources.normalize(path);var cached=minimaps.get(key);if(cached!=null){accept.accept(cached);return;}
+        NpkResources indexed=resources;accept.accept(new MinimapResult(null,"正在读取原生小地图…"));
         minimapJob=worker.submit(() -> {
             MinimapResult result;try{result=new MinimapResult(studio.pvf.preview.DungeonMinimap.load(path,indexed),"");}catch(Exception failure){result=new MinimapResult(null,message(failure));}
             var loaded=result;SwingUtilities.invokeLater(() -> {
                 if(closed||directory!=directoryGeneration)return;
                 minimaps.put(key,loaded);if(minimaps.size()>24)minimaps.remove(minimaps.keySet().iterator().next());
-                if(request==minimapGeneration&&editorDungeonPanel==panel)panel.setMinimap(path,loaded.atlas(),loaded.reason());
+                if(request==minimapGeneration&&active.getAsBoolean())accept.accept(loaded);
             });
         });
     }

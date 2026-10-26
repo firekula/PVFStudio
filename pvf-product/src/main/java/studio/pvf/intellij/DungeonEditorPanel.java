@@ -132,7 +132,7 @@ final class DungeonEditorPanel extends JPanel {
     private JButton action(String title,String name,Runnable run) { JButton b=button(title,name,run); writes.add(b); return b; }
     JPanel previewHost() { return previewHost; }
     Position position() { return position; }
-    String minimapImage(){if(model==null)return "";return model.source().sections("minimap image").stream().filter(s -> !s.values().isEmpty()).reduce((a,b) -> b).map(s -> s.values().getFirst().value()).orElse("");}
+    String minimapImage(){return model==null?"":DungeonMinimap.image(model.source().text());}
     void setMinimap(String path,DungeonMinimap atlas,String reason){
         if(!NpkResources.normalize(path).equals(NpkResources.normalize(minimapImage())))return;
         minimapPath=path;minimap=atlas;minimapStatus.setText(atlas==null?"示意布局 · "+reason:"原生 NPK 小地图");minimapStatus.setToolTipText(atlas==null?reason:path);grid.repaint();
