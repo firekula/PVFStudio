@@ -11,6 +11,24 @@ import static org.junit.jupiter.api.Assertions.*;
 import static studio.pvf.preview.DungeonScript.*;
 
 class DungeonPreviewTest {
+    @Test void hellRoomUsesSeparateMapWhileKeepingNormalBossAndMazeTopology() throws Exception {
+        var files = java.util.Map.of("dungeon/dungeon.lst", "1 `a.dgn`", "map/map.lst", "1 `a.map` 2 `boss.map` 60067 `hell.map`",
+                "map/a.map", "[dungeon] 1 [/dungeon] [type] `[normal]` [greed] `BBBB`",
+                "map/boss.map", "[dungeon] 1 [/dungeon] [type] `[boss]` [greed] `EEEE`",
+                "map/hell.map", "[type] `[normal]` [greed] `BBBB`");
+        String text = "[hell dungeon] 1 [maze info] [size] 2 1 [greed] `BBEE` [start map] 0 0 [/start map] [boss map] 1 0 [/boss map] [seal door map index] 60067 [seal door pos] 0 0";
+        var dungeon = DungeonPreview.load("dungeon/a.dgn", text, files::get);
+        var normal = dungeon.arrange(0,new DungeonScript.Position(0,0),new DungeonScript.Position(1,0),0);
+        var hell = dungeon.arrange(0,new DungeonScript.Position(0,0),new DungeonScript.Position(1,0),0,true);
+        assertEquals(1,normal.room(new DungeonScript.Position(0,0)).map().id());
+        assertEquals(60067,hell.room(new DungeonScript.Position(0,0)).map().id());
+        assertTrue(hell.room(new DungeonScript.Position(0,0)).hell());
+        assertEquals(2,hell.room(new DungeonScript.Position(1,0)).map().id());
+        assertTrue(hell.maze().connected(new DungeonScript.Position(0,0),DungeonScript.Direction.RIGHT));
+        var excluded = DungeonPreview.load("dungeon/a.dgn",text + " [escape hell] 1",files::get)
+                .arrange(0,new DungeonScript.Position(0,0),new DungeonScript.Position(1,0),0,true);
+        assertEquals(1,excluded.room(new DungeonScript.Position(0,0)).map().id());
+    }
     private static final String DGN = "[pathgate object] 10 11 12 13 14 15 16 17 18 19 [maze info] [size] 2 2 "
             + "[greed] `JJMM\nDDGG` [start map] 0 0 [/start map] [boss map] 1 1 [/boss map]";
     private static final Position START = new Position(0, 0), BOSS = new Position(1, 1);

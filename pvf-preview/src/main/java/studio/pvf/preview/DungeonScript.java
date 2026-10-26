@@ -13,14 +13,24 @@ public final class DungeonScript {
         public Direction opposite() { return values()[ordinal() ^ 1]; }
     }
     public record Position(int x, int y) { @Override public String toString() { return "(" + x + "," + y + ")"; } }
+    public record HellRoom(int mapId, Position position, boolean excluded) {
+        public static final HellRoom NONE = new HellRoom(0, null, false);
+        public boolean configured() { return mapId > 0 && position != null && !excluded; }
+    }
     public record Maze(int width, int height, List<Integer> masks, List<Position> starts, List<Position> bosses,
-                       Map<Position, List<Integer>> maps, Map<Position, List<Integer>> bossMaps) {
+                       Map<Position, List<Integer>> maps, Map<Position, List<Integer>> bossMaps, HellRoom hell) {
+        public Maze(int width, int height, List<Integer> masks, List<Position> starts, List<Position> bosses,
+                    Map<Position,List<Integer>> maps, Map<Position,List<Integer>> bossMaps) {
+            this(width, height, masks, starts, bosses, maps, bossMaps, HellRoom.NONE);
+        }
         public int mask(Position p) { return p.x >= 0 && p.y >= 0 && p.x < width && p.y < height ? masks.get(p.x + p.y * width) : 0; }
         public Position neighbor(Position p, Direction d) { return new Position(p.x + d.dx, p.y + d.dy); }
         public boolean connected(Position p, Direction d) { return (mask(p) & d.bit) != 0 && (mask(neighbor(p, d)) & d.opposite().bit) != 0; }
         @Override public String toString() { return width + "×" + height; }
     }
-    public record Definition(List<Maze> mazes, List<Integer> gateObjects, boolean bossCondition) {}
+    public record Definition(List<Maze> mazes, List<Integer> gateObjects, boolean bossCondition, boolean hellEnabled) {
+        public Definition(List<Maze> mazes, List<Integer> gateObjects, boolean bossCondition) { this(mazes, gateObjects, bossCondition, false); }
+    }
     public record MapInfo(List<Integer> dungeons, String type, Map<Integer, Integer> shapes, List<Position> gates) {
         public boolean supports(int mask) { return shapes.isEmpty() || shapes.containsKey(mask); }
     }
@@ -29,7 +39,8 @@ public final class DungeonScript {
 
     public static Definition parse(String text) throws IOException {
         List<Maze> mazes = new ArrayList<>(); List<Integer> gates = Collections.nCopies(12, -1);
-        Builder maze = null; boolean bossCondition = false; int fixedMap = -1;
+        Builder maze = null; boolean bossCondition = false, hellEnabled = false; int fixedMap = -1;
+        int prefixHellMap = 0; Position prefixHellPosition = null; boolean prefixExcluded = false;
         for (var section : ResourceScript.sections(text)) {
             var v = section.values();
             switch (section.tag()) {
@@ -39,11 +50,24 @@ public final class DungeonScript {
                             ids.get(6), ids.get(7), -1, ids.get(8), ids.get(9), -1);
                 }
                 case "boss room entrance condition" -> bossCondition = !v.isEmpty();
+                case "hell dungeon" -> hellEnabled = !v.isEmpty() && integer(v, 0) != 0;
+                case "seal door map index" -> {
+                    if (maze == null) prefixHellMap = integer(v, 0); else maze.hellMap = integer(v, 0);
+                }
+                case "seal door pos" -> {
+                    var position = new Position(integer(v, 0), integer(v, 1));
+                    if (maze == null) prefixHellPosition = position; else maze.hellPosition = position;
+                }
+                case "escape hell" -> {
+                    boolean excluded = !v.isEmpty() && integer(v, 0) != 0;
+                    if (maze == null) prefixExcluded = excluded; else maze.excluded = excluded;
+                }
                 case "warroom map index" -> fixedMap = integer(v, 0);
                 case "maze info" -> {
                     if (maze != null) mazes.add(maze.build());
                     if (mazes.size() >= 256) throw error(section, "布局超过 256 个");
                     maze = new Builder();
+                    if (mazes.isEmpty()) { maze.hellMap = prefixHellMap; maze.hellPosition = prefixHellPosition; maze.excluded = prefixExcluded; }
                 }
                 case "size", "greed", "start map", "boss map", "map specification", "boss map specification" -> {
                     if (maze == null) continue;
@@ -66,7 +90,7 @@ public final class DungeonScript {
         if (mazes.isEmpty() && fixedMap >= 0) mazes.add(new Maze(1, 1, List.of(0), List.of(new Position(0, 0)), List.of(),
                 Map.of(new Position(0, 0), List.of(fixedMap)), Map.of()));
         if (mazes.isEmpty()) throw new IOException("DGN 没有 [maze info] 布局或 [warroom map index]");
-        return new Definition(List.copyOf(mazes), List.copyOf(gates), bossCondition);
+        return new Definition(List.copyOf(mazes), List.copyOf(gates), bossCondition, hellEnabled);
     }
 
     public static MapInfo map(String text) throws IOException {
@@ -112,7 +136,7 @@ public final class DungeonScript {
         List<Integer> result = new ArrayList<>();
         // DNF_Single DNF.exe: table 0x594278, comparisons at 0x483278/0x48539C.
         // The sixteen glyphs map directly to the same four direction bits as AA..PP.
-        String legacy = "┼┾╀╄┽┿╃╇╁╆╂╊╅╈╉╋";
+        String legacy = LEGACY_CODES;
         for (int i = 0; i < raw.length();) {
             char c = raw.charAt(i);
             int mask = legacy.indexOf(c);
@@ -123,6 +147,7 @@ public final class DungeonScript {
         }
         return List.copyOf(result);
     }
+    public static final String LEGACY_CODES = "┼┾╀╄┽┿╃╇╁╆╂╊╅╈╉╋";
     static List<Integer> ints(List<String> values) throws IOException {
         List<Integer> result = new ArrayList<>(); for (int i = 0; i < values.size(); i++) result.add(integer(values, i)); return List.copyOf(result);
     }
@@ -135,13 +160,14 @@ public final class DungeonScript {
     private static IOException error(ResourceScript.Section s, String message) { return new IOException("第 " + s.line() + " 行 [" + s.tag() + "]：" + message); }
     private static final class Builder {
         int width, height; List<Integer> masks = List.of(); List<Position> starts = List.of(), bosses = List.of();
+        int hellMap; Position hellPosition; boolean excluded;
         Map<Position, List<Integer>> maps = new LinkedHashMap<>(), bossMaps = new LinkedHashMap<>();
         Maze build() throws IOException {
             if (width < 1 || width > 50 || height < 1 || height > 50 || masks.size() > width * height)
                 throw new IOException("布局 size 须为 1～50，greed 房间数不能超过宽×高");
             var padded = new ArrayList<>(masks); while (padded.size() < width * height) padded.add(0);
             for (var p : starts) check(p); for (var p : bosses) check(p); for (var p : maps.keySet()) check(p); for (var p : bossMaps.keySet()) check(p);
-            return new Maze(width, height, List.copyOf(padded), starts, bosses, Map.copyOf(maps), Map.copyOf(bossMaps));
+            return new Maze(width, height, List.copyOf(padded), starts, bosses, Map.copyOf(maps), Map.copyOf(bossMaps), new HellRoom(hellMap, hellPosition, excluded));
         }
         private void check(Position p) throws IOException {
             if (p.x < 0 || p.y < 0 || p.x >= width || p.y >= height) throw new IOException("布局中的坐标越界：" + p);

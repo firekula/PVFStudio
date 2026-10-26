@@ -7,7 +7,10 @@ import static studio.pvf.preview.DungeonScript.*;
 /** A reproducible script layout; the online server's random instance is not available to the editor. */
 public final class DungeonPreview {
     public record MapChoice(int id, String path, MapInfo info) { @Override public String toString() { return id + " · " + path; } }
-    public record Room(Position position, int mask, boolean start, boolean boss, List<MapChoice> choices, int selected) {
+    public record Room(Position position, int mask, boolean start, boolean boss, List<MapChoice> choices, int selected, boolean hell) {
+        public Room(Position position, int mask, boolean start, boolean boss, List<MapChoice> choices, int selected) {
+            this(position, mask, start, boss, choices, selected, false);
+        }
         public MapChoice map() { return choices.isEmpty() ? null : choices.get(selected); }
     }
     public record Layout(Maze maze, Position start, Position boss, List<Room> rooms, List<String> warnings) {
@@ -19,12 +22,12 @@ public final class DungeonPreview {
     private final Map<Integer, MapChoice> maps;
     private final Map<Integer, List<MapChoice>> pools = new HashMap<>();
     private final List<String> warnings;
-    private DungeonPreview(Definition definition, List<MapChoice> maps, List<String> warnings) {
+    private DungeonPreview(Definition definition, List<MapChoice> maps, List<String> warnings, Set<Integer> hellOnly) {
         this.definition = definition; this.warnings = warnings; Map<Integer, MapChoice> indexed = new HashMap<>();
         maps.forEach(m -> indexed.put(m.id(), m)); this.maps = Map.copyOf(indexed);
         for (int mask = 0; mask < 16; mask++) for (boolean boss : new boolean[]{false, true}) {
             int shape = mask; String type = boss ? "boss" : "normal";
-            pools.put(mask + (boss ? 16 : 0), maps.stream().filter(m -> m.info().type().equals(type) && m.info().supports(shape)).toList());
+            pools.put(mask + (boss ? 16 : 0), maps.stream().filter(m -> !hellOnly.contains(m.id()) && m.info().type().equals(type) && m.info().supports(shape)).toList());
         }
     }
     public Definition definition() { return definition; }
@@ -38,6 +41,10 @@ public final class DungeonPreview {
             if (resolvePath("dungeon/", entry.getValue()).equals(path.toLowerCase(Locale.ROOT))) { id = entry.getKey(); break; }
         Set<Integer> explicit = new HashSet<>();
         for (var maze : definition.mazes()) { maze.maps().values().forEach(explicit::addAll); maze.bossMaps().values().forEach(explicit::addAll); }
+        Set<Integer> ordinaryExplicit = Set.copyOf(explicit), hellMaps = new HashSet<>();
+        for (var maze : definition.mazes()) {
+            if (definition.hellEnabled() && maze.hell().configured()) { explicit.add(maze.hell().mapId()); hellMaps.add(maze.hell().mapId()); }
+        }
         List<MapChoice> maps = new ArrayList<>(); List<String> warnings = new ArrayList<>();
         if (id < 0) warnings.add("DGN 未注册于 dungeon/dungeon.lst，只使用明确指定的 MAP");
         var catalog = new TreeMap<>(EntityScript.catalog(mapList));
@@ -54,13 +61,19 @@ public final class DungeonPreview {
         }
         if (maps.isEmpty() && id >= 0 && explicit.isEmpty())
             warnings.add("DGN 没有指定 MAP；map/map.lst 中的地图也未声明 [dungeon] " + id + " 关联，仅显示副本布局");
-        return new DungeonPreview(definition, List.copyOf(maps), List.copyOf(warnings));
+        Set<Integer> hellOnly = new HashSet<>(); int dungeonId = id;
+        for (MapChoice map : maps) if (hellMaps.contains(map.id()) && !ordinaryExplicit.contains(map.id())
+                && (dungeonId < 0 || !map.info().dungeons().contains(dungeonId))) hellOnly.add(map.id());
+        return new DungeonPreview(definition, List.copyOf(maps), List.copyOf(warnings), Set.copyOf(hellOnly));
     }
     private static String resolvePath(String root, String reference) {
         String value = reference.replace('\\', '/').toLowerCase(Locale.ROOT); return value.startsWith(root) ? value : root + value;
     }
 
     public Layout arrange(int mazeIndex, Position start, Position boss, long seed) {
+        return arrange(mazeIndex, start, boss, seed, false);
+    }
+    public Layout arrange(int mazeIndex, Position start, Position boss, long seed, boolean hellMode) {
         Maze maze = definition.mazes().get(mazeIndex); Random random = new Random(seed); List<Room> rooms = new ArrayList<>();
         List<String> problems = new ArrayList<>(warnings);
         for (int y = 0; y < maze.height(); y++) for (int x = 0; x < maze.width(); x++) {
@@ -79,10 +92,16 @@ public final class DungeonPreview {
                 if (!different.isEmpty()) problems.add("房间 " + position + " 使用 DGN 明确指定的 MAP " + String.join("、", different)
                         + "；MAP greed 未列出布局门型 " + (char) ('A' + mask) + "，保留关联并按 DGN 布局判定通路");
             }
+            boolean isHell = hellMode && definition.hellEnabled() && maze.hell().configured() && position.equals(maze.hell().position());
+            if (isHell) {
+                MapChoice replacement = maps.get(maze.hell().mapId());
+                pool = replacement == null ? List.of() : List.of(replacement);
+                if (replacement == null) problems.add("深渊房 " + position + " 没有可用的 MAP " + maze.hell().mapId());
+            }
             if (pool.isEmpty()) problems.add("房间 " + position + "（" + (char) ('A' + mask) + "）没有匹配的 " + (isBoss ? "Boss" : "普通") + " MAP");
             for (Direction d : Direction.values()) if ((mask & d.bit) != 0 && !maze.connected(position, d))
                 problems.add("房间 " + position + " " + d.label + "方向连接未与相邻房间对应，预览关闭该出口");
-            rooms.add(new Room(position, mask, position.equals(start), isBoss, pool, pool.isEmpty() ? 0 : random.nextInt(pool.size())));
+            rooms.add(new Room(position, mask, position.equals(start), isBoss, pool, pool.isEmpty() ? 0 : random.nextInt(pool.size()), isHell));
         }
         if (start != null && start.equals(boss)) problems.add("起点与 Boss 坐标相同");
         return new Layout(maze, start, boss, List.copyOf(rooms), List.copyOf(problems));
