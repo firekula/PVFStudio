@@ -1,5 +1,5 @@
 rootProject.name = "pvf-studio"
-include("pvf-core", "pvf-workspace", "pvf-cli", "pvf-preview")
+include("pvf-core", "pvf-workspace", "pvf-cli", "pvf-preview", "pvf-scene-edit")
 
 // Core builds stay small and do not download an IDE distribution.
 if (providers.gradleProperty("withIntellij").orNull == "true") {

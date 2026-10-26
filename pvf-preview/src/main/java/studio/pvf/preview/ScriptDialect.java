@@ -3,9 +3,9 @@ package studio.pvf.preview;
 import java.util.Locale;
 
 /** Canonical preview keywords only; source text, quoted paths and strings stay untouched. */
-final class ScriptDialect {
+public final class ScriptDialect {
     private ScriptDialect() {}
-    static String tag(String raw) {
+    public static String tag(String raw) {
         String tag = raw.trim().toLowerCase(Locale.ROOT);
         if (tag.startsWith("/")) return "/" + tag(tag.substring(1));
         return switch (tag) {
@@ -41,7 +41,7 @@ final class ScriptDialect {
             default -> tag;
         };
     }
-    static String flag(String raw) {
+    public static String flag(String raw) {
         String flag = raw.replace("[", "").replace("]", "").toLowerCase(Locale.ROOT).trim();
         return switch (flag) {
             case "원경" -> "distantback";

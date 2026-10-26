@@ -24,5 +24,5 @@ subprojects {
 }
 
 tasks.named("check") {
-    dependsOn(":pvf-core:check", ":pvf-workspace:check", ":pvf-cli:check", ":pvf-preview:check")
+    dependsOn(":pvf-core:check", ":pvf-workspace:check", ":pvf-cli:check", ":pvf-preview:check", ":pvf-scene-edit:check")
 }
