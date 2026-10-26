@@ -44,6 +44,14 @@ class DungeonPreviewTest {
         assertNull(absent.room(START).map());
         assertTrue(absent.warnings().stream().anyMatch(w -> w.contains("未注册") && w.contains("999")));
     }
+    @Test void explicitRolePoolsKeepMapsWhoseOwnTypeDiffersWhileAutomaticPoolsStayStrict()throws Exception{
+        var source=DGN+" [boss map specification] 1 1 1 [/boss map specification] [map specification] 0 0 3 [/map specification]";var dungeon=DungeonPreview.load("dungeon/a.dgn",source,files()::get);var layout=dungeon.arrange(0,START,BOSS,0);
+        assertEquals(1,layout.room(BOSS).map().id());assertTrue(layout.room(BOSS).boss());assertEquals("normal",layout.room(BOSS).map().info().type());
+        assertEquals(3,layout.room(START).map().id());assertFalse(layout.room(START).boss());assertEquals("boss",layout.room(START).map().info().type());
+        assertTrue(layout.warnings().stream().anyMatch(w -> w.contains("type")&&w.contains("保留关联")));assertEquals(DungeonScript.parse(source),dungeon.definition());
+        var auto=DungeonPreview.load("dungeon/a.dgn",DGN,files()::get).arrange(0,START,BOSS,0);assertEquals("normal",auto.room(START).map().info().type());assertEquals("boss",auto.room(BOSS).map().info().type());
+        var missing=DungeonPreview.load("dungeon/a.dgn",DGN+" [boss map specification] 1 1 999 [/boss map specification]",files()::get).arrange(0,START,BOSS,0);assertNull(missing.room(BOSS).map(),"A missing explicit Boss ID must not silently fall back to another MAP");
+    }
     @Test void binaryScriptEscapedGreedSeparatorsMatchPlainTextAndKeepDirectionBits() throws Exception {
         String projected = DGN.replace("JJMM\nDDGG", "JJMM\\r\\nDDGG");
         var plain = DungeonScript.parse(DGN).mazes().get(0);

@@ -83,6 +83,9 @@ public final class DungeonPreview {
                     ? maze.bossMaps().get(position) : maze.maps().get(position);
             List<MapChoice> pool = candidates(mazeIndex,position,isBoss);
             if (specified != null) {
+                String role=isBoss?"boss":"normal";
+                var otherTypes=pool.stream().filter(m -> !m.info().type().equals(role)).map(m -> m.id()+" ("+m.info().type()+")").distinct().toList();
+                if(!otherTypes.isEmpty())problems.add("房间 "+position+" 的 DGN 明确指定 MAP "+String.join("、",otherTypes)+"；MAP type 与 "+role+" 房间身份不同，预览保留关联，未修改 MAP");
                 var different = pool.stream().filter(m -> !m.info().supports(mask)).map(m -> Integer.toString(m.id())).distinct().toList();
                 if (!different.isEmpty()) problems.add("房间 " + position + " 使用 DGN 明确指定的 MAP " + String.join("、", different)
                         + "；MAP greed 未列出布局门型 " + (char) ('A' + mask) + "，保留关联并按 DGN 布局判定通路");
@@ -105,8 +108,9 @@ public final class DungeonPreview {
     /** Effective metadata pool for one room/role; exposing it never pins an automatic source binding. */
     public List<MapChoice> candidates(int mazeIndex,Position position,boolean boss) {
         Maze maze=definition.mazes().get(mazeIndex);int mask=maze.mask(position);
+        boolean explicitRole=boss?maze.bossMaps().containsKey(position):maze.maps().containsKey(position);
         List<Integer> specified=boss&&maze.bossMaps().containsKey(position)?maze.bossMaps().get(position):maze.maps().get(position);
-        List<MapChoice> pool=specified==null?pools.get(mask+(boss?16:0)):specified.stream().map(maps::get).filter(Objects::nonNull).filter(m -> boss?m.info.type().equals("boss"):m.info.type().equals("normal")).toList();
+        List<MapChoice> pool=specified==null?pools.get(mask+(boss?16:0)):specified.stream().map(maps::get).filter(Objects::nonNull).filter(m -> explicitRole||(boss?m.info.type().equals("boss"):m.info.type().equals("normal"))).toList();
         if(boss&&pool.isEmpty()&&!maze.bossMaps().containsKey(position))pool=pools.get(mask+16);
         return List.copyOf(pool);
     }
