@@ -1134,10 +1134,14 @@ final class PvfStudioFrame extends JFrame {
                 thaw.run();
                 try {
                     var touched=affected.stream().filter(s -> prepared.documentTexts().containsKey(s.path)).toList();
+                    var beforeTexts=Map.of("map/map.lst",normalizeNewlines(prepared.registration().listEdit().baseline()),dungeonPath,normalizeNewlines(prepared.registration().dungeonEdit().baseline()));
+                    var afterTexts=new HashMap<String,String>();prepared.documentTexts().forEach((path,text) -> afterTexts.put(path,normalizeNewlines(text)));
+                    var originalDocuments=new HashMap<String,Document>();var persistedBefore=new HashMap<>(beforeTexts);
+                    touched.forEach(tab -> {originalDocuments.put(tab.path,tab.editor.getDocument());persistedBefore.put(tab.path,beforePersisted.get(tab));});
                     com.intellij.openapi.command.CommandProcessor.getInstance().executeCommand(origin.editor.getProject(), () -> {
                         ApplicationManager.getApplication().runWriteAction(() -> {
                             for(Session s:touched) {
-                                s.editor.getDocument().setText(normalizeNewlines(prepared.documentTexts().get(s.path)));
+                                setTransactionText(s.editor.getDocument(),afterTexts.get(s.path));
                                 s.persistedText=s.editor.getDocument().getText(); s.persistedStamp=s.editor.getDocument().getModificationStamp(); updateSessionTitle(s);
                             }
                         });
@@ -1150,11 +1154,18 @@ final class PvfStudioFrame extends JFrame {
                                     if(workspace!=current)throw new IOException("副本工作区已关闭");
                                     Session clone=sessions.get(prepared.registration().destinationPath());
                                     if(!after&&clone!=null&&clone.isUnsaved())throw new IOException("新 MAP 有未保存编辑，请先撤销这些编辑");
-                                    for(Session old:touched){Session live=sessions.get(old.path);if(live!=null&&live.editor.getDocument()!=old.editor.getDocument()){String expected=after?normalizeNewlines(raw.get(old.path)):normalizeNewlines(prepared.documentTexts().get(old.path));if(!live.editor.getDocument().getText().equals(expected))throw new IOException("重新打开的文档已变化，请先撤销编辑："+old.path);}}
+                                    var documents=new LinkedHashMap<String,Document>();var texts=new HashMap<String,String>();
+                                    for(String path:beforeTexts.keySet()){
+                                        Session live=sessions.get(path);Document document=live!=null?live.editor.getDocument():retainedSceneDocuments.getOrDefault(path,originalDocuments.get(path));
+                                        if(document!=null){if(!document.isWritable())throw new IOException("关联文档只读："+path);documents.put(path,document);texts.put(path,document.getText());}
+                                    }
+                                    var targets=SceneDocumentReconciliation.targets(beforeTexts,afterTexts,texts,after);
                                     current.restoreBatch(batch,after);
-                                    ApplicationManager.getApplication().runWriteAction(() -> {for(Session old:touched){Session live=sessions.get(old.path);if(live!=null&&live.editor.getDocument()!=old.editor.getDocument()){live.editor.getDocument().setText(normalizeNewlines(after?prepared.documentTexts().get(old.path):raw.get(old.path)));live.persistedText=after?normalizeNewlines(prepared.documentTexts().get(old.path)):beforePersisted.get(old);live.persistedStamp=-1;updateSessionTitle(live);}}});
-                                    if(!after&&clone!=null) { sessions.remove(clone.path); tabs.remove(clone.component()); releaseSession(clone); }
-                                    for(Session s:touched) {String persisted=after?normalizeNewlines(prepared.documentTexts().get(s.path)):beforePersisted.get(s);s.persistedText=persisted;s.persistedStamp=-1;Session live=sessions.get(s.path);if(live!=null){live.persistedText=persisted;live.persistedStamp=-1;updateSessionTitle(live);}}
+                                    ApplicationManager.getApplication().runWriteAction(() -> targets.forEach((path,text) -> {
+                                        setTransactionText(documents.get(path),text);Session live=sessions.get(path);
+                                        if(live!=null){live.persistedText=after?afterTexts.get(path):persistedBefore.get(path);live.persistedStamp=-1;updateSessionTitle(live);}
+                                    }));
+                                    if(!after&&clone!=null){sessions.remove(clone.path);tabs.remove(clone.component());releaseSession(clone);}
                                     refreshSceneStructure(prepared.registration().destinationPath());
                                 } catch(IOException failure) { throw new com.intellij.openapi.command.undo.UnexpectedUndoException(failure.getMessage()); }
                             }
@@ -1170,6 +1181,10 @@ final class PvfStudioFrame extends JFrame {
                 }
             },thaw);
         },thaw);
+    }
+    private static void setTransactionText(Document document,String text){
+        // The custom global action owns the entire batch; avoid separate Document actions with different lifetimes.
+        com.intellij.openapi.command.undo.UndoUtil.disableUndoIn(document,() -> document.setText(text));
     }
     private void refreshSceneStructure(String selection) {
         previewSignature="";

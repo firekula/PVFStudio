@@ -50,7 +50,8 @@ final class EditSupport {
         }
         return result;
     }
-    static ScriptEdit.Replacement appendRecord(SourceDocument source, String tag, String record) throws IOException {
+    static ScriptEdit.Replacement appendRecord(SourceDocument source, String tag, String record) throws IOException {return appendRecord(source,tag,record,false);}
+    static ScriptEdit.Replacement appendRecord(SourceDocument source,String tag,String record,boolean last)throws IOException{
         var existing = source.sections(tag);
         if (existing.isEmpty()) {
             int at = source.text().length();
@@ -59,7 +60,7 @@ final class EditSupport {
             return source.replacement(new SourceDocument.Range(at, at), leadingNewline(source.text(), at, nl)
                     + "[" + tag + "]" + nl + record + nl + "[/" + tag + "]" + nl);
         }
-        var section = existing.get(0);
+        var section = existing.get(last?existing.size()-1:0);
         if (!source.safe(section.range())) throw new IOException("该区段尚未完整解析");
         int at = section.end(); String nl = source.newline();
         return source.replacement(new SourceDocument.Range(at, at), leadingNewline(source.text(), at, nl) + record + nl);

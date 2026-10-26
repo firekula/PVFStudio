@@ -166,6 +166,7 @@ public final class DungeonDocument {
     public ScriptEdit copyMaze(int maze) throws IOException {
         var s = scope(maze); if (scopes.size() >= 256) throw new IOException("布局最多 256 套");
         String copy = source.text().substring(s.start,s.end); int at = s.end;
+        for(String tag:List.of("seal door map index","seal door pos","escape hell")){var inherited=localSections(s,tag).stream().filter(section -> section.heading().range().start()<s.start).reduce((a,b) -> b);if(inherited.isPresent())copy+=source.newline()+source.slice(inherited.get().range());}
         return edit("复制布局",List.of(source.replacement(new SourceDocument.Range(at,at),source.newline()+copy+source.newline())));
     }
     public ScriptEdit addMaze(int width, int height) throws IOException {

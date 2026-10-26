@@ -59,7 +59,7 @@ final class MapRecords {
     }
 
     private void placements(SourceDocument.Section section) throws IOException {
-        var values = section.values(); int ordinal = 0;
+        var values = section.values();var nativeValues=values.stream().map(SourceDocument.Token::value).toList(); int ordinal = 0;
         for (int start = 0; start < values.size();) {
             MapEntry.Type type; Map<String,Integer> fields; int count;
             switch (section.tag()) {
@@ -73,16 +73,9 @@ final class MapRecords {
                 case "monster", "monster condition" -> {
                     type = MapEntry.Type.MONSTER; need(values, start, 10);
                     fields = fields("id", "autoLevel", "level", "x", "y", "z", "randomDrops", "fixedDrops", "copyType", "monsterType");
-                    int typeIndex = 9;
-                    if (flag(values.get(start + typeIndex)).equals("npc")) {
-                        need(values, start, 12); fields.put("npcId", 10); fields.put("monsterType", 11); typeIndex = 11;
-                    }
-                    count = typeIndex + 1; String monsterType = flag(values.get(start + typeIndex));
-                    if (monsterType.equals("champion") || monsterType.equals("super champion")) {
-                        need(values, start, count + 1); int traits = EditSupport.integer(values.get(start + count).value());
-                        if (traits < 0 || traits > 64) throw new IOException("精英特性数量超出范围");
-                        fields.put("traitCount", count); count += traits + 1;
-                    }
+                    var schema=studio.pvf.preview.NativeMonsterRecord.read(nativeValues,start);count=schema.width();
+                    if(schema.typeIndex()==11){fields.put("npcId",10);fields.put("monsterType",11);}
+                    if(schema.traitCountIndex()>=0)fields.put("traitCount",schema.traitCountIndex());
                 }
                 case "passive object" -> { type = MapEntry.Type.PASSIVE; count = 4; fields = fields("id", "x", "y", "z"); }
                 case "special passive object" -> {

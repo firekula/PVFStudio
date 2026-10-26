@@ -101,7 +101,7 @@ public final class MapDocument {
             default -> throw new IOException("不支持的对象类型");
         }
         structuralSection(ScriptDialect.tag(tag));
-        List<ScriptEdit.Replacement> changes = new ArrayList<>(); changes.add(EditSupport.appendRecord(source, tag, record));
+        List<ScriptEdit.Replacement> changes = new ArrayList<>(); changes.add(EditSupport.appendRecord(source, tag, record,kind==EntityScript.Kind.MONSTER));
         if (ai != null) {
             var old = ai.values(); int at = old.isEmpty() ? ai.heading().range().end() : old.get(old.size() - 1).range().end();
             changes.add(source.replacement(new SourceDocument.Range(at, at), " `[normal]`"));
@@ -198,6 +198,7 @@ public final class MapDocument {
         return replaceTileGrid(basic, extra);
     }
     public ScriptEdit replaceTileGrid(List<String> basic, List<String> extended) throws IOException {
+        structuralSection("tile");structuralSection("extended tile");
         if (basic.isEmpty() || basic.size() + extended.size() > 4096) throw new IOException("基础地块不能为空，地块总数最多 4096");
         if (extended.size() % basic.size() != 0) throw new IOException("新增扩展地块必须组成完整行");
         List<ScriptEdit.Replacement> changes = new ArrayList<>();

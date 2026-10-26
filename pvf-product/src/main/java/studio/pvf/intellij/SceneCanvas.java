@@ -12,6 +12,8 @@ class SceneCanvas extends JPanel {
         void press(Point2D point,boolean cycle); void drag(Point2D point); void release(Point2D point); void cancel();
         void paint(Graphics2D g);
     }
+    String sceneSourcePath,sceneSourceText;
+    boolean matchesSource(studio.pvf.sceneedit.MapDocument model){return scene==null||model.path().equals(sceneSourcePath)&&model.source().text().equals(sceneSourceText);}
     Interaction interaction;
     Runnable viewChanged=() -> {};
     private boolean spacePan,editingGesture;

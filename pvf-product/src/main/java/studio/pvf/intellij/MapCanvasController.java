@@ -38,6 +38,7 @@ final class MapCanvasController implements SceneCanvas.Interaction {
     String error() { return error; }
     void placeAt(Consumer<Point2D> action) { cancel(); placement=action; canvas.setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR)); canvas.requestFocusInWindow(); canvas.repaint(); }
     public void press(Point2D point,boolean next) {
+        if(model==null||!canvas.matchesSource(model)){cancel();return;}
         if(placement!=null) { var action=placement; placement=null; canvas.setCursor(Cursor.getDefaultCursor()); action.accept(canvas.viewToWorld(point,1)); return; }
         if(model==null)return; var index=new SceneHitIndex(model,canvas.scene); var hits=index.hits(canvas,point);
         cycle=lastClick!=null&&lastClick.distance(point)<4&&lastHits.equals(hits)&&!hits.isEmpty()?(cycle+1)%hits.size():0;
@@ -49,7 +50,7 @@ final class MapCanvasController implements SceneCanvas.Interaction {
     public void drag(Point2D point) { if(initial!=null) { lastPoint=indexPoint(point,scroll); canvas.repaint(); } }
     public void release(Point2D point) {
         if(initial==null)return; drag(point);
-        if(writable&&version==currentVersion.getAsLong()&&selected!=null) {
+        if(writable&&version==currentVersion.getAsLong()&&selected!=null&&canvas.matchesSource(model)) {
             var entry=model.entries().stream().filter(e -> e.id().equals(selected)).findFirst().orElse(null);
             double dx=Math.rint(lastPoint.getX()-initial.getX()),dy=Math.rint(lastPoint.getY()-initial.getY());
             if(entry!=null&&entry.type()!=MapEntry.Type.BACKGROUND&&(dx!=0||dy!=0)) {

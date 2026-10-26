@@ -76,24 +76,13 @@ public final class EntityScript {
     /** Binary token scripts have no record newlines; split schema records rather than discarding a row's tail. */
     private static List<ResourceScript.Row> placementRows(ResourceScript.Section section, Kind kind, boolean special) throws IOException {
         if (special) return specialPlacementRows(section);
-        var physical = section.rows(); List<ResourceScript.Row> result = new ArrayList<>();
-        for (var row : physical) {
-            var fields = row.values();
-            for (int start = 0; start < fields.size();) {
-                int count;
-                if (kind == Kind.PASSIVE) count = 4;
-                else if (kind == Kind.MONSTER) {
-                    count = 10;
-                    if (fields.size() - start >= 10 && SceneScript.flag(fields.get(start + 9)).equals("champion")) count++;
-                } else {
-                    // NPC Z is optional in old text; the next record is identified by its direction field.
-                    int left = fields.size() - start;
-                    boolean nextAtFour = left >= 6 && List.of("left", "right").contains(SceneScript.flag(fields.get(start + 5)));
-                    count = left == 4 || nextAtFour ? 4 : 5;
-                }
-                int end = Math.min(fields.size(), start + count);
-                result.add(new ResourceScript.Row(row.line(), fields.subList(start, end))); start = end;
-            }
+        List<ResourceScript.Row> result = new ArrayList<>();var fields=section.values();
+        for(int start=0;start<fields.size();) {
+            int count;
+            if(kind==Kind.PASSIVE)count=4;
+            else if(kind==Kind.MONSTER)count=NativeMonsterRecord.read(fields,start).width();
+            else {int left=fields.size()-start;boolean nextAtFour=left>=6&&List.of("left","right").contains(SceneScript.flag(fields.get(start+5)));count=left==4||nextAtFour?4:5;}
+            int end=Math.min(fields.size(),start+count);result.add(new ResourceScript.Row(section.valueLines().get(start),fields.subList(start,end)));start=end;
         }
         return result;
     }

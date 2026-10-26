@@ -38,11 +38,16 @@ class SceneCanvasTest {
             control.press(point,false); version[0]++; control.release(end); assertEquals(1,result.size());
         } catch(Exception e){throw new RuntimeException(e);} });
     }
+    @Test void delayedRendererCannotReuseOldRecordIdsWithANewWritableModel()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{var canvas=canvas();var old=MapDocument.parse("map/a.map",MAP);var changed=MapDocument.parse("map/a.map",old.remove(old.entries().getFirst().id()).applyTo(MAP));var selected=new ArrayList<EntryId>();var writes=new ArrayList<String>();
+            var control=new MapCanvasController(canvas,() -> 8L,selected::add,(stamp,id,x,y,z) -> writes.add(id.toString()));control.install(changed,8,true);var at=canvas.worldToView(100,235,1);control.press(at,false);control.release(canvas.worldToView(110,235,1));assertTrue(selected.isEmpty(),"Old scene ownership must not select a new ordinal");assertTrue(writes.isEmpty());
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
     static SceneCanvas canvas() throws Exception {
         var rendered=ScenePreview.load("map/a.map",MAP,path -> path.endsWith(".til")?"[pass type] "+"0 ".repeat(420):null,new ScenePreview.SpriteLookup() {
             public NpkResources.Info info(String p,int i){throw new AssertionError();}
             public NpkResources.Sprite sprite(String p,int i){throw new AssertionError();}
         }).render(0,false);
-        var canvas=new SceneCanvas(); canvas.scene=rendered; canvas.world=rendered.bounds(); canvas.camera=new SceneCamera(rendered.cameraLimits()); canvas.setSize(900,650); return canvas;
+        var canvas=new SceneCanvas();canvas.sceneSourcePath="map/a.map";canvas.sceneSourceText=MAP; canvas.scene=rendered; canvas.world=rendered.bounds(); canvas.camera=new SceneCamera(rendered.cameraLimits()); canvas.setSize(900,650); return canvas;
     }
 }

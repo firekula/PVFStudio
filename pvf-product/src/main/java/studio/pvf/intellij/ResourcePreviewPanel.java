@@ -280,14 +280,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         if(value==null||selected==null)return;
         submit("载入所选副本房间",() -> DungeonPreview.load(value.path(),value.text(),value.lookup()::read), dungeon -> {
             if(selected.maze()>=dungeon.definition().mazes().size())return;
-            var maze=dungeon.definition().mazes().get(selected.maze());
-            var layout=dungeon.arrange(selected.maze(),maze.starts().isEmpty()?null:maze.starts().getFirst(),
-                    maze.bosses().isEmpty()?null:maze.bosses().getFirst(),0,selected.hell());
-            var room=layout.room(selected.position());
-            if(room==null) { canvas.error="该房间待创建或连接"; canvas.repaint(); return; }
-            var map=room.map();
-            if(!room.hell()&&selected.mapId()!=null)map=room.choices().stream().filter(m -> m.id()==selected.mapId()).findFirst().orElse(map);
-            var selection=new DungeonPanel.Selection(dungeon,layout,room,map,true,true,0);
+            var selection=DungeonEditorPreview.resolve(dungeon,selected);
+            if(selection==null){canvas.error="该房间待创建或连接";canvas.repaint();return;}
             resolved.accept(selection); loadDungeonRoom(selection);
         });
     }
@@ -324,7 +318,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                     if (text == null) throw new IOException("找不到粒子配置 " + ref.path());
                 }
                 ScenePreview loaded = ScenePreview.load(path, text, snapshot.lookup()::read, indexed, values);
-                return new SceneLoaded(loaded, loaded.render(0, false, conditional));
+                return new SceneLoaded(loaded, loaded.render(0, false, conditional),path,text);
             }, loaded -> {
                 acceptLoadedScene(loaded, snapshot.path());
             });
@@ -410,7 +404,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         previewProgress.clear();
         detailWarnings = 0; updateDetailsLabel();
         pause(); generation++; if (job != null) job.cancel(false);
-        animation = null; scene = null; canvas.scene = null; canvas.camera = null;
+        animation = null; scene = null; canvas.scene = null; canvas.camera = null;canvas.sceneSourcePath=null;canvas.sceneSourceText=null;
         loop.setText("循环"); loop.setToolTipText(null); legend.setVisible(false);
         canvas.prepared = null; canvas.world = null; canvas.resetView(); canvas.error = ""; canvas.repaint(); updateControls();
     }
@@ -460,7 +454,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
             if (text == null) throw new IOException("找不到房间 MAP " + path);
             var gates = selection.dungeon().gates(selection.layout(), selection.room(), selection.map(), selection.cleared(), selection.bossCondition());
             var loaded = ScenePreview.loadRoom(path, text, snapshot.lookup()::read, indexed, gates, values);
-            return new SceneLoaded(loaded, loaded.render(0, false, conditional));
+            return new SceneLoaded(loaded, loaded.render(0, false, conditional),path,text);
         }, loaded -> {
             acceptLoadedScene(loaded, selection.map().path());
             if (keepView) {
@@ -470,6 +464,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         });
     }
     private void acceptLoadedScene(SceneLoaded loaded, String path) {
+        canvas.sceneSourcePath=loaded.sourcePath();canvas.sceneSourceText=loaded.sourceText();
         scene = loaded.scene(); animationPath = path;
         sceneClock = new AnimationTimeline.Clock(); sceneClock.speed(speedFactor());
         loop.setText("强制循环"); loop.setSelected(false);
@@ -604,7 +599,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     @FunctionalInterface interface TextLookup { String read(String path) throws IOException; }
     record Source(String path, String text, TextLookup lookup) {}
     private record Loaded(String path, ResourceScript.Animation animation) {}
-    private record SceneLoaded(ScenePreview scene, ScenePreview.Rendered rendered) {}
+    private record SceneLoaded(ScenePreview scene, ScenePreview.Rendered rendered,String sourcePath,String sourceText) {}
     private record SceneOption(String path) { @Override public String toString() { return "完整场景 · " + path; } }
     private record DungeonOption(String path) { @Override public String toString() { return "副本布局 · " + path; } }
     @FunctionalInterface private interface Work<T> { T run() throws Exception; }
