@@ -2,6 +2,8 @@ package studio.pvf.intellij;
 
 import studio.pvf.sceneedit.*;
 import studio.pvf.preview.DungeonScript.*;
+import studio.pvf.preview.DungeonMinimap;
+import studio.pvf.preview.NpkResources;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
@@ -22,6 +24,9 @@ final class DungeonEditorPanel extends JPanel {
     private final JComboBox<String> mazes = named(new JComboBox<>(),"dgn-editor-maze");
     private final JPanel previewHost = new JPanel(new BorderLayout());
     private final Grid grid = new Grid();
+    private DungeonMinimap minimap;
+    private String minimapPath="";
+    private final JLabel minimapStatus=named(new JLabel("示意布局 · 选择资源目录后使用原生小地图"),"dgn-minimap-status");
     private final JTabbedPane inspector = named(new JTabbedPane(),"dgn-inspector-tabs");
     private final JComboBox<Position> rooms = named(new JComboBox<>(),"dgn-select-room");
     private final JLabel selection = new JLabel("选择房间");
@@ -67,7 +72,8 @@ final class DungeonEditorPanel extends JPanel {
         top.add(action("调整尺寸…","dgn-resize",this::resize)); add(top,BorderLayout.NORTH);
         JPanel layout=new JPanel(new BorderLayout(0,3));
         JPanel location=row();location.add(new JLabel("房间"));rooms.setPreferredSize(new Dimension(125,26));location.add(rooms);layout.add(location,BorderLayout.NORTH);layout.add(grid);
-        JLabel legend=new JLabel("S 起点 · B Boss · H 深渊 · 蓝框为选中房间");legend.setFont(legend.getFont().deriveFont(11f));layout.add(legend,BorderLayout.SOUTH);layout.setBorder(BorderFactory.createEmptyBorder(3,6,3,6));
+        JLabel legend=new JLabel("S 起点 · B Boss · H 深渊 · 蓝框为选中房间");legend.setFont(legend.getFont().deriveFont(11f));
+        JPanel caption=new JPanel(new GridLayout(2,1));caption.add(legend);minimapStatus.setFont(minimapStatus.getFont().deriveFont(11f));caption.add(minimapStatus);layout.add(caption,BorderLayout.SOUTH);layout.setBorder(BorderFactory.createEmptyBorder(3,6,3,6));
         rooms.addActionListener(e -> {if(!changing&&rooms.getSelectedItem() instanceof Position p)selectRoom(p);});
         JPanel properties=page();properties.add(selection);
         field(properties,"普通 MAP 候选",maps);properties.add(mapsOrigin);field(properties,"Boss MAP 候选",bossMaps);properties.add(bossMapsOrigin);
@@ -122,6 +128,11 @@ final class DungeonEditorPanel extends JPanel {
     private JButton action(String title,String name,Runnable run) { JButton b=button(title,name,run); writes.add(b); return b; }
     JPanel previewHost() { return previewHost; }
     Position position() { return position; }
+    String minimapImage(){if(model==null)return "";return model.source().sections("minimap image").stream().filter(s -> !s.values().isEmpty()).reduce((a,b) -> b).map(s -> s.values().getFirst().value()).orElse("");}
+    void setMinimap(String path,DungeonMinimap atlas,String reason){
+        if(!NpkResources.normalize(path).equals(NpkResources.normalize(minimapImage())))return;
+        minimapPath=path;minimap=atlas;minimapStatus.setText(atlas==null?"示意布局 · "+reason:"原生 NPK 小地图");minimapStatus.setToolTipText(atlas==null?reason:path);grid.repaint();
+    }
     boolean activeHellAt(Position p) { if(model==null)return false;var h=model.hell(maze);return h.enabled()&&!h.excluded()&&h.mapId()>0&&p!=null&&p.equals(h.position()); }
     void selectSourceOffset(int offset) {
         if(model==null)return;var sections=model.source().sections("maze info");int target=0;
@@ -162,6 +173,7 @@ final class DungeonEditorPanel extends JPanel {
     }
     void install(DungeonDocument value,long stamp,boolean canWrite,String error) {
         model=value; version=stamp; writable=canWrite; status.setText(error.isBlank()?"编辑写入当前文档 · Ctrl+S 保存草稿":error); status.setToolTipText(error);
+        if(!NpkResources.normalize(minimapPath).equals(NpkResources.normalize(minimapImage()))){minimap=null;minimapPath=minimapImage();minimapStatus.setText("示意布局 · 等待小地图资源");}
         if(model==null) { writes.forEach(c -> c.setEnabled(false)); return; }
         changing=true; int selected=maze; mazes.removeAllItems();
         for(int i=0;i<model.mazes().size();i++)mazes.addItem((i+1)+" · "+model.mazes().get(i).layout());
@@ -253,10 +265,15 @@ final class DungeonEditorPanel extends JPanel {
                 var room=current();var l=room.layout();var m=metrics();g.translate(m[1],m[2]);g.scale(m[0]/64,m[0]/64);g.setStroke(new BasicStroke(2));
                 for(int y=0;y<l.height();y++)for(int x=0;x<l.width();x++){
                     Position p=new Position(x,y);int px=x*64,py=y*64;boolean exists=room.rooms().contains(p);
-                    g.setColor(exists?new Color(62,78,99):new Color(35,40,47));g.fillRoundRect(px+4,py+4,56,56,8,8);
-                    g.setColor(new Color(100,110,124));g.drawRoundRect(px+4,py+4,56,56,8,8);
-                    for(Direction d:Direction.values())if(l.connected(p,d))g.drawLine(px+32,py+32,px+32+d.dx*32,py+32+d.dy*32);
-                    g.setColor(Color.WHITE);g.drawString(exists?x+","+y:"+",px+17,py+32);
+                    var tile=minimap==null||!exists?null:minimap.tile(l.mask(p));
+                    if(tile!=null){g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);g.drawImage(tile,px,py,64,64,null);}
+                    else{
+                        g.setColor(exists?new Color(62,78,99):new Color(35,40,47));g.fillRoundRect(px+4,py+4,56,56,8,8);
+                        g.setColor(new Color(100,110,124));g.drawRoundRect(px+4,py+4,56,56,8,8);
+                        for(Direction d:Direction.values())if(l.connected(p,d))g.drawLine(px+32,py+32,px+32+d.dx*32,py+32+d.dy*32);
+                    }
+                    if(tile!=null&&l.bosses().contains(p)&&minimap.boss()!=null)g.drawImage(minimap.boss(),px+22,py+25,24,21,null);
+                    g.setColor(Color.WHITE);g.drawString(exists?x+","+y:"+",px+17,py+(tile==null?32:57));
                     int badgeX=px+7;if(l.starts().contains(p)){badge(g,"S",badgeX,py+7,new Color(66,190,125));badgeX+=17;}
                     if(l.bosses().contains(p)){badge(g,"B",badgeX,py+7,new Color(245,157,66));badgeX+=17;}
                     if(activeHellAt(p))badge(g,"H",badgeX,py+7,new Color(194,123,235));

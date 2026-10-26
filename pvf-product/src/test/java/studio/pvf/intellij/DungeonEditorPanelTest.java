@@ -133,6 +133,18 @@ class DungeonEditorPanelTest {
             assertTrue(hasColor(image,64,128,new Color(245,157,66)));assertTrue(hasColor(image,128,192,new Color(245,157,66)));
         }catch(Exception e){throw new RuntimeException(e);}});
     }
+    @Test void nativeTilesReplaceSchematicPathsAndStaleAtlasIsIgnored()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.text="[minimap image] `Map/MiniMap/Act1.img`\n"+h.text;h.install();
+            var sprites=new studio.pvf.preview.ScenePreview.SpriteLookup(){
+                public studio.pvf.preview.NpkResources.Info info(String path,int frame){return new studio.pvf.preview.NpkResources.Info(18,18,0,0,18,18);}
+                public studio.pvf.preview.NpkResources.Sprite sprite(String path,int frame)throws java.io.IOException{if(path.startsWith("Interface"))throw new java.io.IOException("optional");var image=new java.awt.image.BufferedImage(18,18,2);var g=image.createGraphics();g.setColor(Color.MAGENTA);g.fillRect(0,0,18,18);g.dispose();return new studio.pvf.preview.NpkResources.Sprite(image,0,0,18,18,java.nio.file.Path.of("test.npk"),path,frame,frame);}
+            };
+            var atlas=studio.pvf.preview.DungeonMinimap.load("Map/MiniMap/Act1.img",sprites);var grid=find(h.panel,"dgn-editor-grid",JComponent.class);grid.setSize(192,64);
+            h.panel.setMinimap("Map/MiniMap/Act1.img",atlas,"");var image=new java.awt.image.BufferedImage(192,64,2);grid.paint(image.createGraphics());assertEquals(Color.MAGENTA.getRGB(),image.getRGB(40,45));
+            h.text=h.text.replace("Act1.img","Act2.img");h.install();h.panel.setMinimap("Map/MiniMap/Act1.img",atlas,"");grid.paint(image.createGraphics());assertNotEquals(Color.MAGENTA.getRGB(),image.getRGB(40,45));
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
     private static boolean hasColor(java.awt.image.BufferedImage image,int x0,int x1,Color color){for(int y=0;y<image.getHeight();y++)for(int x=x0;x<x1;x++)if(image.getRGB(x,y)==color.getRGB())return true;return false;}
     static <T> T find(Container parent,String name,Class<T> type) {
         for(Component c:parent.getComponents()) {

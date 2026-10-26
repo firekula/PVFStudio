@@ -56,6 +56,11 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private final javax.swing.Timer playback = new javax.swing.Timer(100, e -> advance());
     private Future<?> job;
     private NpkResources resources;
+    private record MinimapResult(studio.pvf.preview.DungeonMinimap atlas,String reason) {}
+    private final Map<String,MinimapResult> minimaps=new LinkedHashMap<>();
+    private Future<?> minimapJob;
+    private long minimapGeneration;
+    private boolean resourcesLoading;
     private Source source;
     private DungeonEditorPanel.Preview editorDungeon;
     private DungeonEditorPanel editorDungeonPanel;
@@ -202,6 +207,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     // Also used by the product smoke check, with the same indexing/rendering path as the picker.
     void scan(Path directory) {
         long version = ++directoryGeneration; Path config = settings;
+        resourcesLoading=true;++minimapGeneration;minimaps.clear();
+        if(editorDungeonPanel!=null)editorDungeonPanel.setMinimap(editorDungeonPanel.minimapImage(),null,"正在索引资源…");
         TaskProgress.Ticket progress = indexProgress.start("resources.discover");
         root.setText("正在索引 NPK / IMG…"); root.setToolTipText(directory.toString()); choose.setEnabled(false);
         worker.execute(() -> {
@@ -217,7 +224,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                 SwingUtilities.invokeLater(() -> {
                     indexProgress.finish(progress);
                     if (closed || version != directoryGeneration) return;
-                    resources = indexed; choose.setEnabled(true);
+                    resources = indexed; resourcesLoading=false; choose.setEnabled(true);
                     resourcesChanged.run();
                     root.setText(resourceSummary(indexed)
                             + (indexed.warnings().isEmpty() ? "" : " / " + indexed.warnings().size() + " 条索引提示") + suffix);
@@ -229,7 +236,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                 SwingUtilities.invokeLater(() -> {
                     indexProgress.finish(progress);
                     if (closed || version != directoryGeneration) return;
-                    choose.setEnabled(true); root.setText(resources == null ? "NPK 索引失败" : "索引失败，仍使用之前的 NPK 目录");
+                    resourcesLoading=false;choose.setEnabled(true); root.setText(resources == null ? "NPK 索引失败" : "索引失败，仍使用之前的 NPK 目录");
                     root.setToolTipText(message(failure)); fail(failure);
                 });
             }
@@ -278,6 +285,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         editorDungeon=selected; editorResolved=resolved; references.setVisible(false);
         source=value; invalidatePreview(); dungeonPanel.setVisible(false); dungeonSelection=null;
         if(value==null||selected==null)return;
+        loadMinimap(panel);
         submit("载入所选副本房间",() -> DungeonPreview.load(value.path(),value.text(),value.lookup()::read), dungeon -> {
             if(selected.maze()>=dungeon.definition().mazes().size())return;
             var selection=DungeonEditorPreview.resolve(dungeon,selected);
@@ -515,6 +523,21 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     void captureEditorView(){if(editorDungeonPanel!=null)editorDungeonPanel.captureView(canvas);if(editorMap!=null)editorMap.captureView(canvas);}
     void onViewChanged(Runnable listener){canvas.viewChanged=listener;}
     void onResourcesChanged(Runnable listener) { resourcesChanged=listener; }
+    private void loadMinimap(DungeonEditorPanel panel){
+        long request=++minimapGeneration,directory=directoryGeneration;String path=panel.minimapImage();
+        if(minimapJob!=null)minimapJob.cancel(false);
+        if(resources==null||resourcesLoading||path.isBlank()){panel.setMinimap(path,null,path.isBlank()?"副本未指定小地图图像":resourcesLoading?"正在索引资源…":"未选择 NPK / IMG 目录");return;}
+        String key=NpkResources.normalize(path);var cached=minimaps.get(key);if(cached!=null){panel.setMinimap(path,cached.atlas(),cached.reason());return;}
+        NpkResources indexed=resources;panel.setMinimap(path,null,"正在读取原生小地图…");
+        minimapJob=worker.submit(() -> {
+            MinimapResult result;try{result=new MinimapResult(studio.pvf.preview.DungeonMinimap.load(path,indexed),"");}catch(Exception failure){result=new MinimapResult(null,message(failure));}
+            var loaded=result;SwingUtilities.invokeLater(() -> {
+                if(closed||directory!=directoryGeneration)return;
+                minimaps.put(key,loaded);if(minimaps.size()>24)minimaps.remove(minimaps.keySet().iterator().next());
+                if(request==minimapGeneration&&editorDungeonPanel==panel)panel.setMinimap(path,loaded.atlas(),loaded.reason());
+            });
+        });
+    }
     void thumbnail(Source snapshot,SceneResourceBrowser.Asset asset,Consumer<SceneResourceBrowser.Thumbnail> result) {
         NpkResources indexed=resources; long directory=directoryGeneration;
         if(snapshot==null) { result.accept(new SceneResourceBrowser.Thumbnail(null,"未载入文档\n"+asset)); return; }
