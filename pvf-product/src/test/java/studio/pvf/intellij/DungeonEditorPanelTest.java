@@ -113,7 +113,7 @@ class DungeonEditorPanelTest {
         SwingUtilities.invokeAndWait(() -> {try{
             var h=new Harness();h.text="[maze info] [size] 2 1 [greed] `BBEE` [start map] 0 0 [/start map] [boss map] 1 0 [/boss map]";h.install();
             var files=Map.of("dungeon/dungeon.lst","1 `x.dgn`","map/map.lst","10 `a.map` 20 `b.map`","map/a.map","[dungeon] 1 [type] `[normal]` [greed] `BBBBEEEE`","map/b.map","[dungeon] 1 [type] `[boss]` [greed] `BBBBEEEE`");
-            var dungeon=studio.pvf.preview.DungeonPreview.load("dungeon/x.dgn",h.text,files::get);var choice=DungeonEditorPreview.resolve(dungeon,h.panel.preview());String unchanged=h.text;h.panel.resolvedChoices(choice);
+            h.panel.setMapBossContent(Map.of(10,MapBossContent.NONE,20,MapBossContent.BOSS));var dungeon=studio.pvf.preview.DungeonPreview.load("dungeon/x.dgn",h.text,files::get);var choice=DungeonEditorPreview.resolve(dungeon,h.panel.preview());String unchanged=h.text;h.panel.resolvedChoices(choice);
             assertEquals(List.of(10),find(h.panel,"dgn-room-maps",MultiSelectDropdown.class).selected());assertEquals(List.of(20),find(h.panel,"dgn-room-boss-maps",MultiSelectDropdown.class).selected());assertEquals(unchanged,h.text);
             h.value("dgn-room-maps","99");h.panel.resolvedChoices(choice);assertEquals(List.of(99),find(h.panel,"dgn-room-maps",MultiSelectDropdown.class).selected(),"An async pool resolution must not overwrite choices");
             h.panel.selectRoom(new Position(0,0));h.panel.resolvedChoices(choice);h.value("dgn-room-boss-maps","20");h.click("dgn-apply-maps");
@@ -147,6 +147,23 @@ class DungeonEditorPanelTest {
             assertTrue(h.document().diagnostics().size()>=3);var footer=((BorderLayout)h.panel.getLayout()).getLayoutComponent(BorderLayout.SOUTH);assertTrue(footer.getPreferredSize().height<40,"Diagnostics must not steal rows from fixed-page actions");
         }catch(Exception e){throw new RuntimeException(e);}});
     }
+    @Test void delayedBossClassificationRestoresAutomaticDisplayAndPreservesStagedEdits()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.text="[maze info] [size] 2 1 [greed] `BBEE` [start map] 0 0 [/start map] [boss map] 1 0 [/boss map]";h.install();
+            var files=Map.of("dungeon/dungeon.lst","1 `x.dgn`","map/map.lst","10 `a.map` 20 `b.map`","map/a.map","[dungeon] 1 [type] `[normal]` [greed] `BBBBEEEE`","map/b.map","[dungeon] 1 [type] `[boss]` [greed] `BBBBEEEE`");var choice=DungeonEditorPreview.resolve(studio.pvf.preview.DungeonPreview.load("dungeon/x.dgn",h.text,files::get),h.panel.preview());h.panel.resolvedChoices(choice);
+            h.panel.setMapBossContent(Map.of(10,MapBossContent.NONE,20,MapBossContent.BOSS));assertEquals(List.of(10),find(h.panel,"dgn-room-maps",MultiSelectDropdown.class).selected());
+            h.value("dgn-room-maps","99");h.panel.setMapBossContent(Map.of(10,MapBossContent.NONE,20,MapBossContent.BOSS));assertEquals(List.of(99),find(h.panel,"dgn-room-maps",MultiSelectDropdown.class).selected());
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    @Test void candidateDropdownsSeparateActualBossContentAndKeepOnlyExistingMismatches()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.panel.setMapBossContent(Map.of(10,MapBossContent.NONE,11,MapBossContent.BOSS,20,MapBossContent.UNKNOWN));
+            var normal=find(h.panel,"dgn-room-maps",MultiSelectDropdown.class);var bosses=find(h.panel,"dgn-room-boss-maps",MultiSelectDropdown.class);assertEquals(List.of(10),choiceIds(normal));assertEquals(List.of(11),choiceIds(bosses));
+            h.text=h.text.replace("[map specification] 0 0 10", "[map specification] 0 0 11");h.install();assertEquals(List.of(10,11),choiceIds(normal),"Already-bound wrong-role MAP remains removable");String before=h.text;normal.toggle(11);assertEquals(List.of(10),choiceIds(normal));assertEquals(before,h.text,"Filtering/checking staged choices must not write source");
+            h.panel.setMapBossContent(Map.of(10,MapBossContent.BOSS,11,MapBossContent.BOSS,20,MapBossContent.UNKNOWN));assertEquals(List.of(),choiceIds(normal));assertTrue(choiceIds(bosses).contains(10),"Unsaved MAP role changes refresh both fields");
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    private static List<Object> choiceIds(MultiSelectDropdown<?> field)throws Exception{var f=MultiSelectDropdown.class.getDeclaredField("list");f.setAccessible(true);var model=((JList<?>)f.get(field)).getModel();var result=new ArrayList<>();for(int i=0;i<model.getSize();i++)result.add(model.getElementAt(i));return result;}
     @Test void largeLayoutKeepsFixedMapHeightAndEveryCellReachableByDropdown()throws Exception{
         SwingUtilities.invokeAndWait(() -> {try{
             var h=new Harness();h.text="[maze info] [size] 50 50 [greed] `"+"AA".repeat(2500)+"` [map specification] 49 49 10 [/map specification]";h.install();

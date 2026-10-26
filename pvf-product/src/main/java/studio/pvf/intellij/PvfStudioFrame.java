@@ -72,6 +72,10 @@ final class PvfStudioFrame extends JFrame {
     private final ExecutorService sceneWorker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "pvf-scene-parser"); t.setDaemon(true); return t;
     });
+    // Owned by sceneWorker; immutable archive results are reused across dungeon tabs.
+    private PvfWorkspace bossCatalogOwner;
+    private Charset bossCatalogCharset;
+    private studio.pvf.sceneedit.MapBossCatalog bossCatalog=new studio.pvf.sceneedit.MapBossCatalog();
     private final JMenuItem open = new JMenuItem("打开 PVF…");
     private final JMenuItem save = new JMenuItem("保存草稿");
     private final JMenuItem diff = new JMenuItem("查看差异");
@@ -1078,18 +1082,22 @@ final class PvfStudioFrame extends JFrame {
     }
     private void loadSceneCatalog(Session session) {
         if(workspace==null)return;
-        var current=workspace; var paths=current.paths();String key=paths.hashCode()+"|"+sessions.values().stream().map(s -> s.path+":"+s.editor.getDocument().getModificationStamp()).sorted().toList();
+        var current=workspace;var charset=session.charset; var paths=current.paths();String key=paths.hashCode()+"|"+charset.name()+"|"+sessions.values().stream().map(s -> s.path+":"+s.editor.getDocument().getModificationStamp()).sorted().toList();
         if(key.equals(session.catalogSignature))return;session.catalogSignature=key;var texts=new HashMap<String,String>();
         sessions.forEach((path,tab) -> texts.put(path,tab.editor.getDocument().getText()));
         sceneWorker.execute(() -> {
             try {
-            var catalog=studio.pvf.sceneedit.SceneCatalog.build(paths,path -> texts.containsKey(path)?texts.get(path):current.readText(path,session.charset));
+            studio.pvf.sceneedit.SceneCatalog.TextLookup lookup=path -> texts.containsKey(path)?texts.get(path):current.readText(path,charset);
+            var catalog=studio.pvf.sceneedit.SceneCatalog.build(paths,lookup);
+            Map<Integer,studio.pvf.sceneedit.MapBossContent> bossContent=Map.of();
+            if(session.dungeonPanel!=null){if(bossCatalogOwner!=current||!charset.equals(bossCatalogCharset)){bossCatalogOwner=current;bossCatalogCharset=charset;bossCatalog=new studio.pvf.sceneedit.MapBossCatalog();}var volatilePaths=new HashSet<>(current.dirtyPaths());volatilePaths.addAll(texts.keySet());bossContent=bossCatalog.classify(catalog,lookup,volatilePaths);}
             var checks=new HashMap<Integer,studio.pvf.sceneedit.DungeonMapChecks.Check>();String baseline=texts.get(session.path);
             if(session.path.endsWith(".dgn"))try{var dungeon=studio.pvf.sceneedit.DungeonDocument.parse(session.path,baseline);for(var maze:dungeon.mazes())for(var room:maze.rooms()){
                 var ids=new ArrayList<>(maze.layout().maps().getOrDefault(room,List.of()));ids.addAll(maze.layout().bossMaps().getOrDefault(room,List.of()));for(int id:ids){String path=catalog.maps().get(id);if(path!=null){String text=texts.containsKey(path)?texts.get(path):current.readText(path,session.charset);var check=studio.pvf.sceneedit.DungeonMapChecks.inspect(path,text,maze.layout().bosses().contains(room)||maze.layout().bossMaps().getOrDefault(room,List.of()).contains(id),maze.layout().mask(room));var before=checks.get(id);if(before!=null){var messages=new LinkedHashSet<>(before.messages());messages.addAll(check.messages());check=new studio.pvf.sceneedit.DungeonMapChecks.Check(path,check.info(),List.copyOf(messages));}checks.put(id,check);}}
             }}catch(Exception ignored){}
-            SwingUtilities.invokeLater(() -> { if(session.editor.isDisposed()||workspace!=current)return;
-                session.catalog=catalog; if(session.dungeonPanel!=null){session.dungeonPanel.setCatalog(catalog);if(session.editor.getDocument().getText().equals(baseline))session.dungeonPanel.setMapChecks(checks);}
+            var classified=bossContent;
+            SwingUtilities.invokeLater(() -> { if(session.editor.isDisposed()||workspace!=current||!key.equals(session.catalogSignature))return;
+                session.catalog=catalog; if(session.dungeonPanel!=null){session.dungeonPanel.setCatalog(catalog);session.dungeonPanel.setMapBossContent(classified);if(session.editor.getDocument().getText().equals(baseline))session.dungeonPanel.setMapChecks(checks);}
                 if(session.mapPanel!=null)session.mapPanel.setCatalog(catalog);
             });
             } catch(RuntimeException failure) {

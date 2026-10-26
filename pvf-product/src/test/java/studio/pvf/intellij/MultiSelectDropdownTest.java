@@ -19,6 +19,17 @@ class MultiSelectDropdownTest {
             field.selected(List.of(5000,10001));assertEquals(10001,list.getModel().getSize());field.toggle(10001);assertEquals(10000,list.getModel().getSize(),"Unregistered selected IDs are still retained and removable");
         }catch(Exception e){throw new RuntimeException(e);}});
     }
+    @Test void wheelOverSearchAndRowsScrollsWithoutChangingChoices()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{
+            var field=new MultiSelectDropdown<Integer>();var catalog=new LinkedHashMap<Integer,String>();for(int id=1;id<=100;id++)catalog.put(id,"MAP "+id);field.options(catalog);
+            var popupField=MultiSelectDropdown.class.getDeclaredField("popup");popupField.setAccessible(true);var popup=(JPanel)popupField.get(field);
+            var scroll=find(popup,JScrollPane.class);scroll.setSize(340,230);scroll.doLayout();scroll.getViewport().doLayout();
+            var list=find(popup,JList.class);var query=find(popup,JTextField.class);
+            query.dispatchEvent(new java.awt.event.MouseWheelEvent(query,java.awt.event.MouseEvent.MOUSE_WHEEL,0,0,5,5,0,false,java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL,3,2));assertEquals(156,scroll.getVerticalScrollBar().getValue(),"Search wheel should scroll the popup once");
+            scroll.getVerticalScrollBar().setValue(0);list.dispatchEvent(new java.awt.event.MouseWheelEvent(list,java.awt.event.MouseEvent.MOUSE_WHEEL,0,0,5,5,0,false,java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL,3,2));assertTrue(scroll.getVerticalScrollBar().getValue()>0);assertTrue(field.selected().isEmpty());
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    private static <T>T find(java.awt.Container root,Class<T> type){for(var c:root.getComponents()){if(type.isInstance(c))return type.cast(c);if(c instanceof java.awt.Container nested)try{return find(nested,type);}catch(NoSuchElementException ignored){}}throw new NoSuchElementException();}
     @Test void multipleChoicesPreserveOrderUnknownIdsAndSilentRefresh() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             var field=new MultiSelectDropdown<Integer>();var events=new ArrayList<List<Integer>>();field.onChange(events::add);

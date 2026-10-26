@@ -49,6 +49,8 @@ final class DungeonEditorPanel extends JPanel {
     private final JComboBox<DungeonMapChecks.Check> mapProblems=new JComboBox<>();
     private DungeonDocument model;
     private SceneCatalog catalog;
+    private Map<Integer,MapBossContent> mapBossContent=Map.of();
+    private List<Integer> resolvedNormalPool=List.of(),resolvedBossPool=List.of();
     private long version;
     private Position position = new Position(0,0);
     private int maze;
@@ -76,7 +78,7 @@ final class DungeonEditorPanel extends JPanel {
         JPanel caption=new JPanel(new GridLayout(2,1));caption.add(legend);minimapStatus.setFont(minimapStatus.getFont().deriveFont(11f));caption.add(minimapStatus);layout.add(caption,BorderLayout.SOUTH);layout.setBorder(BorderFactory.createEmptyBorder(3,6,3,6));
         rooms.addActionListener(e -> {if(!changing&&rooms.getSelectedItem() instanceof Position p)selectRoom(p);});
         JPanel properties=page();properties.add(selection);
-        field(properties,"普通 MAP 候选",maps);properties.add(mapsOrigin);field(properties,"Boss MAP 候选",bossMaps);properties.add(bossMapsOrigin);
+        field(properties,"普通 MAP 候选（无 Boss 配置）",maps);properties.add(mapsOrigin);field(properties,"Boss MAP 候选（有 Boss 配置）",bossMaps);properties.add(bossMapsOrigin);
         maps.onChange(values -> {if(!changing)mapsEdited=true;});bossMaps.onChange(values -> {if(!changing)bossMapsEdited=true;});
         JPanel automatic=row();automatic.add(action("普通恢复自动","dgn-auto-maps",() -> {maps.selected(List.of());mapsEdited=true;mapsOrigin.setText("应用后恢复自动选图");}));automatic.add(action("Boss 恢复自动","dgn-auto-boss-maps",() -> {bossMaps.selected(List.of());bossMapsEdited=true;bossMapsOrigin.setText("应用后恢复自动 Boss 池");}));properties.add(automatic);
         JPanel applying=row();applying.add(action("创建 / 应用候选","dgn-apply-maps",() -> change(() -> {
@@ -163,15 +165,26 @@ final class DungeonEditorPanel extends JPanel {
             int gate=p.equals(position)?direction.ordinal():direction.opposite().ordinal();for(int id:ids){var check=mapChecks.get(id);if(check==null||!check.hasGate(gate))throw new IOException("MAP #"+id+" 未验证可用的原生门坐标；请打开 MAP 检查项修正");}
         }}return model.connect(maze,position,direction,enabled);
     }
-    void setCatalog(SceneCatalog value) {catalog=value;var items=new LinkedHashMap<Integer,String>();value.maps().entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(e -> items.put(e.getKey(),e.getKey()+" · "+e.getValue()));maps.options(items);bossMaps.options(items);}
+    void setCatalog(SceneCatalog value) {catalog=value;refreshMapChoices();}
+    void setMapBossContent(Map<Integer,MapBossContent> values){
+        mapBossContent=Map.copyOf(values);refreshMapChoices();
+        if(mapsAutomatic&&!mapsEdited)maps.selected(eligible(resolvedNormalPool,false));
+        if(bossMapsAutomatic&&!bossMapsEdited)bossMaps.selected(eligible(resolvedBossPool,true));
+    }
+    private List<Integer> eligible(List<Integer> values,boolean isBoss){return values.stream().filter(id -> mapBossContent.get(id)==(isBoss?MapBossContent.BOSS:MapBossContent.NONE)).toList();}
+    private void refreshMapChoices(){
+        if(catalog==null)return;var all=new LinkedHashMap<Integer,String>();var normal=new LinkedHashMap<Integer,String>();var bosses=new LinkedHashMap<Integer,String>();
+        catalog.maps().forEach((id,path) -> {String label=id+" · "+path;all.put(id,label);if(mapBossContent.get(id)==MapBossContent.NONE)normal.put(id,label);if(mapBossContent.get(id)==MapBossContent.BOSS)bosses.put(id,label);});maps.options(normal,all);bossMaps.options(bosses,all);
+    }
     void resolvedChoices(DungeonPanel.Selection value) {
         if(value==null||model==null||!value.room().position().equals(position)||!value.dungeon().definition().equals(model.definition()))return;
         changing=true;
         try {
             var normal=value.dungeon().candidates(maze,position,false).stream().map(map -> map.id()).toList();
             var bosses=value.dungeon().candidates(maze,position,true).stream().map(map -> map.id()).toList();
-            if(mapsAutomatic&&!mapsEdited){maps.selected(normal);mapsOrigin.setText("自动选图池 · "+normal.size()+" 项；应用修改后固定");}
-            if(bossMapsAutomatic&&!bossMapsEdited){bossMaps.selected(bosses);bossMapsOrigin.setText("自动 Boss 池 · "+bosses.size()+" 项；应用修改后固定");}
+            resolvedNormalPool=normal;resolvedBossPool=bosses;
+            if(mapsAutomatic&&!mapsEdited){maps.selected(eligible(normal,false));mapsOrigin.setText("自动选图池 · "+maps.selected().size()+" 项（无 Boss 配置）");}
+            if(bossMapsAutomatic&&!bossMapsEdited){bossMaps.selected(eligible(bosses,true));bossMapsOrigin.setText("自动 Boss 池 · "+bossMaps.selected().size()+" 项（有 Boss 配置）");}
             previewMaps.removeAllItems();value.room().choices().forEach(map -> previewMaps.addItem(map.id()));if(value.map()!=null)previewMaps.setSelectedItem(value.map().id());
         }finally{changing=false;}
     }
@@ -189,6 +202,7 @@ final class DungeonEditorPanel extends JPanel {
         changing=true;
         try {
             var room=current(); var layout=room.layout(); if(position.x()>=layout.width()||position.y()>=layout.height())position=new Position(0,0);
+            resolvedNormalPool=List.of();resolvedBossPool=List.of();
             boolean exists=room.rooms().contains(position), editable=writable&&!model.source().sections("maze info").isEmpty();
             writes.forEach(c -> c.setEnabled(editable));maps.setEnabled(editable);bossMaps.setEnabled(editable);hellMap.setEditable(editable);hits.setEditable(editable);rate.setEditable(editable);
             mapsAutomatic=layout.maps().getOrDefault(position,List.of()).isEmpty();bossMapsAutomatic=layout.bossMaps().getOrDefault(position,List.of()).isEmpty();mapsEdited=false;bossMapsEdited=false;mapsOrigin.setText(mapsAutomatic?"自动选图池，正在解析候选…":"本房间固定的普通 MAP 候选");bossMapsOrigin.setText(bossMapsAutomatic?"自动 Boss 池，正在解析候选…":"本房间固定的 Boss MAP 候选");
