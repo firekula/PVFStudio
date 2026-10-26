@@ -58,6 +58,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private NpkResources resources;
     private Source source;
     private DungeonEditorPanel.Preview editorDungeon;
+    private DungeonEditorPanel editorDungeonPanel;
     private Consumer<DungeonPanel.Selection> editorResolved;
     private MapEditorPanel editorMap;
     private Future<?> thumbnailJob;
@@ -237,7 +238,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
 
     void setSource(Source value) {
         if(editorMap!=null)editorMap.captureView(canvas);
-        editorDungeon=null; editorResolved=null; editorMap=null; canvas.interaction=null; references.setVisible(true);
+        if(editorDungeonPanel!=null)editorDungeonPanel.captureView(canvas);
+        editorDungeon=null; editorDungeonPanel=null; editorResolved=null; editorMap=null; canvas.interaction=null; references.setVisible(true);
         source = value; invalidatePreview();
         dungeonPanel.setVisible(false); dungeonSelection = null;
         Object selected = references.getSelectedItem(); String selectedName = selected == null ? "" : selected.toString();
@@ -261,7 +263,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     }
 
     private void reloadSource() {
-        if(editorDungeon!=null)setDungeonEditorSource(source,editorDungeon,editorResolved);
+        if(editorDungeon!=null)setDungeonEditorSource(source,editorDungeon,editorResolved,editorDungeonPanel);
         else if(editorMap!=null)setMapEditorSource(source,editorMap); else setSource(source);
     }
 
@@ -269,9 +271,10 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         setSource(value); editorMap=panel; panel.attach(canvas); references.setVisible(false);
     }
 
-    void setDungeonEditorSource(Source value, DungeonEditorPanel.Preview selected, Consumer<DungeonPanel.Selection> resolved) {
+    void setDungeonEditorSource(Source value, DungeonEditorPanel.Preview selected, Consumer<DungeonPanel.Selection> resolved,DungeonEditorPanel panel) {
         if(editorMap!=null)editorMap.captureView(canvas);
         editorMap=null; canvas.interaction=null;
+        if(editorDungeonPanel!=null)editorDungeonPanel.captureView(canvas);editorDungeonPanel=panel;
         editorDungeon=selected; editorResolved=resolved; references.setVisible(false);
         source=value; invalidatePreview(); dungeonPanel.setVisible(false); dungeonSelection=null;
         if(value==null||selected==null)return;
@@ -475,6 +478,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
         canvas.clientViewport = clientViewport.isSelected();
         canvas.world = loaded.rendered().overviewBounds(); canvas.resetView(); acceptScene(loaded.rendered()); updateControls();
         if(editorMap!=null) { editorMap.restoreView(canvas); canvas.repaint(); }
+        if(editorDungeonPanel!=null){editorDungeonPanel.restoreView(canvas);canvas.repaint();}
     }
     private void acceptScene(ScenePreview.Rendered rendered) {
         canvas.scene = rendered; canvas.overlay = collision.isSelected(); canvas.markers = entityMarkers.isSelected(); canvas.error = "";
@@ -513,17 +517,20 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private static boolean isScene(String path) {
         String lower = path.toLowerCase(Locale.ROOT); return lower.endsWith(".map") || lower.endsWith(".til") || lower.endsWith(".ptl");
     }
+    void captureEditorView(){if(editorDungeonPanel!=null)editorDungeonPanel.captureView(canvas);if(editorMap!=null)editorMap.captureView(canvas);}
+    void onViewChanged(Runnable listener){canvas.viewChanged=listener;}
     void onResourcesChanged(Runnable listener) { resourcesChanged=listener; }
     void thumbnail(Source snapshot,SceneResourceBrowser.Asset asset,Consumer<SceneResourceBrowser.Thumbnail> result) {
         NpkResources indexed=resources; long directory=directoryGeneration;
-        if(snapshot==null||indexed==null) { result.accept(new SceneResourceBrowser.Thumbnail(null,"选择资源目录后显示原生缩略图\n"+asset)); return; }
+        if(snapshot==null) { result.accept(new SceneResourceBrowser.Thumbnail(null,"未载入文档\n"+asset)); return; }
         if(thumbnailJob!=null)thumbnailJob.cancel(false);
         thumbnailJob=worker.submit(() -> {
-            SceneResourceBrowser.Thumbnail loaded;
+            SceneResourceBrowser.Thumbnail loaded;String description=asset.toString();Boolean extendedTile=null;
             try {
                 String raw=snapshot.lookup().read(asset.path()); if(raw==null)throw new IOException("找不到 "+asset.path());
+                description+="\n"+SceneAssetMetadata.describe(asset.category(),raw);if(asset.category()==SceneResourceBrowser.Category.TILE)extendedTile=studio.pvf.preview.SceneScript.tile(raw).extended();if(indexed==null)throw new IOException("选择资源目录后显示原生缩略图");
                 java.awt.image.BufferedImage image=new java.awt.image.BufferedImage(128,96,java.awt.image.BufferedImage.TYPE_INT_ARGB);
-                Graphics2D g=image.createGraphics(); String description=asset.toString();
+                Graphics2D g=image.createGraphics();
                 try {
                     if(asset.category()==SceneResourceBrowser.Category.ANIMATION) {
                         var ani=ResourceScript.animation(raw); if(ani.frames().isEmpty())throw new IOException("ANI 没有帧");
@@ -551,8 +558,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                         scene.paint(g,new Rectangle(0,0,128,96),64-bounds.getCenterX()*scale,48-bounds.getCenterY()*scale,scale,0,0,false);
                     }
                 } finally { g.dispose(); }
-                loaded=new SceneResourceBrowser.Thumbnail(image,description);
-            } catch(Exception failure) { loaded=new SceneResourceBrowser.Thumbnail(null,asset+"\n"+message(failure)); }
+                loaded=new SceneResourceBrowser.Thumbnail(image,description,extendedTile);
+            } catch(Exception failure) { loaded=new SceneResourceBrowser.Thumbnail(null,description+"\n"+message(failure),extendedTile); }
             var value=loaded; SwingUtilities.invokeLater(() -> { if(!closed&&directory==directoryGeneration)result.accept(value); });
         });
     }

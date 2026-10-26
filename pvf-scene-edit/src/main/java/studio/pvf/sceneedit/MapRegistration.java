@@ -13,7 +13,8 @@ public final class MapRegistration {
     private MapRegistration() {}
     public record Request(Set<String> paths, String sourcePath, String destinationPath, byte[] sourceBytes,
                           String sourceText, String mapListText, String dungeonPath, String dungeonText,
-                          int maze, Position room, boolean boss, Integer requestedId, int maximumId) {
+                          int maze, Position room, boolean boss, Integer requestedId, int maximumId,boolean hell) {
+        public Request(Set<String> paths,String sourcePath,String destinationPath,byte[] sourceBytes,String sourceText,String mapListText,String dungeonPath,String dungeonText,int maze,Position room,boolean boss,Integer requestedId,int maximumId){this(paths,sourcePath,destinationPath,sourceBytes,sourceText,mapListText,dungeonPath,dungeonText,maze,room,boss,requestedId,maximumId,false);}
         public Request { paths = Set.copyOf(paths); sourceBytes = sourceBytes.clone(); }
         @Override public byte[] sourceBytes() { return sourceBytes.clone(); }
     }
@@ -44,7 +45,9 @@ public final class MapRegistration {
         ScriptEdit listEdit = list.replace("注册 MAP",new SourceDocument.Range(at,at),EditSupport.leadingNewline(request.mapListText,at,nl)
                 +id+"\t"+EditSupport.quote(destination.substring("map/".length()))+nl);
         var dungeon = DungeonDocument.parse(request.dungeonPath,request.dungeonText);
-        ScriptEdit dungeonEdit = dungeon.setCandidates(request.maze,request.room,request.boss,List.of(id));
+        ScriptEdit dungeonEdit;
+        if(request.hell){var h=dungeon.hell(request.maze);if(!request.room.equals(h.position()))throw new IOException("请在深渊封印坐标克隆替换 MAP");dungeonEdit=dungeon.setHell(request.maze,new DungeonDocument.HellSettings(h.enabled(),h.excluded(),id,h.position(),h.hitCounts(),h.appearRate(),h.coinLimit()));}
+        else dungeonEdit=dungeon.setCandidates(request.maze,request.room,request.boss,List.of(id));
         return new Prepared(id,destination,request.sourceBytes,request.sourceText,listEdit,dungeonEdit);
     }
     private static String parent(String path) { return path.substring(0,path.lastIndexOf('/')+1); }

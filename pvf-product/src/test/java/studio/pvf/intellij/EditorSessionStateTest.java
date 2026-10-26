@@ -31,6 +31,10 @@ class EditorSessionStateTest {
         }
     }
 
+    @Test void visualStateRoundTripsWithoutRequiringItInOlderSessions() throws Exception {
+        var tab=new EditorSessionState.Tab("a.map","GBK",0,0,0,"DESIGN",.6,java.util.Map.of("selection","0:1","panX","42"));
+        var state=new EditorSessionState(List.of(tab),"a.map");state.write(directory);assertEquals(state,EditorSessionState.read(directory).state());
+    }
     @Test void explicitEmptySessionReplacesPreviousTabs() throws Exception {
         new EditorSessionState(List.of(new EditorSessionState.Tab("a.map", "UTF-8", 1, 0, 0)), "a.map").write(directory);
         EditorSessionState.EMPTY.write(directory);

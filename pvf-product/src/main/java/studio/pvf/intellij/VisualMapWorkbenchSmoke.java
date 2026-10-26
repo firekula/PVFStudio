@@ -82,7 +82,8 @@ final class VisualMapWorkbenchSmoke {
             await(() -> entryCount(code,path)==withFactory&&named(panel,"map-add-selected",JButton.class).isEnabled());
             String tile=catalog.filesUnder(path,".til").stream().findFirst().orElseThrow();int tileCount=model.tiles(false).size()+1;
             System.err.println("VISUAL_MAP_STEP tile-add");
-            edt(() -> {panel.tileColumnPicker(defaults -> defaults);panel.browser().select(SceneResourceBrowser.Category.TILE,tile);panel.addSelectedAt(400,220);return null;});
+            edt(() -> {panel.tileColumnPicker(defaults -> defaults);panel.browser().select(SceneResourceBrowser.Category.TILE,tile);return null;});
+            await(() -> panel.browser().tileTypeKnown());edt(() -> {panel.addSelectedAt(400,220);return null;});
             await(() -> {try{return MapDocument.parse(path,code.getDocument().getText()).tiles(false).size()==tileCount&&named(panel,"map-add-selected",JButton.class).isEnabled();}catch(Exception e){return false;}});
             edt(() -> {
                 String text=code.getDocument().getText();long stamp=code.getDocument().getModificationStamp();

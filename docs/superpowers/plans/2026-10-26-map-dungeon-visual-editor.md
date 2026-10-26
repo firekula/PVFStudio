@@ -182,4 +182,4 @@
 - [x] User plan review checkpoint: approved 2026-10-26; user explicitly requested a separate isolated worktree.
 - [x] Baseline verified: `gradlew.bat check -PwithIntellij=true --console=plain` successful (173 cached JVM tests, zero failures/errors/skips); independent Python validation 14/14 passed on 2026-10-26.
 - [x] Execution workspace selected and product implementation begun: `.worktrees/map-dungeon-editor`, branch `codex/visual-map-dungeon-editor`; isolated baseline successful.
-- [ ] Tasks 1–8 completed with command evidence.
+- [x] Tasks 1–8 implemented with command evidence; final independent whole-branch review is the remaining branch gate.

@@ -37,8 +37,16 @@ final class MapEditorPanel extends JPanel {
     private long version;
     private boolean writable,changing;
     private EntryId selected;
-    private record View(double panX,double panY,double zoom,int zoomIndex,Point camera) {}
-    private View view;
+    private Runnable stateChanged=() -> {};
+    void onStateChanged(Runnable listener){stateChanged=listener;}
+    private String pendingText;
+    private EntryId pendingSelection;
+    private static String fingerprint(MapEntry e) { return e==null?"":e.type()+"|"+e.tokens().stream().map(t -> t.kind()+":"+t.value()).collect(java.util.stream.Collectors.joining("|")); }
+    void selectHellPillar(){if(model==null)return;var special=model.entries().stream().filter(e -> e.type()==MapEntry.Type.SPECIAL&&e.tokens().stream().anyMatch(t -> ScriptDialect.flag(t.value()).equals("hellparty"))).findFirst();if(special.isPresent())selectEntry(special.get().id());else model.entries().stream().filter(e -> e.type()==MapEntry.Type.SPECIAL&&e.tokens().stream().anyMatch(t -> ScriptDialect.flag(t.value()).equals("monster"))).findFirst().ifPresent(e -> selectEntry(e.id()));}
+    EntryId selection() { return selected; }
+    void selectSourceOffset(int offset) { if(model!=null)model.entries().stream().filter(e -> offset>=e.range().start()&&offset<e.range().end()).findFirst().ifPresent(e -> selectEntry(e.id())); }
+    private SceneViewState view;
+    private Map<String,String> restoredState;
     private record PaneLayout(int width,int assets,int inspector) {}
     private PaneLayout paneLayout;
     private Function<List<String>,List<String>> tileColumnPicker=this::pickExtendedColumn;
@@ -51,7 +59,8 @@ final class MapEditorPanel extends JPanel {
         bar.add(action("点击画布添加","map-place-tool",() -> { if(control!=null)control.placeAt(point -> addSelectedAt(point.getX(),point.getY()-SceneCoordinates.ORIGIN_Y)); }));
         bar.add(new JLabel("ANI 图层")); bar.add(layer); bar.add(background); bar.add(upper);
         JButton sequence=button("地块序列…","map-tile-sequence",this::editTiles); bar.add(sequence); writes.add(sequence);
-        add(bar,BorderLayout.NORTH);
+        bar.add(button("打开所选资源","map-open-asset",() -> {var asset=browser.selected();if(asset!=null)openDefinition.accept(asset.path());}));
+        JPanel header=new JPanel(new BorderLayout());header.add(bar);var scope=new JLabel("共享 MAP · 引用统计未完成；修改会影响所有引用此 MAP 的副本。");scope.setName("map-reference-scope");header.add(scope,BorderLayout.SOUTH);add(header,BorderLayout.NORTH);
         JTabbedPane left=new JTabbedPane(); left.addTab("资源",browser); left.addTab("对象",new JScrollPane(objectList)); left.setMinimumSize(new Dimension(150,120));
         objectList.setName("map-object-list"); objectList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION); objectList.setFixedCellHeight(25); objectList.setFixedCellWidth(420);
         objectList.setCellRenderer(new DefaultListCellRenderer(){ public Component getListCellRendererComponent(JList<?> list,Object value,int index,boolean isSelected,boolean focus) {
@@ -74,16 +83,16 @@ final class MapEditorPanel extends JPanel {
     void setCatalog(SceneCatalog value) { catalog=value; browser.setCatalog(value); }
     void attach(SceneCanvas value) {
         if(canvas!=value) {
-            canvas=value; control=new MapCanvasController(canvas,currentVersion,this::selectEntry,(stamp,id,x,y,z) -> edit.apply(stamp,model.move(id,x,y,z)));
+            canvas=value; control=new MapCanvasController(canvas,currentVersion,this::selectEntry,(stamp,id,x,y,z) -> applyPrepared(stamp,model.move(id,x,y,z)));
         }
         canvas.interaction=control;
         if(model!=null) {
-            control.install(model,version,writable);
+            control.install(model,version,writable);if(!Objects.equals(control.selected(),selected))control.select(selected);
             if(canvas.world==null)canvas.world=new Rectangle2D.Double(0,0,Math.max(224,model.tiles(false).size()*224.),480);
             restoreView(canvas);
         }
     }
-    void captureView(SceneCanvas value) { view=new View(value.panX,value.panY,value.freeZoom,value.zoom,value.camera==null?null:value.camera.position()); }
+    void captureView(SceneCanvas value) { view=SceneViewState.capture(value); }
     void captureLayout() { if(getWidth()>0)paneLayout=new PaneLayout(getWidth(),assetSplit.getDividerLocation(),inspectorSplit.getDividerLocation()); }
     void restoreView(SceneCanvas value) {
         if(paneLayout!=null&&value.scene!=null) {
@@ -92,25 +101,41 @@ final class MapEditorPanel extends JPanel {
             // Settle the parent's resize before restoring the inner divider, or resizeWeight applies its delta twice.
             inspectorSplit.doLayout();inspectorSplit.setDividerLocation((int)Math.round(paneLayout.inspector()*scale));inspectorSplit.doLayout();
         }
-        if(view==null)return; value.panX=view.panX;value.panY=view.panY;value.freeZoom=view.zoom;value.zoom=view.zoomIndex;
-        if(value.camera!=null&&view.camera!=null)value.camera.set(view.camera.x,view.camera.y);
+        if(view!=null)view.apply(value);
     }
     void install(MapDocument value,long stamp,boolean canWrite,String error) {
         if(value!=null&&!path.equals(value.path())){path=value.path();browser.setSource(path);}
+        String previous=fingerprint(entry());int previousCount=model==null?-1:model.entries().size();
         model=value; version=stamp; writable=canWrite; status.setText(error.isBlank()?"选择/拖动对象 · 中键或空格平移 · Esc 取消 · Ctrl+S 保存草稿":error); status.setToolTipText(error.isBlank()?status.getToolTipText():error);
         if(model==null){writes.forEach(c -> c.setEnabled(false));return;}
         changing=true; objects.clear(); objects.addAll(model.entries()); changing=false;
-        if(selected!=null&&model.entries().stream().noneMatch(e -> e.id().equals(selected)))selected=null;
-        if(control!=null)control.install(model,stamp,canWrite);
+        if(pendingText!=null&&pendingText.equals(model.source().text()))selected=pendingSelection;
+        else if(selected!=null&&(previousCount!=model.entries().size()||!previous.equals(fingerprint(entry()))))selected=null;
+        if(canWrite){pendingText=null;pendingSelection=null;}
+        if(control!=null){control.install(model,stamp,canWrite);if(!Objects.equals(control.selected(),selected))control.select(selected);}
+        if(restoredState!=null){var state=restoredState;restoredState=null;restoreState(state);}
         fillProperties(); writes.forEach(c -> c.setEnabled(canWrite));
         if(!model.diagnostics().isEmpty()) { status.setText("解析提示："+String.join("；",model.diagnostics().stream().limit(3).toList())); status.setToolTipText(String.join("\n",model.diagnostics())); }
         previewChanged.run();
     }
     void selectEntry(EntryId id) {
-        selected=id;
+        selected=id;stateChanged.run();
         if(control!=null&&!Objects.equals(control.selected(),id))control.select(id);
         changing=true; try { if(id==null)objectList.clearSelection(); else for(int i=0;i<objects.size();i++)if(objects.get(i).id().equals(id)){objectList.setSelectedIndex(i);break;} } finally { changing=false; }
         fillProperties();
+    }
+    private String sourceFingerprint(){try{var digest=java.security.MessageDigest.getInstance("SHA-256");for(var token:model.source().tokens()){digest.update(token.kind().name().getBytes(java.nio.charset.StandardCharsets.UTF_8));digest.update((byte)0);digest.update(token.value().getBytes(java.nio.charset.StandardCharsets.UTF_8));digest.update((byte)0);}return java.util.HexFormat.of().formatHex(digest.digest());}catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}}
+    Map<String,String> captureState() {
+        if(canvas!=null&&canvas.interaction==control)captureView(canvas);
+        var state=new HashMap<String,String>();if(view!=null)view.save(state);var e=entry();
+        if(e!=null){state.put("sourceTokens",sourceFingerprint());state.put("section",e.id().section());state.put("occurrence",Integer.toString(e.id().sectionOccurrence()));state.put("ordinal",Integer.toString(e.id().recordOrdinal()));state.put("fingerprint",fingerprint(e));}return Map.copyOf(state);
+    }
+    void restoreState(Map<String,String> state) {
+        view=SceneViewState.read(state);if(model==null){restoredState=state;return;}
+        selectEntry(null);
+        try{if(!sourceFingerprint().equals(state.get("sourceTokens")))throw new IllegalArgumentException("源 token 已变化");var id=new EntryId(state.get("section"),Integer.parseInt(state.get("occurrence")),Integer.parseInt(state.get("ordinal")));
+            var match=model.entries().stream().filter(e -> e.id().equals(id)&&fingerprint(e).equals(state.get("fingerprint"))).findFirst();match.ifPresent(e -> selectEntry(e.id()));
+        }catch(RuntimeException invalid){}if(canvas!=null&&canvas.interaction==control)restoreView(canvas);
     }
     private MapEntry entry() { return model==null||selected==null?null:model.entries().stream().filter(e -> e.id().equals(selected)).findFirst().orElse(null); }
     private Point2D visibleCenter() {
@@ -122,8 +147,14 @@ final class MapEditorPanel extends JPanel {
         if(model==null||catalog==null||!writable)return; var asset=browser.selected(); if(asset==null)return;
         change(() -> {
             if(asset.category()==SceneResourceBrowser.Category.TILE) {
+                if(!browser.tileTypeKnown())throw new java.io.IOException("TIL 原生类型尚未读取或解析失败，请查看资源详情后重试");
                 var basic=new ArrayList<>(model.tiles(false).stream().map(MapDocument.TileEntry::reference).toList()); int width=basic.size();
                 var extended=model.tiles(true).stream().map(MapDocument.TileEntry::reference).toList(); var after=new ArrayList<String>();
+                if(browser.selectedExtendedTile()){
+                    if(width==0)throw new java.io.IOException("请先添加基础地块列");
+                    var row=tileColumnPicker.apply(Collections.nCopies(width,catalog.relative(path,asset.path())));if(row==null)return null;
+                    if(row.size()!=width)throw new java.io.IOException("扩展行须与基础列等宽");after.addAll(extended);after.addAll(row);return model.replaceTileGrid(basic,after);
+                }
                 if(!extended.isEmpty()) {
                     if(width==0||extended.size()%width!=0)throw new java.io.IOException("请先在地块序列中补齐现有扩展行");
                     List<String> defaults=new ArrayList<>();for(int row=0;row<extended.size()/width;row++)defaults.add(extended.get(row*width+width-1));
@@ -141,7 +172,7 @@ final class MapEditorPanel extends JPanel {
     private List<String> pickExtendedColumn(List<String> defaults) {
         var choices=catalog.filesUnder(path,".til").stream().map(p -> {try{return catalog.relative(path,p);}catch(Exception e){return p;}}).toArray(String[]::new);
         JPanel form=new JPanel(new GridLayout(0,2,4,4)); List<JComboBox<String>> cells=new ArrayList<>();
-        for(int row=0;row<defaults.size();row++){form.add(new JLabel("扩展行 "+(row+1)+" 的新列"));var cell=new JComboBox<>(choices);cell.setSelectedItem(defaults.get(row));cells.add(cell);form.add(cell);}
+        for(int row=0;row<defaults.size();row++){form.add(new JLabel("扩展单元 "+(row+1)));var cell=new JComboBox<>(choices);cell.setSelectedItem(defaults.get(row));cells.add(cell);form.add(cell);}
         if(JOptionPane.showConfirmDialog(this,form,"新增基础列：选择每个扩展行的地块",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return null;
         return cells.stream().map(c -> (String)c.getSelectedItem()).toList();
     }
@@ -161,7 +192,7 @@ final class MapEditorPanel extends JPanel {
                 traits.setName("map-prop-traits"); traits.setMaximumSize(new Dimension(Integer.MAX_VALUE,28)); traits.setEditable(writable); fields.put("traits",traits); properties.add(traits);
             }
             properties.add(action("应用属性","map-apply-properties",() -> change(this::propertyEdit)));
-            JPanel actions=new JPanel(new FlowLayout(FlowLayout.LEFT,3,2)); actions.add(action("复制","map-clone-entry",() -> change(() -> model.copy(selected)))); actions.add(action("删除","map-delete-entry",() -> change(() -> model.remove(selected)))); actions.setMaximumSize(new Dimension(Integer.MAX_VALUE,38)); properties.add(actions);
+            JPanel actions=new JPanel(new FlowLayout(FlowLayout.LEFT,3,2)); actions.add(action("复制","map-clone-entry",() -> change(() -> model.copy(selected)))); actions.add(action("删除","map-delete-entry",() -> change(() -> {var removal=model.remove(selected);selectEntry(null);return removal;}))); actions.setMaximumSize(new Dimension(Integer.MAX_VALUE,38)); properties.add(actions);
             properties.add(button("定位源码","map-reveal-source",() -> reveal.accept(entry.range())));
             properties.add(button("打开全局定义","map-open-definition",this::definition));
             if(entry.type()!=MapEntry.Type.ANIMATION&&entry.type()!=MapEntry.Type.BACKGROUND) {
@@ -169,6 +200,7 @@ final class MapEditorPanel extends JPanel {
             }
             if(entry.type()==MapEntry.Type.SPECIAL) {
                 properties.add(new JLabel("容器内容（类型 + 原生整数参数）")); payload.setText(contents(entry)); payload.setName("map-special-contents"); properties.add(new JScrollPane(payload));
+                properties.add(button("打开 hellparty.etc","map-open-hellparty",() -> openDefinition.accept("etc/hellparty.etc")));
                 properties.add(action("应用容器 / hellparty 内容","map-apply-contents",() -> change(() -> model.setSpecialContents(selected,parseContents(payload.getText())))));
             }
         }
@@ -227,14 +259,22 @@ final class MapEditorPanel extends JPanel {
         tiles.setModel(tableModel);tiles.setCellSelectionEnabled(true);tiles.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);tiles.setRowHeight(36);
         for(int i=0;i<tiles.getColumnCount();i++)tiles.getColumnModel().getColumn(i).setPreferredWidth(160);
         JPanel dialog=new JPanel(new BorderLayout(4,4));dialog.add(new JLabel("首行为基础地块，后续为扩展行；移动列会同步移动所有扩展行。"),BorderLayout.NORTH);dialog.add(new JScrollPane(tiles));dialog.add(form,BorderLayout.SOUTH);dialog.setPreferredSize(new Dimension(660,380));
-        Object[] choices={"应用序列","当前列左移","当前列右移","取消"};int choice=JOptionPane.showOptionDialog(this,dialog,"MAP 地块序列",JOptionPane.DEFAULT_OPTION,JOptionPane.PLAIN_MESSAGE,null,choices,choices[0]);
+        Object[] choices={"应用序列","当前列左移","当前列右移","替换单元","删除整列","取消"};int choice=JOptionPane.showOptionDialog(this,dialog,"MAP 地块序列",JOptionPane.DEFAULT_OPTION,JOptionPane.PLAIN_MESSAGE,null,choices,choices[0]);
         if(choice==0)change(() -> model.replaceTileGrid(basic.getText().lines().filter(l -> !l.isBlank()).map(String::trim).toList(),extended.getText().lines().filter(l -> !l.isBlank()).map(String::trim).toList()));
+        if(choice==3&&tiles.getSelectedColumn()>=0&&browser.selected()!=null&&browser.selected().category()==SceneResourceBrowser.Category.TILE){
+            int col=tiles.getSelectedColumn(),row=tiles.getSelectedRow();change(() -> {var bases=new ArrayList<>(model.tiles(false).stream().map(MapDocument.TileEntry::reference).toList());var ext=new ArrayList<>(model.tiles(true).stream().map(MapDocument.TileEntry::reference).toList());if(row==0)bases.set(col,catalog.relative(path,browser.selected().path()));else ext.set((row-1)*bases.size()+col,catalog.relative(path,browser.selected().path()));return model.replaceTileGrid(bases,ext);});
+        }
+        if(choice==4&&tiles.getSelectedColumn()>=0){int col=tiles.getSelectedColumn();change(() -> {var bases=new ArrayList<>(model.tiles(false).stream().map(MapDocument.TileEntry::reference).toList());int width=bases.size();bases.remove(col);var ext=new ArrayList<String>();var before=model.tiles(true);for(int i=0;i<before.size();i++)if(i%width!=col)ext.add(before.get(i).reference());return model.replaceTileGrid(bases,ext);});}
         if((choice==1||choice==2)&&tiles.getSelectedColumn()>=0){int from=tiles.getSelectedColumn(),to=from+(choice==1?-1:1);change(() -> model.moveTileColumn(from,to));}
+    }
+    private void applyPrepared(long stamp,ScriptEdit prepared) throws Exception {
+        pendingText=prepared.applyTo(model.source().text());pendingSelection=selected;
+        try{edit.apply(stamp,prepared);}catch(Exception failure){pendingText=null;pendingSelection=null;throw failure;}
     }
     @FunctionalInterface private interface Command { ScriptEdit make() throws Exception; }
     private void change(Command command) {
         if(!writable||model==null)return;
-        try{var prepared=command.make();if(prepared!=null)edit.apply(version,prepared);}
+        try{var prepared=command.make();if(prepared!=null)applyPrepared(version,prepared);}
         catch(Exception failure){status.setText("无法应用："+failure.getMessage());status.setToolTipText(status.getText());}
     }
 }

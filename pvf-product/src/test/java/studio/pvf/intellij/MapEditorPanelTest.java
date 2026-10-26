@@ -16,7 +16,7 @@ class MapEditorPanelTest {
             panel=new MapEditorPanel("map/a.map",(stamp,edit) -> { assertEquals(version,stamp); text=edit.applyTo(text); version++; install(); },() -> version,opened::add,range -> {},() -> {});
             panel.setCatalog(SceneCatalog.build(Set.of("map/a.til","map/sub/b.til","map/sub/a.ani","map/other.map","map/map.lst","monster/monster.lst","monster/a.mon","passiveobject/passiveobject.lst","passiveobject/a.obj"),p -> switch(p) {
                 case "monster/monster.lst" -> "2 `a.mon`"; case "passiveobject/passiveobject.lst" -> "1 `a.obj`"; default -> null;
-            })); install();
+            }));panel.browser().setThumbnailLoader((asset,done) -> done.accept(new SceneResourceBrowser.Thumbnail(null,"metadata",false))); install();
         }
         void install() throws Exception { panel.install(MapDocument.parse("map/a.map",text),version,true,""); }
         void click(String name) { find(panel,name,AbstractButton.class).doClick(); }
@@ -107,6 +107,35 @@ class MapEditorPanelTest {
             h.panel.setSize(1200,800);layout(h.panel);var before=canvas.getSize();h.panel.captureLayout();h.panel.captureView(canvas);
             h.panel.setSize(600,800);layout(h.panel);h.panel.setSize(1200,800);layout(h.panel);h.panel.restoreView(canvas);layout(h.panel);
             assertEquals(before,canvas.getSize());
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    @Test void sourceCaretHighlightsTheMatchingRecordWithoutChangingSourceAndTileOpensItsFile() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();var model=MapDocument.parse("map/a.map",h.text);String before=h.text;
+            h.panel.selectSourceOffset(model.entries().getFirst().range().start()+2);
+            assertEquals(model.entries().getFirst().id(),h.panel.selection());assertEquals(before,h.text);
+            h.panel.browser().select(SceneResourceBrowser.Category.TILE,"map/sub/b.til");h.click("map-open-asset");assertEquals(List.of("map/sub/b.til"),h.opened);
+            assertTrue(find(h.panel,"map-reference-scope",JLabel.class).getText().contains("引用统计未完成"));
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    @Test void selectionStateRestoresOnlyAgainstMatchingNativeTokens() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {try {
+            var h=new Harness();h.panel.selectSourceOffset(h.text.indexOf("100"));var state=h.panel.captureState();
+            h.panel.selectEntry(null);h.panel.restoreState(state);assertNotNull(h.panel.selection());
+            h.text=h.text.replace("100","200");h.install();h.panel.restoreState(state);assertNull(h.panel.selection());
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
+    @Test void deletingAnIdenticalRecordInCodeCannotReuseItsOldSelection()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{var h=new Harness();h.text="[passive object] 1 100 120 0 1 100 120 0 [/passive object]";h.install();h.panel.selectSourceOffset(h.text.indexOf("100"));h.text=h.text.replaceFirst("1 100 120 0 ","");h.install();assertNull(h.panel.selection());}catch(Exception e){throw new RuntimeException(e);}});
+    }
+    @Test void tileAddWaitsForNativeClassificationRatherThanGuessingFromItsPath()throws Exception{
+        SwingUtilities.invokeAndWait(() -> {try{var h=new Harness();h.panel.browser().setThumbnailLoader((asset,done) -> {});String before=h.text;h.panel.addSelectedAt(1,2);assertEquals(before,h.text);assertTrue(find(h.panel,"map-editor-status",JLabel.class).getText().contains("类型"));}catch(Exception e){throw new RuntimeException(e);}});
+    }
+    @Test void aSourceDeletionDoesNotSilentlySelectTheNextPlacementWithTheSameOrdinal() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.text="[tile] `a.til` [/tile] [passive object] 1 100 120 0 2 200 120 0 [/passive object]";h.install();
+            h.panel.selectEntry(MapDocument.parse("map/a.map",h.text).entries().getFirst().id());
+            h.text=h.text.replace("1 100 120 0 ","");h.install();assertNull(h.panel.selection());
         }catch(Exception e){throw new RuntimeException(e);}});
     }
     private static void layout(java.awt.Container parent){parent.doLayout();for(var c:parent.getComponents())if(c instanceof java.awt.Container child)layout(child);}

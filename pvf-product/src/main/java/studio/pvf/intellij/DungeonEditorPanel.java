@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /** Edits the selected source snapshot; previews and navigation never write source. */
 final class DungeonEditorPanel extends JPanel {
@@ -36,12 +37,21 @@ final class DungeonEditorPanel extends JPanel {
     private final JComboBox<String> previewMode = named(new JComboBox<>(new String[]{"普通房间", "深渊替换房"}),"dgn-preview-mode");
     private final JComboBox<Integer> previewMaps = named(new JComboBox<>(),"dgn-preview-map");
     private final List<JComponent> writes = new ArrayList<>();
+    private Map<Integer,DungeonMapChecks.Check> mapChecks;
+    private final JComboBox<DungeonMapChecks.Check> mapProblems=new JComboBox<>();
     private DungeonDocument model;
     private SceneCatalog catalog;
     private long version;
     private Position position = new Position(0,0);
     private int maze;
     private boolean changing, writable;
+    record HellTemplate(String path,DungeonDocument.HellSettings settings) {public String toString(){return path+" · MAP #"+settings.mapId()+" · 击打 "+settings.hitCounts()+" · 出现率 "+settings.appearRate()+" · 金币 "+settings.coinLimit();}}
+    private Consumer<Consumer<List<HellTemplate>>> templates=done -> done.accept(List.of());
+    private Function<List<HellTemplate>,HellTemplate> templatePicker=this::pickTemplate;
+    void onHellTemplates(Consumer<Consumer<List<HellTemplate>>> loader){templates=loader;}
+    void hellTemplatePicker(Function<List<HellTemplate>,HellTemplate> picker){templatePicker=picker;}
+    private SceneViewState view;
+    private Map<String,String> restoredState;
     private Consumer<Preview> cloneMap = request -> {};
 
     DungeonEditorPanel(Edit edit, Consumer<String> openMap, Runnable previewChanged, Consumer<SourceDocument.Range> reveal) {
@@ -67,13 +77,14 @@ final class DungeonEditorPanel extends JPanel {
             String after = DungeonDocument.parse(model.path(),intermediate,model.supportsEscape()).setCandidates(maze,position,true,numbers(bossMaps.getText())).applyTo(intermediate);
             return model.source().replace("设置房间 MAP 候选",new SourceDocument.Range(0,model.source().text().length()),after);
         })));
+        JPanel only=row();only.add(action("仅此房为起点","dgn-only-start",() -> change(() -> model.setStarts(maze,List.of(position)))));only.add(action("仅此房为 Boss","dgn-only-boss",() -> change(() -> model.setBosses(maze,List.of(position)))));properties.add(only);
         JPanel flags=row(); flags.add(start); flags.add(boss); properties.add(flags); writes.add(start); writes.add(boss);
         start.addActionListener(e -> { if(!changing) change(() -> model.setStarts(maze,toggle(current().layout().starts(),start.isSelected()))); });
         boss.addActionListener(e -> { if(!changing) change(() -> model.setBosses(maze,toggle(current().layout().bosses(),boss.isSelected()))); });
         JPanel links = row(); links.add(new JLabel("通路"));
         for (Direction d:Direction.values()) {
             JCheckBox door=named(new JCheckBox(d.label),"dgn-connect-"+d.name().toLowerCase(Locale.ROOT)); doors.put(d,door); links.add(door); writes.add(door);
-            door.addActionListener(e -> { if(!changing) change(() -> model.connect(maze,position,d,door.isSelected())); });
+            door.addActionListener(e -> { if(!changing) change(() -> checkedConnection(d,door.isSelected())); });
         }
         properties.add(links);
         JPanel nav=row(); nav.add(button("打开房间 MAP","dgn-open-map",this::openSelected)); nav.add(action("删除房间","dgn-delete-room",() -> change(() -> model.removeRoom(maze,position)))); properties.add(nav);
@@ -82,12 +93,16 @@ final class DungeonEditorPanel extends JPanel {
         field(properties,"封印 MAP 编号",hellMap); properties.add(hellPosition);
         JPanel hellActions=row(); hellActions.add(action("设为当前房间","dgn-hell-here",() -> change(() -> hell(position))));
         hellActions.add(action("清除封印房","dgn-hell-clear",() -> change(() -> newHell(0,null)))); properties.add(hellActions);
-        hellEnabled.addActionListener(e -> { if(!changing) change(() -> hell(model.hell(maze).position())); });
+        hellEnabled.addActionListener(e -> { if(!changing) {if(hellEnabled.isSelected()&&(model.hell(maze).hitCounts().isEmpty()||model.hell(maze).mapId()<=0||model.hell(maze).position()==null))enableFromTemplate();else change(() -> hell(model.hell(maze).position()));} });
+        properties.add(action("从同包副本选择深渊模板…","dgn-hell-template",this::enableFromTemplate));
+        properties.add(button("编辑深渊 MAP / 封印对象","dgn-open-hell-map",() -> {if(model!=null&&catalog!=null){var path=catalog.maps().get(model.hell(maze).mapId());if(path!=null)openMap.accept(path);}}));
+        properties.add(button("打开 hellparty.etc","dgn-open-hellparty",() -> {if(catalog!=null&&catalog.paths().contains("etc/hellparty.etc"))openMap.accept("etc/hellparty.etc");else status.setText("当前包没有 etc/hellparty.etc");}));
         escape.addActionListener(e -> { if(!changing) change(() -> hell(model.hell(maze).position())); });
         field(properties,"击打阈值（全局，保留原字段数量）",hits); field(properties,"出现率（全局原始值）",rate); field(properties,"金币限制（旧版本全局原始值）",coin);
         properties.add(action("应用深渊参数","dgn-apply-hell",() -> change(() -> hell(model.hell(maze).position()))));
         JTextArea explanation=new JTextArea("深渊启用后，在指定坐标以封印 MAP 替换普通 MAP；与 Boss 位置独立。封印对象的 monster / hellparty 内容在 MAP 中编辑。概率单位未经确认，保留原始值。");
         explanation.setEditable(false); explanation.setLineWrap(true); explanation.setWrapStyleWord(true); explanation.setOpaque(false); explanation.setRows(5); properties.add(explanation);
+        properties.add(new JSeparator());mapProblems.setMaximumSize(new Dimension(Integer.MAX_VALUE,28));properties.add(mapProblems);properties.add(button("打开 MAP 检查项源码","dgn-open-map-problem",() -> {var item=(DungeonMapChecks.Check)mapProblems.getSelectedItem();if(item!=null)openMap.accept(item.path());}));
         properties.add(new JSeparator()); properties.add(new JLabel("仅预览，不修改配置")); properties.add(previewMode); properties.add(previewMaps);
         previewMode.addActionListener(e -> { if(!changing) previewChanged.run(); }); previewMaps.addActionListener(e -> { if(!changing) previewChanged.run(); });
         properties.add(button("定位布局源码","dgn-reveal",() -> {
@@ -109,8 +124,32 @@ final class DungeonEditorPanel extends JPanel {
     private JButton action(String title,String name,Runnable run) { JButton b=button(title,name,run); writes.add(b); return b; }
     JPanel previewHost() { return previewHost; }
     Position position() { return position; }
-    Preview preview() { return new Preview(maze,position,(Integer)previewMaps.getSelectedItem(),previewMode.getSelectedIndex()==1); }
+    boolean activeHellAt(Position p) { if(model==null)return false;var h=model.hell(maze);return h.enabled()&&!h.excluded()&&h.mapId()>0&&p!=null&&p.equals(h.position()); }
+    void selectSourceOffset(int offset) {
+        if(model==null)return;var sections=model.source().sections("maze info");int target=0;
+        for(int i=0;i<sections.size();i++)if(offset>=sections.get(i).heading().range().start())target=i;
+        if(target>=model.mazes().size())return;
+        int begin=sections.isEmpty()?0:sections.get(target).heading().range().start(),end=target+1<sections.size()?sections.get(target+1).heading().range().start():model.source().text().length();
+        for(var section:model.source().sections())if(section.heading().range().start()>=begin&&section.heading().range().start()<end) {
+            if(section.tag().equals("greed"))for(var token:section.values())if(offset>=token.range().start()+1&&offset<token.range().end()-1){
+                int cell=(offset-token.range().start()-1)/2;var layout=model.mazes().get(target).layout();
+                if(cell<layout.width()*layout.height()){maze=target;changing=true;mazes.setSelectedIndex(maze);changing=false;selectRoom(new Position(cell%layout.width(),cell/layout.width()));}return;
+            }
+        }
+    }
+    Preview preview() { boolean deep=previewMode.getSelectedIndex()==1&&activeHellAt(model==null?null:model.hell(maze).position());Integer selected=(Integer)previewMaps.getSelectedItem();if(deep&&activeHellAt(position))selected=model.hell(maze).mapId();return new Preview(maze,position,selected,deep); }
+    void captureView(SceneCanvas canvas){view=SceneViewState.capture(canvas);}
+    void restoreView(SceneCanvas canvas){if(view!=null)view.apply(canvas);}
+    Map<String,String> captureState(){var state=new HashMap<String,String>();if(view!=null)view.save(state);state.put("maze",Integer.toString(maze));state.put("roomX",Integer.toString(position.x()));state.put("roomY",Integer.toString(position.y()));return Map.copyOf(state);}
+    void restoreState(Map<String,String> state){view=SceneViewState.read(state);if(model==null){restoredState=state;return;}try{maze=Math.clamp(Integer.parseInt(state.get("maze")),0,model.mazes().size()-1);position=new Position(Integer.parseInt(state.get("roomX")),Integer.parseInt(state.get("roomY")));changing=true;mazes.setSelectedIndex(maze);changing=false;update();}catch(RuntimeException invalid){}}
     void onClone(Consumer<Preview> handler) { cloneMap=handler; }
+    void setMapChecks(Map<Integer,DungeonMapChecks.Check> checks){mapChecks=Map.copyOf(checks);mapProblems.removeAllItems();checks.values().stream().filter(c -> !c.messages().isEmpty()).sorted(Comparator.comparing(DungeonMapChecks.Check::path)).forEach(mapProblems::addItem);}
+    private ScriptEdit checkedConnection(Direction direction,boolean enabled)throws IOException{
+        if(enabled&&mapChecks!=null){var layout=current().layout();for(var p:List.of(position,layout.neighbor(position,direction))){
+            var ids=new ArrayList<>(layout.maps().getOrDefault(p,List.of()));ids.addAll(layout.bossMaps().getOrDefault(p,List.of()));if(ids.isEmpty())throw new IOException("请先指定两端房间的 MAP，以验证原生门坐标");
+            int gate=p.equals(position)?direction.ordinal():direction.opposite().ordinal();for(int id:ids){var check=mapChecks.get(id);if(check==null||!check.hasGate(gate))throw new IOException("MAP #"+id+" 未验证可用的原生门坐标；请打开 MAP 检查项修正");}
+        }}return model.connect(maze,position,direction,enabled);
+    }
     void setCatalog(SceneCatalog value) { catalog=value; }
     void resolvedChoices(DungeonPanel.Selection value) {
         if(value==null||!value.room().position().equals(position)||value.room().hell())return;
@@ -123,7 +162,7 @@ final class DungeonEditorPanel extends JPanel {
         if(model==null) { writes.forEach(c -> c.setEnabled(false)); return; }
         changing=true; int selected=maze; mazes.removeAllItems();
         for(int i=0;i<model.mazes().size();i++)mazes.addItem((i+1)+" · "+model.mazes().get(i).layout());
-        maze=Math.min(selected,model.mazes().size()-1); mazes.setSelectedIndex(maze); changing=false; update();
+        maze=Math.min(selected,model.mazes().size()-1); mazes.setSelectedIndex(maze); changing=false; if(restoredState!=null){var state=restoredState;restoredState=null;restoreState(state);}update();
     }
     private DungeonDocument.Maze current() { return model.mazes().get(maze); }
     void selectRoom(Position value) { if(model!=null && value.x()>=0 && value.y()>=0 && value.x()<current().layout().width() && value.y()<current().layout().height()) { position=value; update(); } }
@@ -140,6 +179,8 @@ final class DungeonEditorPanel extends JPanel {
             var hell=model.hell(maze); hellEnabled.setSelected(hell.enabled()); escape.setSelected(hell.excluded()); escape.setEnabled(editable&&model.supportsEscape());
             escape.setToolTipText(model.supportsEscape()?"只作用于当前布局":"没有客户端支持 escape hell 的证据；可查看原始源码");
             hellMap.setText(hell.mapId()>0?Integer.toString(hell.mapId()):""); hellPosition.setText("封印房坐标："+(hell.position()==null?"未设置":hell.position()));
+            previewMode.setEnabled(hell.enabled()&&!hell.excluded()&&hell.position()!=null&&hell.mapId()>0);if(!previewMode.isEnabled())previewMode.setSelectedIndex(0);
+            coin.setEditable(writable&&hell.coinLimit()!=null);
             hits.setText(join(hell.hitCounts())); rate.setText(hell.appearRate()==null?"":hell.appearRate().toString()); coin.setText(hell.coinLimit()==null?"":hell.coinLimit().toString());
             previewMaps.removeAllItems(); var choices=layout.bosses().contains(position)&&!layout.bossMaps().getOrDefault(position,List.of()).isEmpty()?layout.bossMaps().get(position):layout.maps().getOrDefault(position,List.of()); choices.forEach(previewMaps::addItem);
             diagnostics.setText(String.join("\n",model.diagnostics().stream().filter(d -> d.maze()==maze).map(d -> d.severity()+" "+d.message()).limit(20).toList())); diagnostics.setCaretPosition(0);
@@ -155,6 +196,20 @@ final class DungeonEditorPanel extends JPanel {
         catch(NumberFormatException invalid) { throw new IOException("请输入整数编号，用逗号分隔"); }
     }
     private static Integer optional(String text) { return text.isBlank()?null:Integer.valueOf(text.trim()); }
+    private HellTemplate pickTemplate(List<HellTemplate> values){
+        return (HellTemplate)JOptionPane.showInputDialog(this,"选择当前 PVF 的现有配置（下列为应用后的原始参数）","深渊模板",JOptionPane.PLAIN_MESSAGE,null,values.toArray(),values.getFirst());
+    }
+    private void enableFromTemplate(){
+        if(model==null||!writable)return;long expected=version;int target=maze;String baseline=model.source().text();status.setText("读取当前 PVF 的深渊模板…");
+        templates.accept(values -> {
+            if(version!=expected||maze!=target||!writable||!model.source().text().equals(baseline)){status.setText("文档已变化，未应用深渊模板");return;}
+            var before=model.hell(maze);var prepared=values.stream().map(t -> new HellTemplate(t.path(),new DungeonDocument.HellSettings(true,before.excluded(),before.mapId()>0?before.mapId():t.settings().mapId(),before.position()!=null?before.position():position,before.hitCounts().isEmpty()?t.settings().hitCounts():before.hitCounts(),before.appearRate()!=null?before.appearRate():t.settings().appearRate(),before.coinLimit()!=null?before.coinLimit():t.settings().coinLimit()))).toList();
+            if(prepared.isEmpty()){update();status.setText("同包没有可验证的深渊模板；请在代码中提供已确认的原生配置");return;}
+            var selected=templatePicker.apply(prepared);if(selected==null){update();return;}
+            if(version!=expected||maze!=target||!writable||!model.source().text().equals(baseline)){status.setText("文档已变化，未应用深渊模板");return;}
+            change(() -> model.setHell(maze,selected.settings()));
+        });
+    }
     private ScriptEdit hell(Position at) throws IOException { return newHell(hellMap.getText().isBlank()?0:Integer.parseInt(hellMap.getText().trim()),at); }
     private ScriptEdit newHell(int mapId,Position at) throws IOException {
         return model.setHell(maze,new DungeonDocument.HellSettings(hellEnabled.isSelected(),escape.isSelected(),mapId,at,numbers(hits.getText()),optional(rate.getText()),optional(coin.getText())));
@@ -163,7 +218,7 @@ final class DungeonEditorPanel extends JPanel {
     private void change(Command command) {
         if(changing||!writable||model==null)return;
         try { edit.apply(version,command.make()); }
-        catch(Exception failure) { status.setText("无法应用："+failure.getMessage()); status.setToolTipText(status.getText()); }
+        catch(Exception failure) { if(model!=null)update();status.setText("无法应用："+failure.getMessage()); status.setToolTipText(status.getText()); }
     }
     private void chooseMap(JTextField target) {
         if(catalog==null)return;
@@ -199,7 +254,7 @@ final class DungeonEditorPanel extends JPanel {
                     g.setColor(exists?new Color(62,78,99):new Color(35,40,47)); g.fillRoundRect(px+5,py+5,54,54,8,8);
                     g.setColor(p.equals(position)?new Color(90,185,255):new Color(100,110,124)); g.drawRoundRect(px+5,py+5,54,54,8,8);
                     for(Direction d:Direction.values())if(layout.connected(p,d))g.drawLine(px+32,py+32,px+32+d.dx*32,py+32+d.dy*32);
-                    String flags=(layout.starts().contains(p)?"S":"")+(layout.bosses().contains(p)?"B":"")+(p.equals(hell.position())?"H":"");
+                    String flags=(layout.starts().contains(p)?"S":"")+(layout.bosses().contains(p)?"B":"")+(activeHellAt(p)?"H":"");
                     g.setColor(Color.WHITE); g.drawString(exists?flags.isEmpty()?x+","+y:flags:"+",px+16,py+32);
                     if(exists&&layout.mask(p)==0&&!room.playable(p)) { g.setColor(Color.ORANGE); g.drawString("待连通",px+10,py+50); }
                 }

@@ -98,6 +98,9 @@ final class PvfStudioFrame extends JFrame {
     private final JPanel navigation = new JPanel(new CardLayout());
     private final EditorTabs tabs = new EditorTabs();
     private final Map<AnAction, CustomShortcutSet> tabShortcuts = new LinkedHashMap<>();
+    private final Map<String,Document> retainedSceneDocuments=new LinkedHashMap<>();
+    private final Set<String> hellMapSelections=new HashSet<>();
+    private String previewSignature="";
     private final Map<String,String> roomOrigins = new HashMap<>();
     private final Deque<ClosedTab> closedTabs = new ArrayDeque<>();
     private final Path draftsRoot;
@@ -131,6 +134,7 @@ final class PvfStudioFrame extends JFrame {
 
     PvfStudioFrame(Path draftsRoot, boolean exitOnClose) {
         super("PVF Studio");
+        preview.onViewChanged(this::scheduleEditorStateSave);
         preview.onResourcesChanged(() -> sessions.values().stream().filter(tab -> tab.mapPanel!=null).forEach(tab -> tab.mapPanel.browser().setThumbnailLoader((asset,result) -> preview.thumbnail(sceneSource(tab),asset,result))));
         com.intellij.ui.AppUIUtilKt.updateAppWindowIcon(this);
         setGlassPane(new com.intellij.openapi.wm.impl.IdeGlassPaneImpl(getRootPane(), false));
@@ -605,7 +609,7 @@ final class PvfStudioFrame extends JFrame {
                         Charset actual = studio.pvf.workspace.PvfTextEncoding.restoredCharset(loaded.archive().format(), loaded.readBytes(tab.path()), savedCharset);
                         EditorSessionState.Tab position = tab;
                         if (!actual.equals(savedCharset)) {
-                            position = new EditorSessionState.Tab(tab.path(), actual.name(), tab.caret(), tab.scrollX(), tab.scrollY(), tab.viewMode(), tab.splitRatio());
+                            position = new EditorSessionState.Tab(tab.path(), actual.name(), tab.caret(), tab.scrollX(), tab.scrollY(), tab.viewMode(), tab.splitRatio(), tab.visualState());
                             warnings.add(tab.path() + "：已按韩文标签将旧 GBK 编码修正为 MS949");
                         }
                         restored.add(new RestoredTab(position, readEditorText(loaded, tab.path(), actual)));
@@ -638,7 +642,7 @@ final class PvfStudioFrame extends JFrame {
                 for (RestoredTab restored : loaded.tabs()) {
                     EditorSessionState.Tab tab = restored.position();
                     createSession(tab.path(), Charset.forName(tab.charset()), restored.raw(),
-                            new ClosedTab(tab.path(), Charset.forName(tab.charset()), tabs.getTabCount(), tab.caret(), tab.scrollX(), tab.scrollY(), tab.viewMode(), tab.splitRatio()));
+                            new ClosedTab(tab.path(), Charset.forName(tab.charset()), tabs.getTabCount(), tab.caret(), tab.scrollX(), tab.scrollY(), tab.viewMode(), tab.splitRatio(), tab.visualState()));
                 }
                 Session selected = sessions.get(loaded.selectedPath());
                 if (selected != null) tabs.setSelectedComponent(selected.component());
@@ -800,7 +804,17 @@ final class PvfStudioFrame extends JFrame {
             Map<String, Session> renamed = new LinkedHashMap<>();
             for (Session session : sessions.values()) {
                 if (session.path.equals(oldPath) || subtree && within(session.path, oldPath)) {
+                    JComponent previous=session.component();String previousType=session.dungeonPanel!=null?"dgn":session.mapPanel!=null?"map":"";
                     session.path = newPath + session.path.substring(oldPath.length());
+                    String nextType=session.path.endsWith(".dgn")?"dgn":session.path.endsWith(".map")?"map":"";
+                    if(!previousType.equals(nextType)){if(session.bridge!=null)session.bridge.close();session.bridge=null;session.mapPanel=null;session.dungeonPanel=null;configureVisualSession(session);
+                        if(session.surface!=null&&nextType.isEmpty()){session.surface.setVisual(new JLabel("当前扩展名使用代码编辑",SwingConstants.CENTER));session.surface.setMode(VisualEditorSurface.Mode.CODE);}
+                        int oldIndex=tabs.indexOfComponent(previous);if(oldIndex>=0&&previous!=session.component())tabs.setComponentAt(oldIndex,session.component());
+                        session.saveAction.registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_S,InputEvent.CTRL_DOWN_MASK)),session.component());
+                        session.undoAction.registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_Z,InputEvent.CTRL_DOWN_MASK)),session.component());
+                        session.redoAction.registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_Y,InputEvent.CTRL_DOWN_MASK)),session.component());
+                        tabShortcuts.forEach((action,shortcut) -> action.registerCustomShortcutSet(shortcut,session.component()));
+                    }
                     int index = tabs.indexOfComponent(session.component());
                     if (index >= 0) { tabs.setToolTipTextAt(index, session.path + " [" + session.charset.name() + "]"); tabs.decorate(session.component(), PvfFileIcons.forEntry(session.path, false, false)); }
                     updateSessionTitle(session);
@@ -808,6 +822,7 @@ final class PvfStudioFrame extends JFrame {
                 }
                 renamed.put(session.path, session);
             }
+            Map<String,String> origins=new HashMap<>();roomOrigins.forEach((map,dgn) -> origins.put(map.equals(oldPath)||subtree&&within(map,oldPath)?newPath+map.substring(oldPath.length()):map,dgn.equals(oldPath)||subtree&&within(dgn,oldPath)?newPath+dgn.substring(oldPath.length()):dgn));roomOrigins.clear();roomOrigins.putAll(origins);
             sessions.clear(); sessions.putAll(renamed); closedTabs.removeIf(tab -> tab.path().equals(oldPath) || subtree && within(tab.path(), oldPath));
             if (contentSearch != null) { contentSearch.dispose(); contentSearch = null; }
             refreshFileTree(updated, newPath); updatePreview(); scheduleEditorStateSave();
@@ -927,7 +942,8 @@ final class PvfStudioFrame extends JFrame {
         // The global undo provider must subscribe before the first edit of an unbound document.
         UndoManager.getGlobalInstance();
         Project editorProject = ProjectManager.getInstance().getDefaultProject();
-        Document document = EditorFactory.getInstance().createDocument(normalized);
+        Document retained=retainedSceneDocuments.remove(path);
+        Document document = retained!=null&&retained.getText().equals(normalized)?retained:EditorFactory.getInstance().createDocument(normalized);
         Newlines lineEndings = new Newlines(raw);
         boolean binary = studio.pvf.workspace.BinaryView.isView(raw);
         Editor editor = lineEndings.isMixed() || binary ? EditorFactory.getInstance().createViewer(document, editorProject)
@@ -956,14 +972,14 @@ final class PvfStudioFrame extends JFrame {
                 session.component());
         tabShortcuts.forEach((action, shortcut) -> action.registerCustomShortcutSet(shortcut, session.component()));
         sessions.put(path, session);
-        document.addDocumentListener(new DocumentListener() {
+        session.documentListener=new DocumentListener() {
             public void documentChanged(DocumentEvent event) {
                 updateSessionTitle(session); previewRefresh.restart(); scheduleEditorStateSave();
                 if (session.bridge != null) session.bridge.refresh();
             }
-        });
+        };document.addDocumentListener(session.documentListener);
         editor.getCaretModel().addCaretListener(new CaretListener() {
-            @Override public void caretPositionChanged(CaretEvent event) { scheduleEditorStateSave(); }
+            @Override public void caretPositionChanged(CaretEvent event) { scheduleEditorStateSave();int offset=session.editor.getCaretModel().getOffset();if(session.mapPanel!=null)session.mapPanel.selectSourceOffset(offset);if(session.dungeonPanel!=null)session.dungeonPanel.selectSourceOffset(offset); }
         });
         editor.getScrollingModel().addVisibleAreaListener(event -> scheduleEditorStateSave());
         session.component().addComponentListener(new ComponentAdapter() {
@@ -972,6 +988,7 @@ final class PvfStudioFrame extends JFrame {
         });
         if (restore != null) {
             if (session.surface != null) session.surface.restore(restore.viewMode(), restore.splitRatio());
+            if(session.mapPanel!=null)session.mapPanel.restoreState(restore.visualState());if(session.dungeonPanel!=null)session.dungeonPanel.restoreState(restore.visualState());
             session.pendingViewport = new Point(restore.scrollX(), restore.scrollY());
             editor.getCaretModel().moveToOffset(Math.min(restore.caret(), document.getTextLength()));
         }
@@ -990,15 +1007,26 @@ final class PvfStudioFrame extends JFrame {
     private void configureVisualSession(Session session) {
         if (!(session.path.endsWith(".map") || session.path.endsWith(".dgn")) || studio.pvf.workspace.BinaryView.isView(session.persistedText)) return;
         JLabel visual = new JLabel("正在解析场景…", SwingConstants.CENTER);
-        session.surface = new VisualEditorSurface(session.editor.getComponent(), visual, () -> { scheduleEditorStateSave(); previewRefresh.restart(); });
+        if(session.surface==null)session.surface = new VisualEditorSurface(session.editor.getComponent(), visual, () -> { scheduleEditorStateSave(); previewRefresh.restart(); });
         if(session.path.endsWith(".dgn")) {
             session.dungeonPanel = new DungeonEditorPanel((stamp,edit) -> session.bridge.apply(stamp,edit),
-                    map -> openRoomMap(session,map), () -> { if(selectedSession()==session)previewRefresh.restart(); }, range -> revealSource(session,range));
+                    map -> openRoomMap(session,map), () -> { scheduleEditorStateSave();if(selectedSession()==session)previewRefresh.restart(); }, range -> revealSource(session,range));
             session.dungeonPanel.onClone(request -> cloneRoomMap(session,request));
+            session.dungeonPanel.onHellTemplates(done -> {
+                var current=workspace;if(current==null)return;var snapshot=sceneSource(session);var paths=current.paths();var mapIds=session.catalog==null?Set.<Integer>of():session.catalog.maps().keySet();
+                sceneWorker.execute(() -> {var templates=new ArrayList<DungeonEditorPanel.HellTemplate>();
+                    for(String path:paths.stream().filter(p -> p.endsWith(".dgn")).sorted().toList())try{
+                        var document=studio.pvf.sceneedit.DungeonDocument.parse(path,snapshot.lookup().read(path));
+                        for(int i=0;i<document.mazes().size();i++){var h=document.hell(i);if(h.enabled()&&!h.excluded()&&h.position()!=null&&h.mapId()>0&&!h.hitCounts().isEmpty()&&mapIds.contains(h.mapId())){templates.add(new DungeonEditorPanel.HellTemplate(path+" #"+(i+1),h));break;}}
+                    }catch(Exception ignored){}
+                    SwingUtilities.invokeLater(() -> {if(workspace==current&&!session.editor.isDisposed())done.accept(List.copyOf(templates));});
+                });
+            });
             session.surface.setVisual(session.dungeonPanel);
         } else {
             session.mapPanel=new MapEditorPanel(session.path,(stamp,edit) -> session.bridge.apply(stamp,edit),
                     () -> session.editor.getDocument().getModificationStamp(),this::openEntry,range -> revealSource(session,range),() -> previewRefresh.restart());
+            session.mapPanel.onStateChanged(this::scheduleEditorStateSave);
             session.mapPanel.browser().setThumbnailLoader((asset,result) -> preview.thumbnail(sceneSource(session),asset,result));
             session.surface.setVisual(session.mapPanel);
         }
@@ -1017,7 +1045,7 @@ final class PvfStudioFrame extends JFrame {
                     : studio.pvf.sceneedit.DungeonDocument.parse(session.path, text);
         }, sceneWorker, SwingUtilities::invokeLater, state -> {
             if(session.dungeonPanel!=null)session.dungeonPanel.install((studio.pvf.sceneedit.DungeonDocument)state.model(),state.version(),state.writable(),state.error());
-            else if(session.mapPanel!=null)session.mapPanel.install((studio.pvf.sceneedit.MapDocument)state.model(),state.version(),state.writable(),state.error());
+            else if(session.mapPanel!=null){session.mapPanel.install((studio.pvf.sceneedit.MapDocument)state.model(),state.version(),state.writable(),state.error());if(state.writable()&&hellMapSelections.remove(session.path))session.mapPanel.selectHellPillar();}
         });
         session.bridge.refresh();
         session.surface.setMode(VisualEditorSurface.Mode.DESIGN);
@@ -1032,21 +1060,26 @@ final class PvfStudioFrame extends JFrame {
         session.editor.getContentComponent().requestFocusInWindow();
     }
     private void openRoomMap(Session origin,String path) {
-        roomOrigins.put(path,origin.path); openEntry(path);
-        Session existing=sessions.get(path); if(existing!=null)decorateRoomOrigin(existing);
+        roomOrigins.put(path,origin.path); if(origin.dungeonPanel!=null&&origin.bridge.state().model() instanceof studio.pvf.sceneedit.DungeonDocument d&&Objects.equals(origin.catalog.maps().get(d.hell(origin.dungeonPanel.preview().maze()).mapId()),path))hellMapSelections.add(path);openEntry(path);
+        Session existing=sessions.get(path); if(existing!=null){decorateRoomOrigin(existing);if(hellMapSelections.remove(path)&&existing.mapPanel!=null)existing.mapPanel.selectHellPillar();}
     }
     private void decorateRoomOrigin(Session session) {
         if(session.surface!=null&&roomOrigins.containsKey(session.path)) session.surface.action("返回副本", "scene-return-dungeon", () -> openEntry(roomOrigins.get(session.path)));
     }
     private void loadSceneCatalog(Session session) {
         if(workspace==null)return;
-        var current=workspace; var paths=current.paths(); var texts=new HashMap<String,String>();
+        var current=workspace; var paths=current.paths();String key=paths.hashCode()+"|"+sessions.values().stream().map(s -> s.path+":"+s.editor.getDocument().getModificationStamp()).sorted().toList();
+        if(key.equals(session.catalogSignature))return;session.catalogSignature=key;var texts=new HashMap<String,String>();
         sessions.forEach((path,tab) -> texts.put(path,tab.editor.getDocument().getText()));
         sceneWorker.execute(() -> {
             try {
             var catalog=studio.pvf.sceneedit.SceneCatalog.build(paths,path -> texts.containsKey(path)?texts.get(path):current.readText(path,session.charset));
+            var checks=new HashMap<Integer,studio.pvf.sceneedit.DungeonMapChecks.Check>();String baseline=texts.get(session.path);
+            if(session.path.endsWith(".dgn"))try{var dungeon=studio.pvf.sceneedit.DungeonDocument.parse(session.path,baseline);for(var maze:dungeon.mazes())for(var room:maze.rooms()){
+                var ids=new ArrayList<>(maze.layout().maps().getOrDefault(room,List.of()));ids.addAll(maze.layout().bossMaps().getOrDefault(room,List.of()));for(int id:ids){String path=catalog.maps().get(id);if(path!=null){String text=texts.containsKey(path)?texts.get(path):current.readText(path,session.charset);var check=studio.pvf.sceneedit.DungeonMapChecks.inspect(path,text,maze.layout().bosses().contains(room)||maze.layout().bossMaps().getOrDefault(room,List.of()).contains(id),maze.layout().mask(room));var before=checks.get(id);if(before!=null){var messages=new LinkedHashSet<>(before.messages());messages.addAll(check.messages());check=new studio.pvf.sceneedit.DungeonMapChecks.Check(path,check.info(),List.copyOf(messages));}checks.put(id,check);}}
+            }}catch(Exception ignored){}
             SwingUtilities.invokeLater(() -> { if(session.editor.isDisposed()||workspace!=current)return;
-                session.catalog=catalog; if(session.dungeonPanel!=null)session.dungeonPanel.setCatalog(catalog);
+                session.catalog=catalog; if(session.dungeonPanel!=null){session.dungeonPanel.setCatalog(catalog);if(session.editor.getDocument().getText().equals(baseline))session.dungeonPanel.setMapChecks(checks);}
                 if(session.mapPanel!=null)session.mapPanel.setCatalog(catalog);
             });
             } catch(RuntimeException failure) {
@@ -1066,6 +1099,7 @@ final class PvfStudioFrame extends JFrame {
         if(busy||workspace==null||origin==null||origin.catalog==null||selected.mapId()==null)return;
         String source=origin.catalog.maps().get(selected.mapId()); if(source==null)return;
         var current=workspace;
+        boolean bindHell=selected.hell()&&origin.bridge.state().model() instanceof studio.pvf.sceneedit.DungeonDocument hellDocument&&Objects.equals(selected.position(),hellDocument.hell(selected.maze()).position());
         boolean bindBoss=origin.bridge.state().model() instanceof studio.pvf.sceneedit.DungeonDocument dungeon
                 && dungeon.mazes().get(selected.maze()).layout().bosses().contains(selected.position());
         List<Session> affected=sessions.values().stream().filter(s -> s.path.equals(source)||s.path.equals(dungeonPath)||s.path.equals("map/map.lst")).toList();
@@ -1081,14 +1115,15 @@ final class PvfStudioFrame extends JFrame {
             s.editor.getDocument().setReadOnly(!value); if(s.bridge!=null)s.bridge.refresh();
         } });
         runTask("准备 MAP 克隆与注册…", () -> {
-            String sourceText=raw.containsKey(source)?raw.get(source):current.readText(source,origin.charset);
+            Charset sourceCharset=charsets.getOrDefault(source,origin.charset);
+            String sourceText=raw.containsKey(source)?raw.get(source):current.readText(source,sourceCharset);
             String listText=raw.containsKey("map/map.lst")?raw.get("map/map.lst"):current.readText("map/map.lst",origin.charset);
             var request=new studio.pvf.sceneedit.MapRegistration.Request(current.paths(),source,destination,current.readBytes(source),sourceText,listText,
-                    dungeonPath,raw.get(dungeonPath),selected.maze(),selected.position(),bindBoss,null,Integer.MAX_VALUE);
+                    dungeonPath,raw.get(dungeonPath),selected.maze(),selected.position(),bindBoss,null,Integer.MAX_VALUE,bindHell);
             var prepared=MapCloneCommand.prepare(request,origin.charset,current.readBytes("map/map.lst"),current.readBytes(dungeonPath));
             List<PvfWorkspace.TextChange> changes=new ArrayList<>();
             for(var change:prepared.changes()) {
-                changes.add(new PvfWorkspace.TextChange(change.path(),change.text(),charsets.getOrDefault(change.path(),origin.charset),change.expectedBytes()));
+                changes.add(new PvfWorkspace.TextChange(change.path(),change.text(),change.path().equals(prepared.registration().destinationPath())?sourceCharset:charsets.getOrDefault(change.path(),origin.charset),change.expectedBytes()));
             }
             return new MapCloneCommand.Prepared(prepared.registration(),changes,prepared.documentTexts());
         }, prepared -> {
@@ -1115,9 +1150,11 @@ final class PvfStudioFrame extends JFrame {
                                     if(workspace!=current)throw new IOException("副本工作区已关闭");
                                     Session clone=sessions.get(prepared.registration().destinationPath());
                                     if(!after&&clone!=null&&clone.isUnsaved())throw new IOException("新 MAP 有未保存编辑，请先撤销这些编辑");
+                                    for(Session old:touched){Session live=sessions.get(old.path);if(live!=null&&live.editor.getDocument()!=old.editor.getDocument()){String expected=after?normalizeNewlines(raw.get(old.path)):normalizeNewlines(prepared.documentTexts().get(old.path));if(!live.editor.getDocument().getText().equals(expected))throw new IOException("重新打开的文档已变化，请先撤销编辑："+old.path);}}
                                     current.restoreBatch(batch,after);
+                                    ApplicationManager.getApplication().runWriteAction(() -> {for(Session old:touched){Session live=sessions.get(old.path);if(live!=null&&live.editor.getDocument()!=old.editor.getDocument()){live.editor.getDocument().setText(normalizeNewlines(after?prepared.documentTexts().get(old.path):raw.get(old.path)));live.persistedText=after?normalizeNewlines(prepared.documentTexts().get(old.path)):beforePersisted.get(old);live.persistedStamp=-1;updateSessionTitle(live);}}});
                                     if(!after&&clone!=null) { sessions.remove(clone.path); tabs.remove(clone.component()); releaseSession(clone); }
-                                    for(Session s:touched) { s.persistedText=after?normalizeNewlines(prepared.documentTexts().get(s.path)):beforePersisted.get(s); s.persistedStamp=-1; }
+                                    for(Session s:touched) {String persisted=after?normalizeNewlines(prepared.documentTexts().get(s.path)):beforePersisted.get(s);s.persistedText=persisted;s.persistedStamp=-1;Session live=sessions.get(s.path);if(live!=null){live.persistedText=persisted;live.persistedStamp=-1;updateSessionTitle(live);}}
                                     refreshSceneStructure(prepared.registration().destinationPath());
                                 } catch(IOException failure) { throw new com.intellij.openapi.command.undo.UnexpectedUndoException(failure.getMessage()); }
                             }
@@ -1135,6 +1172,7 @@ final class PvfStudioFrame extends JFrame {
         },thaw);
     }
     private void refreshSceneStructure(String selection) {
+        previewSignature="";
         if(workspace==null)return; var current=workspace;
         runTask("刷新文件目录…",progress -> buildDirectories(current,progress), updated -> {
             refreshFileTree(updated,selection); sessions.values().stream().filter(s -> s.surface!=null).forEach(this::loadSceneCatalog); previewRefresh.restart();
@@ -1201,9 +1239,14 @@ final class PvfStudioFrame extends JFrame {
         if (backup && Files.exists(target) && JOptionPane.showConfirmDialog(this,
                 "将先把旧版本保存到导出目录的 backups 文件夹，\n再用校验后的新版本更新：\n" + target.toAbsolutePath(),
                 "备份并更新导出文件", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE) != JOptionPane.OK_OPTION) return;
-        List<Snapshot> snapshots = snapshots(); PvfWorkspace current = workspace;
+        List<Snapshot> snapshots = snapshots(); PvfWorkspace current = workspace;Charset fallback=selectedCharset();var encodings=new HashMap<String,Charset>();sessions.forEach((path,session) -> encodings.put(path,session.charset));
         runTask(backup ? "保存草稿、备份旧版本并导出校验 PVF…" : "保存草稿并导出、校验 PVF…", () -> {
             persistSnapshots(current, snapshots);
+            for(String path:current.dirtyPaths())if(path.endsWith(".dgn")&&current.contains(path)){
+                Charset charset=encodings.getOrDefault(path,fallback);var changed=studio.pvf.sceneedit.DungeonDocument.parse(path,current.readText(path,charset));studio.pvf.sceneedit.DungeonDocument baseline=null;
+                try{String original=current.readOriginalText(path,charset);if(!original.isBlank())baseline=studio.pvf.sceneedit.DungeonDocument.parse(path,original);}catch(IOException ignored){}
+                var errors=changed.newRoomErrors(baseline);if(!errors.isEmpty())throw new IOException(path+"：新房间尚不可导出；"+errors.getFirst().message()+"。请完成连接后再导出，草稿已保留。");
+            }
             if (backup) return PvfBackupExport.export(current, target);
             current.export(target);
             return new PvfBackupExport.Result(target.toAbsolutePath(), null);
@@ -1277,6 +1320,10 @@ final class PvfStudioFrame extends JFrame {
     }
     private Session sessionFor(Component component) { return sessions.values().stream().filter(s -> s.component() == component).findFirst().orElse(null); }
 
+    private Map<String,String> visualState(Session session) {
+        if(session==previewOwner&&session.dungeonPanel!=null)preview.captureEditorView();
+        return session.mapPanel!=null?session.mapPanel.captureState():session.dungeonPanel!=null?session.dungeonPanel.captureState():Map.of();
+    }
     private EditorSessionState captureEditorState() {
         List<EditorSessionState.Tab> saved = new ArrayList<>();
         for (int i = 0; i < tabs.getTabCount(); i++) {
@@ -1286,7 +1333,7 @@ final class PvfStudioFrame extends JFrame {
             saved.add(new EditorSessionState.Tab(session.path, session.charset.name(), session.editor.getCaretModel().getOffset(),
                     pending == null ? session.editor.getScrollingModel().getHorizontalScrollOffset() : pending.x,
                     pending == null ? session.editor.getScrollingModel().getVerticalScrollOffset() : pending.y,
-                    session.surface == null ? "CODE" : session.surface.mode().name(), session.surface == null ? .5 : session.surface.ratio()));
+                    session.surface == null ? "CODE" : session.surface.mode().name(), session.surface == null ? .5 : session.surface.ratio(),visualState(session)));
         }
         Session selected = selectedSession();
         return new EditorSessionState(saved, selected == null ? "" : selected.path);
@@ -1363,9 +1410,13 @@ final class PvfStudioFrame extends JFrame {
         previewDock.setVisible(!design&&showResourcePreview);
         editorSplit.setDividerSize(previewDock.isVisible()?UIManager.getInt("SplitPane.dividerSize"):0);
         if(previewDock.isVisible())editorSplit.setDividerLocation(previewDivider);
+        Object parsed=selected.bridge==null?null:selected.bridge.state().model();String parsedText=parsed instanceof studio.pvf.sceneedit.MapDocument m?m.source().text():parsed instanceof studio.pvf.sceneedit.DungeonDocument d?d.source().text():"";
+        String signature=parsedText+"|"+selected.path+"|"+design+"|"+(selected.bridge==null||selected.bridge.state().model()==null)+"|"+(selected.dungeonPanel==null?"":selected.dungeonPanel.preview())+"|"+sessions.values().stream().map(s -> s.path+":"+s.editor.getDocument().getModificationStamp()).sorted().toList();
+        if(previewOwner==selected&&signature.equals(previewSignature))return;
+        previewSignature=signature;
         if(design) {
             if(selected.bridge.state().model() instanceof studio.pvf.sceneedit.DungeonDocument document)
-                preview.setDungeonEditorSource(new ResourcePreviewPanel.Source(selected.path,document.source().text(),source.lookup()),selected.dungeonPanel.preview(),selected.dungeonPanel::resolvedChoices);
+                preview.setDungeonEditorSource(new ResourcePreviewPanel.Source(selected.path,document.source().text(),source.lookup()),selected.dungeonPanel.preview(),selected.dungeonPanel::resolvedChoices,selected.dungeonPanel);
             else if(selected.bridge.state().model() instanceof studio.pvf.sceneedit.MapDocument document)
                 preview.setMapEditorSource(new ResourcePreviewPanel.Source(selected.path,document.source().text(),source.lookup()),selected.mapPanel);
             else preview.setSource(null);
@@ -1395,7 +1446,7 @@ final class PvfStudioFrame extends JFrame {
             Component preferred = tabs.preferredAfterClosing(components);
             List<ClosedTab> history = targets.stream().map(s -> new ClosedTab(s.path, s.charset, tabs.indexOfComponent(s.component()),
                     s.editor.getCaretModel().getOffset(), s.pendingViewport == null ? s.editor.getScrollingModel().getHorizontalScrollOffset() : s.pendingViewport.x,
-                    s.pendingViewport == null ? s.editor.getScrollingModel().getVerticalScrollOffset() : s.pendingViewport.y, s.surface == null ? "CODE" : s.surface.mode().name(), s.surface == null ? .5 : s.surface.ratio())).toList();
+                    s.pendingViewport == null ? s.editor.getScrollingModel().getVerticalScrollOffset() : s.pendingViewport.y, s.surface == null ? "CODE" : s.surface.mode().name(), s.surface == null ? .5 : s.surface.ratio(),visualState(s))).toList();
             tabs.runBatch(() -> {
                 for (Session session : targets) {
                     sessions.remove(session.path); tabs.remove(session.component()); releaseSession(session);
@@ -1474,10 +1525,12 @@ final class PvfStudioFrame extends JFrame {
         previewRefresh.stop(); preview.setSource(null);
         for (JDialog dialog : List.copyOf(diffDialogs.keySet())) { dialog.dispose(); disposeDiff(dialog); }
         for (Session session : sessions.values()) releaseSession(session);
-        sessions.clear(); tabs.removeAll(); closedTabs.clear();
+        sessions.clear(); tabs.removeAll(); closedTabs.clear();retainedSceneDocuments.clear();hellMapSelections.clear();roomOrigins.clear();
     }
 
     private void releaseSession(Session session) {
+        if(session.documentListener!=null)session.editor.getDocument().removeDocumentListener(session.documentListener);
+        if(session.surface!=null&&!session.isUnsaved()){retainedSceneDocuments.put(session.path,session.editor.getDocument());while(retainedSceneDocuments.size()>100)retainedSceneDocuments.remove(retainedSceneDocuments.keySet().iterator().next());}
         EditorSearchSession search = EditorSearchSession.get(session.editor); if (search != null) search.close();
         tabShortcuts.keySet().forEach(action -> action.unregisterCustomShortcutSet(session.component()));
         if (session.saveAction != null) session.saveAction.unregisterCustomShortcutSet(session.component());
@@ -1542,12 +1595,13 @@ final class PvfStudioFrame extends JFrame {
                           List<RestoredTab> tabs, String selectedPath, List<String> warnings) {}
     private record RestoredTab(EditorSessionState.Tab position, String raw) {}
     private record Snapshot(Session session, String editorText, String encodedText, long stamp) {}
-    private record ClosedTab(String path, Charset charset, int index, int caret, int scrollX, int scrollY, String viewMode, double splitRatio) {}
+    private record ClosedTab(String path, Charset charset, int index, int caret, int scrollX, int scrollY, String viewMode, double splitRatio,Map<String,String> visualState) {}
     @FunctionalInterface private interface IoTask<T> { T run() throws Exception; }
     @FunctionalInterface private interface ProgressTask<T> { T run(studio.pvf.core.ProgressListener progress) throws Exception; }
 
     private static final class Session {
         String path; final Charset charset; final Editor editor; final Newlines newlines;
+        DocumentListener documentListener;
         AnAction saveAction;
         AnAction undoAction;
         AnAction redoAction;
@@ -1557,6 +1611,7 @@ final class PvfStudioFrame extends JFrame {
         DungeonEditorPanel dungeonPanel;
         MapEditorPanel mapPanel;
         studio.pvf.sceneedit.SceneCatalog catalog;
+        String catalogSignature="";
         JComponent component() { return surface == null ? editor.getComponent() : surface; }
         String persistedText;
         long persistedStamp;

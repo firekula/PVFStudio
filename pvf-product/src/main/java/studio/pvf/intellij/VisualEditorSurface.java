@@ -16,6 +16,7 @@ final class VisualEditorSurface extends JPanel {
     private final Runnable changed;
     private Mode mode = Mode.CODE;
     private double ratio = .5;
+    private boolean pendingDivider;
     VisualEditorSurface(JComponent code, JComponent visual, Runnable changed) {
         super(new BorderLayout()); this.code = code; this.visual = visual; this.changed = changed;
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 2)); bar.setName("scene-view-toolbar");
@@ -27,7 +28,7 @@ final class VisualEditorSurface extends JPanel {
         split.setResizeWeight(.5); split.setBorder(null);
         split.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> {
             if (mode == Mode.SPLIT && split.isShowing() && split.getWidth() > 0) {
-                ratio = Math.clamp((double)split.getDividerLocation() / split.getWidth(), .1, .9); changed.run();
+                ratio = Math.clamp((double)split.getDividerLocation() / split.getWidth(), .1, .9);split.setResizeWeight(ratio); changed.run();
             }
         });
         JPanel toolbar=new JPanel(new BorderLayout()); toolbar.add(tools); toolbar.add(bar,BorderLayout.EAST);
@@ -43,7 +44,7 @@ final class VisualEditorSurface extends JPanel {
     }
     void setVisual(JComponent component) { visual = component; setMode(mode); }
     void setMode(Mode next) {
-        mode = next; split.setLeftComponent(null); split.setRightComponent(null); body.removeAll();
+        mode = next; pendingDivider=next==Mode.SPLIT;split.setResizeWeight(ratio); split.setLeftComponent(null); split.setRightComponent(null); body.removeAll();
         switch (mode) {
             case CODE -> body.add(code);
             case DESIGN -> body.add(visual);
@@ -51,6 +52,7 @@ final class VisualEditorSurface extends JPanel {
         }
         buttons.get(mode).setSelected(true); revalidate(); repaint(); changed.run();
     }
+    @Override public void doLayout(){super.doLayout();if(mode==Mode.SPLIT&&pendingDivider){body.doLayout();if(split.getWidth()>0){pendingDivider=false;split.setDividerLocation(ratio);}}}
     void restore(String value, double splitRatio) {
         ratio = Double.isFinite(splitRatio) ? Math.clamp(splitRatio, .1, .9) : .5;
         try { setMode(Mode.valueOf(value)); } catch (IllegalArgumentException | NullPointerException ignored) { setMode(Mode.CODE); }

@@ -61,6 +61,15 @@ class DungeonEditorPanelTest {
             assertTrue(h.panel.cropSummary(1,1).contains("0"));
         } catch(Exception e) { throw new RuntimeException(e); } });
     }
+    @Test void newlyEnabledHellUsesExistingArchiveTemplateAndKeepsExistingDifficultyShape() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.text=h.text.replace("[hell dungeon] 1","[hell dungeon] 0").replace("[hit count] 1 2 3 4 5\n","").replace("[seal door map index] 20","").replace("[seal door pos] 0 0","");h.install();
+            h.panel.onHellTemplates(done -> done.accept(List.of(new DungeonEditorPanel.HellTemplate("dungeon/template.dgn",new DungeonDocument.HellSettings(true,false,20,new Position(1,0),List.of(3,4,5,6),7,8)))));
+            h.panel.hellTemplatePicker(values -> values.getFirst());h.click("dgn-hell-enabled");
+            assertTrue(h.document().hell(0).enabled());assertEquals(List.of(3,4,5,6),h.document().hell(0).hitCounts());assertEquals(new Position(0,0),h.document().hell(0).position());assertEquals(8,h.document().hell(0).coinLimit());
+            String before=h.text;h.click("dgn-open-hell-map");assertEquals(before,h.text);assertEquals(List.of("map/hell.map"),h.opened);
+        }catch(Exception e){throw new RuntimeException(e);}});
+    }
     @Test void fixedLayoutsAndUnverifiedEscapeSupportHaveDisabledControls() throws Exception {
         SwingUtilities.invokeAndWait(() -> { try {
             var h=new Harness();
@@ -70,6 +79,14 @@ class DungeonEditorPanelTest {
             h.panel.install(DungeonDocument.parse("dungeon/x.dgn","[warroom map index] 10"),3,true,"");
             assertFalse(find(h.panel,"dgn-apply-maps",JButton.class).isEnabled());
         } catch(Exception e) { throw new RuntimeException(e); } });
+    }
+    @Test void sourceGridCaretAndOnlyRoleActionsPreserveIndependentHellConfiguration() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {try{
+            var h=new Harness();h.panel.selectSourceOffset(h.text.indexOf("BBEEAA")+4);assertEquals(new Position(2,0),h.panel.position());
+            h.value("dgn-room-maps","10");h.click("dgn-apply-maps");h.click("dgn-only-start");h.click("dgn-only-boss");
+            assertEquals(List.of(new Position(2,0)),h.document().mazes().getFirst().layout().starts());assertEquals(List.of(new Position(2,0)),h.document().mazes().getFirst().layout().bosses());
+            assertTrue(h.panel.activeHellAt(new Position(0,0)));h.text=h.text.replace("[hell dungeon] 1","[hell dungeon] 0");h.install();assertFalse(h.panel.activeHellAt(new Position(0,0)));
+        }catch(Exception e){throw new RuntimeException(e);}});
     }
     static <T> T find(Container parent,String name,Class<T> type) {
         for(Component c:parent.getComponents()) {

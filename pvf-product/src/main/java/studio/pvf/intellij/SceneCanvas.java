@@ -13,6 +13,7 @@ class SceneCanvas extends JPanel {
         void paint(Graphics2D g);
     }
     Interaction interaction;
+    Runnable viewChanged=() -> {};
     private boolean spacePan,editingGesture;
     PreviewRenderer.Prepared prepared; ScenePreview.Rendered scene;
     SceneCamera camera;
@@ -39,7 +40,7 @@ class SceneCanvas extends JPanel {
             }
             @Override public void mouseReleased(MouseEvent event) {
                 if(editingGesture&&interaction!=null)interaction.release(event.getPoint()); editingGesture=false;
-                drag = null; setCursor(Cursor.getDefaultCursor());
+                drag = null; setCursor(Cursor.getDefaultCursor()); viewChanged.run();
             }
             @Override public void mouseDragged(MouseEvent event) {
                 if(editingGesture&&interaction!=null){interaction.drag(event.getPoint());return;}
@@ -62,12 +63,12 @@ class SceneCanvas extends JPanel {
                 View old = view();
                 if (usingClient()) {
                     if (!clientBounds(old.scale()).contains(event.getPoint())) return;
-                    freeZoom = Math.max(.02, Math.min(8, old.scale() * Math.pow(1.2, -event.getPreciseWheelRotation()))); repaint(); return;
+                    freeZoom = Math.max(.02, Math.min(8, old.scale() * Math.pow(1.2, -event.getPreciseWheelRotation()))); repaint(); viewChanged.run(); return;
                 }
                 double wx = (event.getX() - old.x() - panX) / old.scale(), wy = (event.getY() - old.y() - panY) / old.scale();
                 freeZoom = Math.max(.02, Math.min(8, old.scale() * Math.pow(1.2, -event.getPreciseWheelRotation())));
                 View current = view(); panX = event.getX() - current.x() - wx * current.scale();
-                panY = event.getY() - current.y() - wy * current.scale(); repaint();
+                panY = event.getY() - current.y() - wy * current.scale(); repaint();viewChanged.run();
             }
         };
         addMouseListener(mouse); addMouseMotionListener(mouse); addMouseWheelListener(mouse);

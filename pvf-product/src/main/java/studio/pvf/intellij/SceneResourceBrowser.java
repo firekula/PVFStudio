@@ -17,7 +17,7 @@ final class SceneResourceBrowser extends JPanel {
         final String label; Category(String label){this.label=label;} public String toString(){return label;}
     }
     record Asset(Category category,Integer id,String path) { public String toString(){return (id==null?"":id+" · ")+path;} }
-    record Thumbnail(BufferedImage image,String detail) {}
+    record Thumbnail(BufferedImage image,String detail,Boolean extendedTile) {Thumbnail(BufferedImage image,String detail){this(image,detail,null);}}
     @FunctionalInterface interface ThumbnailLoader { void load(Asset asset,Consumer<Thumbnail> result); }
     private String source;
     private final JComboBox<Category> category=new JComboBox<>(Category.values());
@@ -30,6 +30,7 @@ final class SceneResourceBrowser extends JPanel {
     private SceneCatalog catalog;
     private ThumbnailLoader loader=(asset,result) -> {};
     private long generation;
+    private Boolean selectedExtended;
     SceneResourceBrowser(String source) {
         super(new BorderLayout(4,4)); this.source=source;
         category.setName("map-asset-category"); filter.setName("map-asset-filter"); list.setName("map-asset-list");
@@ -45,6 +46,8 @@ final class SceneResourceBrowser extends JPanel {
     void setCatalog(SceneCatalog catalog) { this.catalog=catalog; rebuild(); }
     void setSource(String path) { source=path;cache.clear();rebuild(); }
     void setThumbnailLoader(ThumbnailLoader loader) { this.loader=loader; cache.clear(); thumbnail(); }
+    boolean tileTypeKnown(){return selectedExtended!=null;}
+    boolean selectedExtendedTile(){return selected()!=null&&selected().category()==Category.TILE&&Boolean.TRUE.equals(selectedExtended);}
     Asset selected() { return list.getSelectedValue(); }
     void select(Category type,String path) {
         category.setSelectedItem(type); filter.setText("");
@@ -66,7 +69,7 @@ final class SceneResourceBrowser extends JPanel {
         if(!items.isEmpty())list.setSelectedIndex(0);
     }
     private void thumbnail() {
-        long request=++generation; Asset asset=selected(); image.setIcon(null);
+        long request=++generation;selectedExtended=null; Asset asset=selected(); image.setIcon(null);
         if(asset==null){image.setText("没有匹配资源");detail.setText("");return;}
         detail.setText(asset.toString()); detail.setCaretPosition(0);
         Thumbnail cached=cache.get(asset.toString()); if(cached!=null){show(cached);return;}
@@ -76,5 +79,5 @@ final class SceneResourceBrowser extends JPanel {
             if(request==generation)show(result);
         });
     }
-    private void show(Thumbnail value) { image.setIcon(value.image()==null?null:new ImageIcon(value.image())); image.setText(value.image()==null?"此帧没有可用图像":""); detail.setText(value.detail()); detail.setCaretPosition(0); }
+    private void show(Thumbnail value) { selectedExtended=value.extendedTile(); image.setIcon(value.image()==null?null:new ImageIcon(value.image())); image.setText(value.image()==null?"此帧没有可用图像":""); detail.setText(value.detail()); detail.setCaretPosition(0); }
 }

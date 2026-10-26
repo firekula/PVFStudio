@@ -6,13 +6,15 @@
 
 **支持多种 DNF PVF 格式的脚本编辑与资源预览工具。**
 
-PVF Studio 将脚本编辑、全文搜索、游戏资源预览和副本布局检查集中在一个桌面应用中。它基于 IntelliJ Platform 的编辑器构建，提供独立的 Windows 程序、自带运行时和独立草稿工作区。**0.13.5** 支持 ACT1 `DNF_SCRIPT_PACK`、DNF_Single 固定目录及 70S2 / DOF86 UUID 容器，并已验证 100 级 UUID 样本的读取和地图、副本预览。经典二进制 ANI 可直接编辑和预览，无需安装 IDEA 或运行服务端。具体边界见 [格式兼容](docs/pvf-compatibility.md)。
+PVF Studio 将脚本编辑、全文搜索、游戏资源预览和副本布局检查集中在一个桌面应用中。它基于 IntelliJ Platform 的编辑器构建，提供独立的 Windows 程序、自带运行时和独立草稿工作区。**0.14.0 本地开发版** 增加 MAP / DGN 可视化编辑与代码 / 分屏切换，支持 ACT1 `DNF_SCRIPT_PACK`、DNF_Single 固定目录及 70S2 / DOF86 UUID 容器，并已验证 100 级 UUID 样本的读取和地图、副本预览。经典二进制 ANI 可直接编辑和预览，无需安装 IDEA 或运行服务端。具体边界见 [格式兼容](docs/pvf-compatibility.md)。
+本分支的 **0.14.0** 更新尚未发布：提供同一文档的代码 / 分屏 / 设计视图、MAP 对象拖动与资源添加、DGN 房间和连接编辑、独立深渊替换配置及 MAP 克隆注册。操作与兼容边界见 [可视化地图和副本编辑](docs/visual-map-editor.md)。
+
 
 [下载最新版](https://github.com/firekula/PVFStudio/releases/latest) · [使用方法](#使用方法) · [源码构建](#源码构建) · [文档](#文档) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/firekula/PVFStudio/issues)
 
 ## Release 下载
 
-最新版本：**[v0.13.5](https://github.com/firekula/PVFStudio/releases/tag/v0.13.5)**。桌面版支持 **Windows 10 / 11 x64**，已包含 JBR 运行时，无需另装 Java、IDEA 或 Visual C++ 运行库。
+公开发行版本：**[v0.13.5](https://github.com/firekula/PVFStudio/releases/tag/v0.13.5)**。桌面版支持 **Windows 10 / 11 x64**，已包含 JBR 运行时，无需另装 Java、IDEA 或 Visual C++ 运行库。
 
 | 下载 | 适用方式 |
 | --- | --- |
@@ -141,7 +143,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build-release.ps1 -Z
 脚本执行测试、原生启动器编译、产品装配和身份检查，然后打包。输出位置：
 
 ```text
-pvf-product/build/product/PVFStudio-0.13.5/      可直接运行的程序目录
+pvf-product/build/product/PVFStudio-0.14.0/      可直接运行的程序目录
 pvf-product/build/distributions/               安装器、便携 ZIP、SHA-256
 ```
 
@@ -153,7 +155,7 @@ pvf-product/build/distributions/               安装器、便携 ZIP、SHA-256
 .\gradlew.bat -PwithIntellij=true :pvf-product:runProduct
 
 python tools/check_product.py `
-  --product 'pvf-product/build/product/PVFStudio-0.13.5' `
+  --product 'pvf-product/build/product/PVFStudio-0.14.0' `
   --archive 'C:\Game\Script.pvf' `
   --npk 'C:\Game\ImagePacks2'
 ```

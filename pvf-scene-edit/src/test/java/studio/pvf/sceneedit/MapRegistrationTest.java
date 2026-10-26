@@ -23,6 +23,12 @@ class MapRegistrationTest {
         assertEquals(List.of(2),dgn.mazes().get(0).layout().maps().get(new Position(0,0)));
         assertArrayEquals("source bytes".getBytes(StandardCharsets.US_ASCII),prepared.mapBytes());
     }
+    @Test void hellCloneBindsOnlyTheSealMapAndPreservesOrdinaryAndBossCandidates() throws Exception {
+        var old=request("map/foo/copy.map",null);String text="[hell dungeon] 1 "+DGN+" [seal door map index] 1 [seal door pos] 0 0";
+        var r=new MapRegistration.Request(old.paths(),old.sourcePath(),old.destinationPath(),old.sourceBytes(),old.sourceText(),old.mapListText(),old.dungeonPath(),text,0,old.room(),false,null,65535,true);
+        var prepared=MapRegistration.prepare(r);var after=DungeonDocument.parse(old.dungeonPath(),prepared.dungeonEdit().applyTo(text));
+        assertEquals(2,after.hell(0).mapId());assertEquals(List.of(1),after.mazes().get(0).layout().maps().get(old.room()));
+    }
     @Test void rejectsExistingPathDuplicateIdAndCrossDirectoryReferencesBeforeAnyMutation() {
         assertThrows(IOException.class,()->MapRegistration.prepare(request("MAP/FOO/A.MAP",null)));
         assertThrows(IOException.class,()->MapRegistration.prepare(request("map/foo/copy.map",1)));

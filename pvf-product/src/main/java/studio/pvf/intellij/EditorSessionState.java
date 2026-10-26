@@ -21,10 +21,11 @@ record EditorSessionState(List<EditorSessionState.Tab> tabs, String selectedPath
             selectedPath = tabs.isEmpty() ? "" : tabs.getFirst().path();
     }
 
-    record Tab(String path, String charset, int caret, int scrollX, int scrollY, String viewMode, double splitRatio) {
+    record Tab(String path, String charset, int caret, int scrollX, int scrollY, String viewMode, double splitRatio, Map<String,String> visualState) {
+        Tab(String path,String charset,int caret,int scrollX,int scrollY,String viewMode,double splitRatio) {this(path,charset,caret,scrollX,scrollY,viewMode,splitRatio,Map.of());}
         Tab(String path, String charset, int caret, int scrollX, int scrollY) { this(path, charset, caret, scrollX, scrollY, "CODE", .5); }
         Tab {
-            Objects.requireNonNull(path); Objects.requireNonNull(charset);
+            Objects.requireNonNull(path); Objects.requireNonNull(charset); visualState=Map.copyOf(visualState);
             caret = Math.max(0, caret); scrollX = Math.max(0, scrollX); scrollY = Math.max(0, scrollY);
             if (!Set.of("CODE", "SPLIT", "DESIGN").contains(viewMode == null ? "" : viewMode)) viewMode = "CODE";
             splitRatio = Double.isFinite(splitRatio) ? Math.clamp(splitRatio, .1, .9) : .5;
@@ -58,7 +59,7 @@ record EditorSessionState(List<EditorSessionState.Tab> tabs, String selectedPath
                 paths.add(path);
                 tabs.add(new Tab(path, charset, offset(properties, prefix + "caret"),
                         offset(properties, prefix + "scrollX"), offset(properties, prefix + "scrollY"),
-                        properties.getProperty(prefix + "viewMode", "CODE"), ratio(properties, prefix + "splitRatio")));
+                        properties.getProperty(prefix + "viewMode", "CODE"), ratio(properties, prefix + "splitRatio"), visual(properties,prefix)));
             }
             return new ReadResult(new EditorSessionState(tabs, properties.getProperty("selected", "")), warnings);
         } catch (IOException | IllegalArgumentException failure) {
@@ -66,6 +67,10 @@ record EditorSessionState(List<EditorSessionState.Tab> tabs, String selectedPath
         }
     }
 
+    private static Map<String,String> visual(Properties properties,String prefix) {
+        Map<String,String> result=new HashMap<>();String start=prefix+"visual.";
+        for(String key:properties.stringPropertyNames())if(key.startsWith(start))result.put(key.substring(start.length()),properties.getProperty(key));return result;
+    }
     private static int offset(Properties properties, String key) {
         try { return Math.max(0, Integer.parseInt(properties.getProperty(key, "0"))); }
         catch (NumberFormatException invalid) { return 0; }
@@ -87,6 +92,7 @@ record EditorSessionState(List<EditorSessionState.Tab> tabs, String selectedPath
             properties.setProperty(prefix + "scrollY", Integer.toString(tab.scrollY()));
             properties.setProperty(prefix + "viewMode", tab.viewMode());
             properties.setProperty(prefix + "splitRatio", Double.toString(tab.splitRatio()));
+            tab.visualState().forEach((key,value) -> properties.setProperty(prefix+"visual."+key,value));
         }
         Path temporary = Files.createTempFile(directory, "editor-session-", ".tmp");
         try {

@@ -273,6 +273,10 @@ public final class DungeonDocument {
         result.addAll(inserts.values()); return new ScriptEdit(label,source.text(),result);
     }
 
+    /** Existing imperfect layouts remain editable; new rooms must be reachable before export. */
+    public List<Problem> newRoomErrors(DungeonDocument baseline) {
+        return diagnostics().stream().filter(p -> p.severity()==Severity.ERROR && (baseline==null||p.maze()>=baseline.mazes().size()||p.position()!=null&&!baseline.mazes().get(p.maze()).rooms().contains(p.position()))).toList();
+    }
     public List<Problem> diagnostics() {
         List<Problem> problems = new ArrayList<>();
         for (Scope scope : scopes) {
