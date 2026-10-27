@@ -6,6 +6,8 @@ Root evidence: user workspace records SHA-256 `5fcd4b94…`; the current source 
 
 1. [x] RED/GREEN tests for metadata-only changes and identical file replacement. Verify both original channel and current pathname bytes, reject real changes to either, and require stable size/type/identity/mtime across each verification. Keep strict opening-time validation and read-only-source/output publication rules.
 2. [x] PVF-only chooser, `.pvf` completion for names without suffix, rejection of other suffixes; keep the chooser open on invalid input.
-3. [ ] Native product tests on a private copy: new destination, existing destination with recoverable backup, metadata touch and identical replacement; true source changes must block publication without losing drafts. Full tests, one final review, package 0.14.7 and verify extracted product.
+3. [x] Native product tests on a private copy: new destination, existing destination with recoverable backup, metadata touch and identical replacement; true source changes must block publication without losing drafts. Full tests, one final review, package 0.14.7 and verify extracted product.
 
 Review focus: source handle versus path replacement, same-size/restored-mtime modifications, source aliases, content changes during verification, existing target backup/no-clobber behavior, and actual chooser approval.
+
+Completed with 295 JVM tests, 14 Python tests, two successful native export runs (including the extracted portable package), independent output structure validation, and a clean independent review. Evidence: [export-save verification](../../export-save-repair-2026-10-27.md).
