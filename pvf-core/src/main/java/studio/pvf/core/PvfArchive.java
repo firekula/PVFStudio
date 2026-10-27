@@ -233,15 +233,26 @@ public final class PvfArchive implements AutoCloseable {
         return padded.length == entry.length() ? padded : Arrays.copyOf(padded, entry.length());
     }
 
-    /** Confirms both the original open handle and current source path still match the mounted snapshot. */
+    /** Confirms both handles' full bytes; metadata may differ from opening but must be stable during verification. */
     public void verifyUnchanged() throws IOException {
         ensureOpen();
-        checkAttributes();
+        BasicFileAttributes before = readableAttributes();
         if (!sha256.equals(PvfIo.sha256(channel))) throw invalid("Source contents changed since opening");
         try (FileChannel current = FileChannel.open(sourcePath, StandardOpenOption.READ)) {
             if (!sha256.equals(PvfIo.sha256(current))) throw invalid("Source path was replaced since opening");
         }
-        checkAttributes();
+        BasicFileAttributes after = readableAttributes();
+        if (!Objects.equals(before.fileKey(), after.fileKey())
+                || !before.lastModifiedTime().equals(after.lastModifiedTime())) {
+            throw invalid("Source changed during integrity verification; retry after it becomes stable");
+        }
+    }
+
+    private BasicFileAttributes readableAttributes() throws IOException {
+        BasicFileAttributes attributes = Files.readAttributes(sourcePath, BasicFileAttributes.class);
+        if (!attributes.isRegularFile() || attributes.size() != archiveSize || channel.size() != archiveSize)
+            throw invalid("Source size or file type changed since opening");
+        return attributes;
     }
 
     private void checkAttributes() throws IOException {

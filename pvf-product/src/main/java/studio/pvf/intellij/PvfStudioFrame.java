@@ -1266,9 +1266,7 @@ final class PvfStudioFrame extends JFrame {
     private void chooseExport() {
         if (workspace == null || busy) return;
         boolean backup = backupOnExport.isSelected();
-        JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle(backup ? "导出 PVF（自动备份旧版本）" : "导出到新 PVF 文件（不覆盖既有文件）");
-        chooser.setSelectedFile(new java.io.File("Script-edited.pvf"));
+        JFileChooser chooser = PvfExportFiles.chooser(workspace.archive().sourcePath(),backup);
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         Path target = chooser.getSelectedFile().toPath();
         if (backup && Files.exists(target) && JOptionPane.showConfirmDialog(this,

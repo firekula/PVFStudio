@@ -174,6 +174,20 @@ class WorkspaceTest {
         assertArrayEquals(original, Files.readAllBytes(source));
     }
 
+    @Test void metadataOnlySourceChangesAllowNewAndExistingBackupExports()throws Exception{
+        Path source=fixture("original".getBytes(StandardCharsets.US_ASCII));byte[] original=Files.readAllBytes(source);Path target=temporary.resolve("result.pvf");
+        try(var workspace=PvfWorkspace.open(source,temporary.resolve("metadata-drafts"))){
+            workspace.stageText("test/item.stk","first",StandardCharsets.US_ASCII);Files.setLastModifiedTime(source,java.nio.file.attribute.FileTime.fromMillis(Files.getLastModifiedTime(source).toMillis()+10000));
+            var first=PvfBackupExport.export(workspace,target);assertArrayEquals(original,Files.readAllBytes(first.backup()));
+            Path replacement=temporary.resolve("same-source.pvf");Files.write(replacement,original);Files.move(replacement,source,java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            workspace.stageText("test/item.stk","second",StandardCharsets.US_ASCII);var second=PvfBackupExport.export(workspace,target);
+            try(var backup=studio.pvf.core.PvfArchive.open(second.backup());var result=studio.pvf.core.PvfArchive.open(target)){
+                assertEquals("first",new String(backup.readBytes("test/item.stk"),StandardCharsets.US_ASCII));assertEquals("second",new String(result.readBytes("test/item.stk"),StandardCharsets.US_ASCII));
+            }
+        }
+        assertArrayEquals(original,Files.readAllBytes(source));
+    }
+
     @Test void backupFailureNeverChangesAnExistingOrNewDestination() throws Exception {
         Path source = fixture(new byte[]{1, 2, 3});
         Path target = temporary.resolve("export.pvf");

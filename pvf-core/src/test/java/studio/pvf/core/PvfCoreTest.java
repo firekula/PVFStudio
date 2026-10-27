@@ -336,6 +336,30 @@ class PvfCoreTest {
         assertFalse(Files.exists(destination));
     }
 
+    @Test void identicalContentsRemainExportableAfterTouchOrSameByteFileReplacement()throws Exception{
+        Fixture fixture=fixture(false);Path source=fixture.write(temporary.resolve("stable-bytes.pvf"));
+        try(var archive=PvfArchive.open(source)){
+            Files.setLastModifiedTime(source,FileTime.fromMillis(Files.getLastModifiedTime(source).toMillis()+10000));
+            assertDoesNotThrow(archive::verifyUnchanged);PvfWriter.export(archive,Map.of(),temporary.resolve("after-touch.pvf"));
+            Path same=temporary.resolve("identical-copy.pvf");Files.write(same,fixture.bytes);Files.move(same,source,java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            assertDoesNotThrow(archive::verifyUnchanged);PvfWriter.export(archive,Map.of(),temporary.resolve("after-replacement.pvf"));
+        }
+        assertArrayEquals(fixture.bytes,Files.readAllBytes(source));
+    }
+    @Test void changedPathContentsAndChangedOriginalHandleAreBothRejected()throws Exception{
+        Fixture fixture=fixture(false);Path source=fixture.write(temporary.resolve("path-changed.pvf"));byte[] different=fixture.bytes.clone();different[bodyOffset(different)+1]^=0x40;
+        try(var archive=PvfArchive.open(source)){
+            Path replacement=temporary.resolve("different.pvf");Files.write(replacement,different);Files.move(replacement,source,java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            assertThrows(IOException.class,archive::verifyUnchanged);assertThrows(IOException.class,() -> PvfWriter.export(archive,Map.of(),temporary.resolve("must-not-exist.pvf")));
+        }
+        assertFalse(Files.exists(temporary.resolve("must-not-exist.pvf")));
+        source=fixture.write(temporary.resolve("handle-changed.pvf"));
+        try(var archive=PvfArchive.open(source)){
+            Files.write(source,different);Path replacement=temporary.resolve("restored-path.pvf");Files.write(replacement,fixture.bytes);Files.move(replacement,source,java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            assertThrows(IOException.class,archive::verifyUnchanged,"Checking only the pathname hash would miss the mutated original handle");
+        }
+    }
+
     @Test
     void seededCrcMatchesKnownZlibVectors() {
         byte[] input = "123456789".getBytes(StandardCharsets.US_ASCII);
