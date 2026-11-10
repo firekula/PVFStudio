@@ -31,7 +31,7 @@ public final class GamePreview {
         return load(path,text,lookup,paths,new ScenePreview.SpriteLookup(){public NpkResources.Info info(String p,int f)throws IOException{return resources.info(p,f);}public NpkResources.Sprite sprite(String p,int f)throws IOException{return resources.sprite(p,f);}},options);
     }
     public static GamePreview load(String path,String text,GameScript.Lookup raw,Set<String> paths,ScenePreview.SpriteLookup sprites,Options options) throws IOException {
-        GameScript.Lookup lookup=p->p.equals(path)?text:raw.read(p);
+        GameScript.Lookup bounded=GameScript.boundedLookup(raw,4096,32L*1024*1024);GameScript.Lookup lookup=p->p.equals(path)?text:bounded.read(p);
         String passive=path.equals("skill/gunner/laserrifle.skl")?lookup.read("skill/gunner/laserriflecharge.skl"):null;
         var laser=options.effect().equals("actor")?null:GameEffectRecipes.laser(path,text,options.act1(),options.effect().equals("laser:charged"),passive);
         var available=CharacterAppearance.motions(Optional.ofNullable(lookup.read("character/gunner/gunner.chr")).orElse(""));
@@ -111,7 +111,7 @@ public final class GamePreview {
         for(var track:tracks) {
             long trackTime=repeatSequence&&wholeSequence&&!track.label().equals("title name")?time%duration:time;
             if(trackTime<track.start()||trackTime>=track.end())continue;
-            long local=trackTime-track.start();var frame=track.timeline().sample(local,track.loop());if(frame==null||frame.image().isEmpty())continue;
+            long local=trackTime-track.start();var frame=track.timeline().sample(local,track.loop()||repeatSequence&&(!wholeSequence||track.label().equals("title name")));if(frame==null||frame.image().isEmpty())continue;
             try {
                 var prepared=pixels.get(frame);if(prepared==null){prepared=PreviewRenderer.prepare(frame,sprites.sprite(frame.image(),frame.index()));long bytes=(long)prepared.image().getWidth()*prepared.image().getHeight()*4;
                     while(!pixels.isEmpty()&&(cacheBytes+bytes>CACHE_LIMIT||pixels.size()>=128)){var removed=pixels.remove(pixels.keySet().iterator().next());cacheBytes-=(long)removed.image().getWidth()*removed.image().getHeight()*4;}

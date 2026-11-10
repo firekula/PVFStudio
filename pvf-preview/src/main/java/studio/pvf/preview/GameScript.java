@@ -8,6 +8,11 @@ import java.util.regex.Pattern;
 public final class GameScript {
     private GameScript() {}
     @FunctionalInterface public interface Lookup { String read(String path) throws IOException; }
+    public static final class LimitExceeded extends IOException {private LimitExceeded(String message){super(message);}}
+    /** Counts attempts and returned characters, including repeated reads and missing candidates. */
+    public static Lookup boundedLookup(Lookup source,int maximumReads,long maximumCharacters) {
+        return new Lookup(){int reads;long characters;public String read(String path)throws IOException{if(++reads>maximumReads||characters>maximumCharacters)throw new LimitExceeded("预览引用读取总量超限");String text=source.read(path);if(text!=null&&(characters+=text.length())>maximumCharacters)throw new LimitExceeded("预览引用字符总量超限");return text;}};
+    }
     private static final Pattern TOKENS=Pattern.compile("//[^\\r\\n]*|/\\*[\\s\\S]*?\\*/|`[^`]*`|\"[^\"]*\"|\\[[^\\]\\r\\n]+\\]|<include>|[^\\s\\[\"`]+",Pattern.CASE_INSENSITIVE);
     private static final Pattern LINK=Pattern.compile("<(\\d+)::([^>]+)>");
     public record Field(String tag,List<String> values) {
@@ -43,22 +48,24 @@ public final class GameScript {
         return Collections.unmodifiableMap(result);
     }
     public static final class Strings {
-        private final Lookup lookup;private final List<String> warnings;private final Map<Integer,Map<String,String>> cache=new HashMap<>();private Map<Integer,String> catalogs;
-        public Strings(Lookup lookup,List<String> warnings){this.lookup=lookup;this.warnings=warnings;}
-        public String resolve(String input) throws IOException {return resolve(input,new HashSet<>(),0).replace("\\n","\n").replace("\\r","").replace("%%","%");}
-        private String resolve(String input,Set<String> active,int depth) throws IOException {
-            if(depth>8){warnings.add("本地化引用嵌套超限");return input;}
-            var matcher=LINK.matcher(input);var result=new StringBuffer();
+        private final Lookup lookup;private final List<String> warnings;private final Map<Integer,Map<String,String>> cache=new HashMap<>();private Map<Integer,String> catalogs;private int references,resolvedCharacters;
+        public Strings(Lookup lookup,List<String> warnings){this.lookup=boundedLookup(lookup,1024,16L*1024*1024);this.warnings=warnings;}
+        public String resolve(String input) throws IOException {int limit=Math.min(65536,262144-resolvedCharacters);if(limit<=0){warn("本地化展开总量超限");return "（本地化展开超限）";}String value=resolve(input,new HashSet<>(),0,limit);resolvedCharacters+=value.length();return value.replace("\\n","\n").replace("\\r","").replace("%%","%");}
+        private void warn(String message){if(warnings.size()<256&&!warnings.contains(message))warnings.add(message);}
+        private boolean append(StringBuilder result,String value,int start,int end,int limit){int count=Math.min(end-start,limit-result.length());result.append(value,start,start+count);if(count<end-start){warn("本地化展开字符总量超限，已截断");return false;}return true;}
+        private String resolve(String input,Set<String> active,int depth,int limit) throws IOException {
+            if(depth>8){warn("本地化引用嵌套超限");var result=new StringBuilder();append(result,input,0,input.length(),limit);return result.toString();}
+            var matcher=LINK.matcher(input);var result=new StringBuilder();int previous=0;
             while(matcher.find()) {
+                if(!append(result,input,previous,matcher.start(),limit))return result.toString();
                 String key=matcher.group(),replacement=key;int id=integer(matcher.group(1),-1);
+                if(++references>2048){warn("本地化引用次数超限");append(result,key,0,key.length(),limit);return result.toString();}
                 if(active.add(key)) {
-                    var table=table(id);String raw=table.get(matcher.group(2));
-                    if(raw!=null)replacement=resolve(raw,active,depth+1);else warnings.add("找不到本地化字符串 "+key);
-                    active.remove(key);
-                }else warnings.add("本地化引用循环 "+key);
-                matcher.appendReplacement(result,java.util.regex.Matcher.quoteReplacement(replacement));
+                    try{var table=table(id);String raw=table.get(matcher.group(2));if(raw!=null)replacement=resolve(raw,active,depth+1,limit);else warn("找不到本地化字符串 "+key);}finally{active.remove(key);}
+                }else warn("本地化引用循环 "+key);
+                if(!append(result,replacement,0,replacement.length(),limit))return result.toString();previous=matcher.end();
             }
-            matcher.appendTail(result);return result.toString();
+            append(result,input,previous,input.length(),limit);return result.toString();
         }
         private Map<String,String> table(int id) throws IOException {
             if(cache.containsKey(id))return cache.get(id);if(catalogs==null)catalogs=catalog(lookup.read("string.lst"));

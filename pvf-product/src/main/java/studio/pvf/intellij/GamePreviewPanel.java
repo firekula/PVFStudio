@@ -45,7 +45,7 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
     private Set<String> paths=Set.of();
     private GamePreview model;
     private volatile long generation;
-    private boolean changing,closed,act1,mirrored,renderPending,playing;
+    private boolean changing,closed,act1,mirrored,renderPending,renderAgain,playing;
     private String selectedJob="gunner",selectedAction="waiting motion",selectedEffect="";
     private Path settings;
     private long settingsGeneration,choiceRevision;
@@ -107,7 +107,7 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
     }
     void resourcesChanged(){reload();}
     private void reload() {
-        if(closed)return;long ticket=++generation;pause();renderPending=false;model=null;
+        if(closed)return;long ticket=++generation;pause();renderPending=false;renderAgain=false;model=null;
         if(source==null){canvas.frame=null;canvas.error="选择装备、装扮或技能";canvas.repaint();return;}
         ResourcePreviewPanel.Source snapshot=source;Set<String> files=paths;NpkResources indexed=resources.get();
         String requested=selectedJob,motion=selectedAction,selectedVisual=selectedEffect;int requestedLevel=levels.getOrDefault(snapshot.path(),1);boolean legacy=act1,reset=resetSelectedSlot,mirror=mirrored;
@@ -146,13 +146,14 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         effect.setVisible(effect.getItemCount()>1);changing=false;clock.seek(0);time.setText("0 ms");play.setEnabled(model!=null);facing.setEnabled(true);canvas.repaint();responsive();
     }
     private void requestFrame() {
-        if(model==null||renderPending||closed)return;
+        if(model==null||closed)return;
+        if(renderPending){renderAgain=true;return;}
         if(playing&&!loop.isSelected()&&clock.milliseconds()>=model.duration()){pause();clock.seek(model.duration());}
         GamePreview snapshot=model;long ticket=generation,time=clock.milliseconds();boolean mirror=mirrored,repeat=loop.isSelected();renderPending=true;
-        worker.execute(()->{try{var frame=snapshot.render(time,mirror,repeat);SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;canvas.frame=frame;canvas.error="";changing=true;timeline.setValue((int)(time>snapshot.duration()?time%snapshot.duration():time));changing=false;this.time.setText(time+" ms");message.setText(summary(frame.warnings()));canvas.repaint();});}catch(Exception failure){SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;pause();message.setText("渲染失败："+failure.getMessage());});}});
+        worker.execute(()->{try{var frame=snapshot.render(time,mirror,repeat);SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;boolean again=renderAgain;renderAgain=false;canvas.frame=frame;canvas.error="";canvas.repaint();if(!again){changing=true;timeline.setValue((int)(time>snapshot.duration()?time%snapshot.duration():time));changing=false;this.time.setText(time+" ms");message.setText(summary(frame.warnings()));canvas.repaint();}if(again)requestFrame();});}catch(Exception failure){SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;renderAgain=false;pause();message.setText("渲染失败："+failure.getMessage());});}});
     }
     private void pause(){timer.stop();clock.pause();playing=false;play.setText("播放");}
-    void deactivate(){++generation;pause();renderPending=false;}
+    void deactivate(){++generation;pause();renderPending=false;renderAgain=false;}
     @Override public void close(){if(closed)return;closed=true;++generation;pause();worker.shutdown();}
     private static void select(JComboBox<Choice> box,String key){for(int i=0;i<box.getItemCount();i++)if(box.getItemAt(i).key().equals(key)){box.setSelectedIndex(i);return;}if(box.getItemCount()>0)box.setSelectedIndex(0);}
     private static String jobLabel(String key){return switch(key){case "swordman"->"鬼剑士";case "fighter"->"格斗家";case "mage"->"魔法师";case "priest"->"圣职者";default->"神枪手";};}

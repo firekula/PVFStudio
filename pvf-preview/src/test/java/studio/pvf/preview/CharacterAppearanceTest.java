@@ -5,6 +5,12 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CharacterAppearanceTest {
+    @Test void acyclicIncludeFanoutIsBoundedAndKeepsTheValidBody() throws Exception {
+        var data=new java.util.HashMap<String,String>();data.put("character/gunner/gunner.chr","[waiting motion] `body.ani`");data.put("character/gunner/body.ani","");data.put("equipment/l6.lay","");
+        for(int i=0;i<6;i++)data.put("equipment/l"+i+".lay",("<include> `l"+(i+1)+".lay` ").repeat(4));
+        var reads=new java.util.concurrent.atomic.AtomicInteger();var model=CharacterAppearance.load("equipment/test.equ","[equipment type] `[weapon]` <include> `l0.lay`",p->{reads.incrementAndGet();return data.get(p);},data.keySet(),"gunner","waiting motion",Map.of());
+        assertTrue(reads.get()<2000,"Unbounded include lookup count: "+reads.get());assertTrue(model.parts().stream().anyMatch(p->p.slot().equals("body")));assertTrue(model.warnings().stream().anyMatch(w->w.contains("超限")));
+    }
     private static Map<String,String> fixture() {
         var data=new HashMap<String,String>();
         data.put("character/gunner/gunner.chr","[waiting motion] `Animation/Stay.ani` [move motion] `Animation/Move.ani`");

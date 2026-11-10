@@ -26,26 +26,28 @@ public final class CharacterAppearance {
     }
     public static String slot(String text){return GameScript.flag(GameScript.value(GameScript.fields(text),"equipment type"));}
     public static Model load(String path,String text,GameScript.Lookup rawLookup,Set<String> paths,String requested,String action,Map<String,String> outfit) throws IOException {
-        GameScript.Lookup lookup=p->p.equals(path)?text:rawLookup.read(p);String job=inferJob(path,text,requested);
+        GameScript.Lookup bounded=GameScript.boundedLookup(rawLookup,1024,16L*1024*1024);GameScript.Lookup lookup=p->p.equals(path)?text:bounded.read(p);String job=inferJob(path,text,requested);
         String chr="character/"+job+"/"+job+".chr",body=lookup.read(chr);var warnings=new ArrayList<String>();
         if(body==null)return new Model(job,List.of(),Map.of(),Map.of(),List.of("找不到职业配置 "+chr),action);
         Map<String,String> actions=motions(body);String chosen=actions.containsKey(action)?action:"waiting motion";
         if(!actions.containsKey(chosen)&&!actions.isEmpty())chosen=actions.keySet().iterator().next();
+        String reference=actions.get(chosen),bodyAnimation=reference==null?null:resolvedPath(chr,reference,lookup);
         var wearing=new LinkedHashMap<String,String>();
         for(String candidate:paths.stream().filter(p->p.startsWith("equipment/character/"+job+"/avatar/")&&p.endsWith("_default.equ")).sorted().toList()){
-            String value=lookup.read(candidate);if(value!=null)wearing.putIfAbsent(slot(value),candidate);
+            try{String value=lookup.read(candidate);if(value!=null)wearing.putIfAbsent(slot(value),candidate);}catch(IOException failure){warnings.add(failure.getMessage());break;}
         }
         String ownSlot=path.endsWith(".equ")?slot(text):"";if(!ownSlot.isEmpty())wearing.put(ownSlot,path);wearing.putAll(outfit);
-        var parts=new ArrayList<Part>();var hidden=new HashMap<Integer,Set<String>>();int skin=0;
+        var parts=new ArrayList<Part>();var hidden=new HashMap<Integer,Set<String>>();int skin=0;var budget=new ExpansionBudget();
         for(var entry:wearing.entrySet()) {
-            String owner=entry.getValue();if(owner.isEmpty())continue;String item=lookup.read(owner);
-            if(item==null){warnings.add("找不到穿戴配置 "+owner);continue;}
+            String owner=entry.getValue();if(owner.isEmpty())continue;
+            try{String item=lookup.read(owner);
+            if(item==null){if(warnings.size()<256)warnings.add("找不到穿戴配置 "+owner);continue;}
             var fields=GameScript.fields(item);var variation=GameScript.values(fields,"variation");
             if(entry.getKey().equals("skin avatar")&&variation.size()>1)skin=GameScript.integer(variation.get(1),0);
             for(String value:GameScript.values(fields,"hide layer"))hidden.computeIfAbsent(GameScript.integer(value,Integer.MIN_VALUE),n->new HashSet<>()).add(owner);
-            try{expand(owner,owner,item,lookup,chosen,entry.getKey(),variation(fields),0,"",new HashSet<>(),parts,warnings,0);}catch(IOException|IllegalArgumentException failure){warnings.add(owner+"："+failure.getMessage());}
+            expand(owner,owner,item,lookup,chosen,entry.getKey(),variation(fields),0,"",new HashSet<>(),parts,warnings,budget,0);}catch(IOException|IllegalArgumentException failure){if(warnings.size()<256)warnings.add(owner+"："+failure.getMessage());if(budget.exhausted||failure instanceof GameScript.LimitExceeded)break;}
         }
-        String reference=actions.get(chosen);if(reference!=null){String ani=resolvedPath(chr,reference,lookup);parts.add(new Part(ani,List.of(skin),1000,"body",chr));}
+        if(bodyAnimation!=null)parts.add(new Part(bodyAnimation,List.of(skin),1000,"body",chr));
         parts.removeIf(p->hidden.containsKey(p.layer())&&hidden.get(p.layer()).stream().anyMatch(owner->!owner.equals(p.owner())));
         parts.sort(Comparator.comparingInt(Part::layer));
         return new Model(job,List.copyOf(parts),actions,Collections.unmodifiableMap(wearing),List.copyOf(warnings),chosen);
@@ -58,8 +60,9 @@ public final class CharacterAppearance {
     private static String resolvedPath(String owner,String ref,GameScript.Lookup lookup) throws IOException {
         String path=GameScript.resolve(owner,ref,lookup);return path!=null?path:ResourceScript.animationCandidates(owner,ref).stream().findFirst().orElse(ref);
     }
-    private static void expand(String owner,String current,String text,GameScript.Lookup lookup,String action,String slot,List<Integer> variants,int baseLayer,String substitution,Set<String> active,List<Part> parts,List<String> warnings,int depth) throws IOException {
-        if(depth>8||parts.size()>256)throw new IOException("穿戴引用深度或部件数超限");
+    private static final class ExpansionBudget {int nodes;long characters;boolean exhausted;void enter(String text)throws IOException{if(++nodes>256||(characters+=text.length())>16L*1024*1024){exhausted=true;throw new IOException("穿戴引用展开总量超限");}}}
+    private static void expand(String owner,String current,String text,GameScript.Lookup lookup,String action,String slot,List<Integer> variants,int baseLayer,String substitution,Set<String> active,List<Part> parts,List<String> warnings,ExpansionBudget budget,int depth) throws IOException {
+        budget.enter(text);if(depth>8||parts.size()>=255)throw new IOException("穿戴引用深度或部件数超限");
         if(!active.add(current))throw new IOException("include 引用循环："+current);
         int layer=baseLayer;String part=substitution;Map<String,String> motion=motions(text);
         try {
@@ -71,13 +74,13 @@ public final class CharacterAppearance {
                 }else if(field.tag().equals("layer"))layer=baseLayer+GameScript.integer(field.first(),0);
                 else if(field.tag().equals("include")) {
                     try{String include=GameScript.resolve(current,field.first(),lookup);if(include==null)throw new IOException("找不到 include "+field.first());
-                        expand(owner,include,lookup.read(include),lookup,action,slot,variants,layer,part,active,parts,warnings,depth+1);
-                    }catch(IOException|IllegalArgumentException failure){if(warnings.size()<256)warnings.add(owner+"："+failure.getMessage());}
+                        expand(owner,include,lookup.read(include),lookup,action,slot,variants,layer,part,active,parts,warnings,budget,depth+1);
+                    }catch(IOException|IllegalArgumentException failure){if(budget.exhausted||failure instanceof GameScript.LimitExceeded)throw failure;if(warnings.size()<256)warnings.add(owner+"："+failure.getMessage());}
                 }else if(field.tag().equals("custom animation")) {
-                    for(String ref:field.values())if(ref.toLowerCase(Locale.ROOT).endsWith(".ani"))parts.add(new Part(resolvedPath(owner,ref,lookup),variants,4000,slot,owner));
+                    for(String ref:field.values())if(ref.toLowerCase(Locale.ROOT).endsWith(".ani")){if(parts.size()>=255)throw new IOException("穿戴部件数超限");parts.add(new Part(resolvedPath(owner,ref,lookup),variants,4000,slot,owner));}
                 }
             }
-            String ani=motion.get(action);if(ani!=null){if(ani.contains("%s")){if(substitution.isEmpty())throw new IOException("动作缺少 layer variation 参数");ani=ani.replace("%s",substitution);}parts.add(new Part(resolvedPath(owner,ani,lookup),variants,layer,slot,owner));}
+            String ani=motion.get(action);if(ani!=null){if(parts.size()>=255)throw new IOException("穿戴部件数超限");if(ani.contains("%s")){if(substitution.isEmpty())throw new IOException("动作缺少 layer variation 参数");ani=ani.replace("%s",substitution);}parts.add(new Part(resolvedPath(owner,ani,lookup),variants,layer,slot,owner));}
             else if(!motion.isEmpty()&&warnings.size()<256)warnings.add(owner+"：部件未定义动作 "+actionLabel(action));
         }finally{active.remove(current);}
     }

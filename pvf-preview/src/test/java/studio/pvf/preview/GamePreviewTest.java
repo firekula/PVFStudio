@@ -9,6 +9,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GamePreviewTest {
     private static Map<String,String> data(){var d=new HashMap<String,String>();d.put("character/gunner/gunner.chr","[waiting motion] `body.ani`");d.put("character/gunner/body.ani","[LOOP] 1 [FRAME000] [IMAGE] `red.img` 0 [DELAY] 100 [FRAME001] [IMAGE] `green.img` 0 [DELAY] 100");return d;}
+    @Test void loopRepeatsNonLoopingTracksOnTheirOwnClocks() throws Exception {
+        var d=data();d.put("character/gunner/body.ani",d.get("character/gunner/body.ani").replace("[LOOP] 1", "[LOOP] 0"));d.put("equipment/title.ani","[FRAME000] [IMAGE] `blue.img` 0 [DELAY] 150 [FRAME001] [IMAGE] `green.img` 0 [DELAY] 150");
+        var p=GamePreview.load("equipment/title.equ","[equipment type] `[title name]` [custom animation] `title.ani`",d::get,d.keySet(),new Pixels(),GamePreview.Options.defaults());
+        var repeated=p.render(250,false,true);assertTrue(repeated.draws().stream().anyMatch(draw->draw.label().equals("body")&&draw.prepared().source().img().equals("red.img")));assertTrue(repeated.draws().stream().anyMatch(draw->draw.label().equals("title name")&&draw.prepared().source().img().equals("green.img")));
+        assertTrue(p.render(250,false,false).draws().stream().anyMatch(draw->draw.label().equals("body")&&draw.prepared().source().img().equals("green.img")));
+    }
     @Test void composesIndependentTimingAndMirrorsAroundFeet() throws Exception {
         var d=data();String path="equipment/part.equ";String text="[equipment type] `[weapon]` [LAYER] 1800 [waiting motion] `part.ani`";
         d.put(path,text);d.put("equipment/part.ani","[LOOP] 1 [FRAME000] [IMAGE] `blue.img` 0 [IMAGE POS] 4 0 [DELAY] 300");

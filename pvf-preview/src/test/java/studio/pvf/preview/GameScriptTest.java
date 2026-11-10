@@ -5,6 +5,10 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GameScriptTest {
+    @Test void acyclicLocalizedFanoutCannotExpandIntoUnboundedHtml() throws Exception {
+        var table=new StringBuilder("k6>abcdefghij\n");for(int i=5;i>=0;i--)table.append("k").append(i).append('>').append(("<0::k"+(i+1)+">").repeat(10)).append('\n');var warnings=new java.util.ArrayList<String>();
+        var strings=new GameScript.Strings(p->p.equals("string.lst")?"0 `a.str`":table.toString(),warnings);var output=strings.resolve("<0::k0>");assertTrue(output.length()<=65536,"Expanded "+output.length()+" chars");assertTrue(warnings.stream().anyMatch(w->w.contains("超限")));
+    }
     @Test void resolvesChineseStringLinksAndRetainsUnknownKeys() throws Exception {
         var data=Map.of("string.lst","12 `Skill/Skill.chn.str`", "skill/skill.chn.str","name>激光炮\nexplain>第一行\\n第二行\n");
         var info=GameItemInfo.read("skill/gunner/laser.skl","[name] <12::name> [explain] <12::explain> [basic explain] <12::missing>",data::get,1);
