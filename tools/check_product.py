@@ -9,7 +9,7 @@ import uuid
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def run(app: Path, root: Path, mode: str, archive: Path | None, npk: Path | None = None, progress_only: bool = False, binary_ani: bool = False, map_files: bool = False, dungeon_86: bool = False, entities_86: bool = False, dungeon_100: bool = False, visual_dungeon: bool = False, visual_map: bool = False, visual_scene: bool = False, dungeon_usability: bool = False, export_save: bool = False):
+def run(app: Path, root: Path, mode: str, archive: Path | None, npk: Path | None = None, progress_only: bool = False, binary_ani: bool = False, map_files: bool = False, dungeon_86: bool = False, entities_86: bool = False, dungeon_100: bool = False, visual_dungeon: bool = False, visual_map: bool = False, visual_scene: bool = False, dungeon_usability: bool = False, export_save: bool = False, game_preview: bool = False):
     config = root / mode / "config"
     config.mkdir(parents=True)
     command = [
@@ -50,9 +50,11 @@ def run(app: Path, root: Path, mode: str, archive: Path | None, npk: Path | None
         command.insert(1,"-Dpvf.smoke.visualScene=true")
     if visual_map:
         command.insert(1, "-Dpvf.smoke.visualMap=true")
+    if game_preview:
+        command.insert(1, "-Dpvf.smoke.gamePreview=true")
     log = root / f"{mode}.log"
     with log.open("w", encoding="utf-8") as output:
-        result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, timeout=300 if progress_only or binary_ani or map_files or dungeon_86 or entities_86 or dungeon_100 or visual_dungeon or visual_map or visual_scene or dungeon_usability or export_save else 120)
+        result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, timeout=300 if progress_only or binary_ani or map_files or dungeon_86 or entities_86 or dungeon_100 or visual_dungeon or visual_map or visual_scene or dungeon_usability or export_save or game_preview else 120)
     if result.returncode:
         print(log.read_text(encoding="utf-8", errors="replace")[-10000:])
         raise RuntimeError(f"Product {mode} failed ({result.returncode}); logs: {root}")
@@ -75,7 +77,10 @@ def main():
     parser.add_argument("--visual-scene",action="store_true",help="Verify native scene document lifecycle and cross-file undo after tab reopening")
     parser.add_argument("--dungeon-usability",action="store_true",help="Verify mixed-newline Lorien editing, automatic choices and one preview layout")
     parser.add_argument("--export-save", action="store_true", help="Verify actual export chooser, metadata-only source changes and backups")
+    parser.add_argument("--game-preview",action="store_true",help="Verify real player equipment, preview/code/split and live skill/item UI")
     args = parser.parse_args()
+    if args.game_preview and (not args.archive or not args.npk):
+        parser.error("--game-preview requires --archive/--npk")
     if args.visual_map and (not args.archive or not args.npk):
         parser.error("--visual-map requires --archive/--npk")
     if args.visual_dungeon and (not args.archive or not args.npk):
@@ -99,7 +104,7 @@ def main():
     root.mkdir(parents=True)
     run(product / "app", root, "check", None)
     if args.archive:
-        run(product / "app", root, "smoke", args.archive.resolve(), args.npk.resolve() if args.npk else None, args.progress_only, args.binary_ani, args.map_files, args.dungeon_86, args.entities_86, args.dungeon_100, args.visual_dungeon, args.visual_map, args.visual_scene, args.dungeon_usability, args.export_save)
+        run(product / "app", root, "smoke", args.archive.resolve(), args.npk.resolve() if args.npk else None, args.progress_only, args.binary_ani, args.map_files, args.dungeon_86, args.entities_86, args.dungeon_100, args.visual_dungeon, args.visual_map, args.visual_scene, args.dungeon_usability, args.export_save,args.game_preview)
 
 
 if __name__ == "__main__":

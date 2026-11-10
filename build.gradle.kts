@@ -2,7 +2,7 @@ plugins { base }
 
 allprojects {
     group = "studio.pvf"
-    version = "0.14.7"
+    version = "0.15.0"
     repositories { mavenCentral() }
 }
 

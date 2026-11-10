@@ -55,6 +55,7 @@ public final class PvfStudioSmokeStarter implements ApplicationStarter {
     private static void run(Path archivePath, Path output) {
         try {
             Files.createDirectory(output);
+            if(Boolean.getBoolean("pvf.smoke.gamePreview")){GamePreviewWorkbenchSmoke.run(archivePath,output);System.out.println("PVF_STUDIO_GAME_PREVIEW_SMOKE_OK");ApplicationManager.getApplication().invokeLater(() -> ((ApplicationEx)ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));return;}
             if(Boolean.getBoolean("pvf.smoke.exportSave")){ExportSaveSmoke.run(archivePath,output);System.out.println("PVF_STUDIO_EXPORT_SAVE_SMOKE_OK");ApplicationManager.getApplication().invokeLater(() -> ((ApplicationEx)ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));return;}
             if(Boolean.getBoolean("pvf.smoke.dungeonUsability")){DungeonUsabilitySmoke.run(archivePath,output);System.out.println("PVF_STUDIO_DUNGEON_USABILITY_SMOKE_OK");ApplicationManager.getApplication().invokeLater(() -> ((ApplicationEx)ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));return;}
             if(Boolean.getBoolean("pvf.smoke.visualScene")){VisualSceneEditorSmoke.run(archivePath,output);System.out.println("PVF_STUDIO_VISUAL_SCENE_SMOKE_OK");ApplicationManager.getApplication().invokeLater(() -> ((ApplicationEx)ApplicationManager.getApplication()).exit(ApplicationEx.EXIT_CONFIRMED));return;}
