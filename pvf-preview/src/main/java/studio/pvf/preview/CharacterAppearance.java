@@ -1,0 +1,85 @@
+package studio.pvf.preview;
+
+import java.io.IOException;
+import java.util.*;
+
+/** Player equipment expansion with per-owner include/variation context, independent of the desktop. */
+public final class CharacterAppearance {
+    private CharacterAppearance() {}
+    public static final List<String> JOBS=List.of("swordman","fighter","gunner","mage","priest");
+    public record Part(String animation,List<Integer> variation,int layer,String slot,String owner) {}
+    public record Model(String job,List<Part> parts,Map<String,String> actions,Map<String,String> wearing,List<String> warnings) {}
+    private static final Set<String> MOTIONS=Set.of("waiting motion","move motion","sit motion","damage motion 1","damage motion 2","down motion","overturn motion","jump motion","jumpattack motion","rest motion","dash motion","dashattack motion","buff motion","getitem motion","attack motion","etc motion","throw motion 1-1","throw motion 1-2");
+    public static Map<String,String> motions(String text) {
+        var actions=new LinkedHashMap<String,String>();
+        for(var f:GameScript.fields(text))if(MOTIONS.contains(f.tag()))for(int i=0;i<f.values().size();i++){
+            String path=f.values().get(i);if(!path.toLowerCase(Locale.ROOT).endsWith(".ani"))continue;
+            actions.put(f.tag()+(f.values().size()>1?":"+i:""),path);
+        }
+        return Collections.unmodifiableMap(actions);
+    }
+    public static String inferJob(String path,String text,String requested) {
+        for(String job:JOBS)if(path.contains("/"+job+"/"))return job;
+        var usable=GameScript.values(GameScript.fields(text),"usable job").stream().map(GameScript::flag).filter(JOBS::contains).toList();
+        if(usable.contains(requested))return requested;if(!usable.isEmpty())return usable.get(0);
+        return JOBS.contains(requested)?requested:"gunner";
+    }
+    public static String slot(String text){return GameScript.flag(GameScript.value(GameScript.fields(text),"equipment type"));}
+    public static Model load(String path,String text,GameScript.Lookup rawLookup,Set<String> paths,String requested,String action,Map<String,String> outfit) throws IOException {
+        GameScript.Lookup lookup=p->p.equals(path)?text:rawLookup.read(p);String job=inferJob(path,text,requested);
+        String chr="character/"+job+"/"+job+".chr",body=lookup.read(chr);var warnings=new ArrayList<String>();
+        if(body==null)return new Model(job,List.of(),Map.of(),Map.of(),List.of("找不到职业配置 "+chr));
+        Map<String,String> actions=motions(body);String chosen=actions.containsKey(action)?action:"waiting motion";
+        if(!actions.containsKey(chosen)&&!actions.isEmpty())chosen=actions.keySet().iterator().next();
+        var wearing=new LinkedHashMap<String,String>();
+        for(String candidate:paths.stream().filter(p->p.startsWith("equipment/character/"+job+"/avatar/")&&p.endsWith("_default.equ")).sorted().toList()){
+            String value=lookup.read(candidate);if(value!=null)wearing.putIfAbsent(slot(value),candidate);
+        }
+        wearing.putAll(outfit);String ownSlot=path.endsWith(".equ")?slot(text):"";if(!ownSlot.isEmpty())wearing.put(ownSlot,path);
+        var parts=new ArrayList<Part>();var hidden=new HashMap<Integer,Set<String>>();int skin=0;
+        for(var entry:wearing.entrySet()) {
+            String owner=entry.getValue();if(owner.isEmpty())continue;String item=lookup.read(owner);
+            if(item==null){warnings.add("找不到穿戴配置 "+owner);continue;}
+            var fields=GameScript.fields(item);var variation=GameScript.values(fields,"variation");
+            if(entry.getKey().equals("skin avatar")&&variation.size()>1)skin=GameScript.integer(variation.get(1),0);
+            for(String value:GameScript.values(fields,"hide layer"))hidden.computeIfAbsent(GameScript.integer(value,Integer.MIN_VALUE),n->new HashSet<>()).add(owner);
+            try{expand(owner,owner,item,lookup,chosen,entry.getKey(),variation(fields),0,"",new HashSet<>(),parts,0);}catch(IOException|IllegalArgumentException failure){warnings.add(owner+"："+failure.getMessage());}
+        }
+        String reference=actions.get(chosen);if(reference!=null){String ani=resolvedPath(chr,reference,lookup);parts.add(new Part(ani,List.of(skin),1000,"body",chr));}
+        parts.removeIf(p->hidden.containsKey(p.layer())&&hidden.get(p.layer()).stream().anyMatch(owner->!owner.equals(p.owner())));
+        parts.sort(Comparator.comparingInt(Part::layer));
+        return new Model(job,List.copyOf(parts),actions,Collections.unmodifiableMap(wearing),List.copyOf(warnings));
+    }
+    private static List<Integer> variation(List<GameScript.Field> fields) throws IOException {
+        var raw=GameScript.values(fields,"variation");if(raw.isEmpty())return List.of(0,0);var result=new ArrayList<Integer>();
+        for(String token:raw){int v=GameScript.integer(token,-1);if(v<0||v>9999)throw new IOException("variation 超出 0–9999");result.add(v);}
+        return List.copyOf(result);
+    }
+    private static String resolvedPath(String owner,String ref,GameScript.Lookup lookup) throws IOException {
+        String path=GameScript.resolve(owner,ref,lookup);return path!=null?path:ResourceScript.animationCandidates(owner,ref).stream().findFirst().orElse(ref);
+    }
+    private static void expand(String owner,String current,String text,GameScript.Lookup lookup,String action,String slot,List<Integer> variants,int baseLayer,String substitution,Set<String> active,List<Part> parts,int depth) throws IOException {
+        if(depth>8||parts.size()>256)throw new IOException("穿戴引用深度或部件数超限");
+        if(!active.add(current))throw new IOException("include 引用循环："+current);
+        int layer=baseLayer;String part=substitution;Map<String,String> motion=motions(text);
+        try {
+            for(var field:GameScript.fields(text)) {
+                if(field.tag().equals("layer variation")){
+                    if(field.values().size()<2)throw new IOException("layer variation 参数不完整");
+                    layer=GameScript.integer(field.first(),Integer.MIN_VALUE);part=field.values().get(1);
+                    if(Math.abs((long)layer)>1_000_000||part.contains("%")||part.contains(":"))throw new IOException("layer variation 参数无效");
+                }else if(field.tag().equals("layer"))layer=baseLayer+GameScript.integer(field.first(),0);
+                else if(field.tag().equals("include")) {
+                    String include=GameScript.resolve(current,field.first(),lookup);if(include==null)throw new IOException("找不到 include "+field.first());
+                    expand(owner,include,lookup.read(include),lookup,action,slot,variants,layer,part,active,parts,depth+1);
+                }else if(field.tag().equals("custom animation")) {
+                    for(String ref:field.values())if(ref.toLowerCase(Locale.ROOT).endsWith(".ani"))parts.add(new Part(resolvedPath(owner,ref,lookup),variants,4000,slot,owner));
+                }
+            }
+            String ani=motion.get(action);if(ani!=null){if(ani.contains("%s")){if(substitution.isEmpty())throw new IOException("动作缺少 layer variation 参数");ani=ani.replace("%s",substitution);}parts.add(new Part(resolvedPath(owner,ani,lookup),variants,layer,slot,owner));}
+        }finally{active.remove(current);}
+    }
+    public static String actionLabel(String key) {
+        return switch(key){case "waiting motion"->"待机";case "move motion"->"移动";case "jump motion"->"跳跃";case "dash motion"->"奔跑";case "sit motion"->"蹲下";case "rest motion"->"休息";case "buff motion"->"施放增益";case "attack motion:0","attack motion"->"普通攻击 1";case "attack motion:1"->"普通攻击 2";default->key;};
+    }
+}
