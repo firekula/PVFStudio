@@ -20,12 +20,13 @@ public record GameItemInfo(String name,String english,String type,int rarity,Lis
     public static GameItemInfo read(String path,String text,GameScript.Lookup lookup,int level) throws IOException {
         var fields=GameScript.fields(text);var warnings=new ArrayList<String>();var strings=new GameScript.Strings(lookup,warnings);var rows=new ArrayList<Row>();
         String name=strings.resolve(GameScript.value(fields,"name"));if(name.isBlank())name=path.substring(path.lastIndexOf('/')+1);
-        String type=GameScript.flag(GameScript.value(fields,"equipment type"));if(type.isEmpty())type=path.endsWith(".skl")?"技能":"物品";
+        String type=GameScript.flag(GameScript.value(fields,"equipment type"));type=switch(type){case "weapon"->"武器";case "coat avatar"->"上衣装扮";case "pants avatar"->"下装装扮";case "skin avatar"->"皮肤装扮";case "hair avatar"->"头发装扮";case "shoes avatar"->"鞋子装扮";case "cap avatar"->"帽子装扮";case "face avatar"->"脸部装扮";case "belt avatar"->"腰部装扮";case "neck avatar"->"胸部装扮";case "title name"->"称号";case ""->path.endsWith(".skl")?"技能":"物品";default->type;};
         int maximum=Math.max(1,GameScript.integer(GameScript.value(fields,"maximum level"),1));int chosen=Math.max(1,Math.min(level,maximum));
         if(path.endsWith(".skl"))rows.add(new Row("预览等级",chosen+" / "+maximum));
         for(var f:fields) {
             String label=LABELS.get(f.tag());if(label==null||f.values().isEmpty())continue;
             String value=strings.resolve(f.text());
+            if(f.tag().equals("usable job"))value=value.replace("[all]","全职业").replace("[swordman]","鬼剑士").replace("[fighter]","格斗家").replace("[gunner]","神枪手").replace("[mage]","魔法师").replace("[priest]","圣职者");
             if(f.values().size()==2&&f.values().stream().allMatch(v->v.matches("[+-]?\\d+(\\.\\d+)?"))) {
                 if(path.endsWith(".skl")&&(f.tag().equals("cool time")||f.tag().equals("consume mp"))) {
                     double a=Double.parseDouble(f.values().get(0)),b=Double.parseDouble(f.values().get(1));

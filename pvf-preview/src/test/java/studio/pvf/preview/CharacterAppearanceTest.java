@@ -35,6 +35,17 @@ class CharacterAppearanceTest {
         var model=CharacterAppearance.load(path,data.get(path),data::get,data.keySet(),"gunner","waiting motion",Map.of());
         assertTrue(model.parts().stream().anyMatch(p->p.slot().equals("body")));assertTrue(model.warnings().stream().anyMatch(w->w.contains("循环")));
     }
+    @Test void explicitlyHiddenCurrentSlotStaysHiddenDuringPreviewReload() throws Exception {
+        var data=fixture();var path="equipment/character/gunner/avatar/coat/test.equ";
+        var model=CharacterAppearance.load(path,data.get(path),data::get,data.keySet(),"gunner","waiting motion",Map.of("coat avatar",""));
+        assertTrue(model.parts().stream().noneMatch(p->p.slot().equals("coat avatar")));
+    }
+    @Test void missingIncludeDoesNotDiscardAFollowingValidLayer() throws Exception {
+        var data=fixture();var path="equipment/character/gunner/avatar/coat/test.equ";
+        data.put(path,"[equipment type] `[coat avatar]` [layer variation] 900 `coat_b` <include> `missing.lay` [layer variation] 1800 `coat_a` <include> `equipment/character/gunner.lay`");
+        var model=CharacterAppearance.load(path,data.get(path),data::get,data.keySet(),"gunner","waiting motion",Map.of());
+        assertTrue(model.parts().stream().anyMatch(p->p.layer()==1800&&p.animation().endsWith("coat_a/stay.ani")));assertFalse(model.warnings().isEmpty());
+    }
     @Test void hideLayerAffectsOtherSlotsButNotItsOwnAttachment() throws Exception {
         var data=fixture();var path="equipment/character/gunner/avatar/coat/test.equ";
         data.put(path,data.get(path)+" [hide layer] 1000");
