@@ -57,6 +57,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
     private final javax.swing.Timer playback = new javax.swing.Timer(100, e -> advance());
     private Future<?> job;
     private NpkResources resources;
+    private Path indexedSettings;
     private record MinimapResult(studio.pvf.preview.DungeonMinimap atlas,String reason) {}
     private final Map<String,MinimapResult> minimaps=new LinkedHashMap<>();
     private Future<?> minimapJob;
@@ -204,6 +205,8 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
             ++directoryGeneration; scan(chooser.getSelectedFile().toPath());
         }
     }
+    NpkResources resources() { return Objects.equals(indexedSettings,settings)?resources:null; }
+    void chooseResources() { chooseDirectory(); }
 
     // Also used by the product smoke check, with the same indexing/rendering path as the picker.
     void scan(Path directory) {
@@ -226,7 +229,7 @@ final class ResourcePreviewPanel extends JPanel implements AutoCloseable {
                 SwingUtilities.invokeLater(() -> {
                     indexProgress.finish(progress);
                     if (closed || version != directoryGeneration) return;
-                    resources = indexed; resourcesLoading=false; choose.setEnabled(true);
+                    resources = indexed; indexedSettings=config; resourcesLoading=false; choose.setEnabled(true);
                     resourcesChanged.run();
                     root.setText(resourceSummary(indexed)
                             + (indexed.warnings().isEmpty() ? "" : " / " + indexed.warnings().size() + " 条索引提示") + suffix);

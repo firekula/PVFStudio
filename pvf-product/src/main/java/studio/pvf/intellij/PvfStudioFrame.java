@@ -116,6 +116,7 @@ final class PvfStudioFrame extends JFrame {
         return false;
     };
     private final ResourcePreviewPanel preview = new ResourcePreviewPanel();
+    private final GamePreviewPanel gamePreview = new GamePreviewPanel(preview::resources,preview::chooseResources);
     private final JPanel previewDock = new JPanel(new BorderLayout());
     private Session previewOwner;
     private final javax.swing.Timer previewRefresh = new javax.swing.Timer(350, e -> updatePreview());
@@ -140,7 +141,7 @@ final class PvfStudioFrame extends JFrame {
     PvfStudioFrame(Path draftsRoot, boolean exitOnClose) {
         super("PVF Studio");
         preview.onViewChanged(this::scheduleEditorStateSave);
-        preview.onResourcesChanged(() -> sessions.values().stream().filter(tab -> tab.mapPanel!=null).forEach(tab -> tab.mapPanel.browser().setThumbnailLoader((asset,result) -> preview.thumbnail(sceneSource(tab),asset,result))));
+        preview.onResourcesChanged(() -> { sessions.values().stream().filter(tab -> tab.mapPanel!=null).forEach(tab -> tab.mapPanel.browser().setThumbnailLoader((asset,result) -> preview.thumbnail(sceneSource(tab),asset,result))); if(gamePreview.isShowing())gamePreview.resourcesChanged(); });
         com.intellij.ui.AppUIUtilKt.updateAppWindowIcon(this);
         setGlassPane(new com.intellij.openapi.wm.impl.IdeGlassPaneImpl(getRootPane(), false));
         this.draftsRoot = draftsRoot; this.exitOnClose = exitOnClose;
@@ -636,6 +637,7 @@ final class PvfStudioFrame extends JFrame {
             releaseEditors();
             workspace = loaded.workspace(); directories = loaded.directories();
             preview.mount(workspace.directory(), workspace.archive().sourcePath().getParent());
+            gamePreview.mount(workspace.directory());
             if (previous != null) {
                 try { previous.close(); } catch (IOException e) { showError(e); }
             }
@@ -809,10 +811,10 @@ final class PvfStudioFrame extends JFrame {
             Map<String, Session> renamed = new LinkedHashMap<>();
             for (Session session : sessions.values()) {
                 if (session.path.equals(oldPath) || subtree && within(session.path, oldPath)) {
-                    JComponent previous=session.component();String previousType=session.dungeonPanel!=null?"dgn":session.mapPanel!=null?"map":"";
+                    JComponent previous=session.component();String previousType=session.gameHost!=null?"game":session.dungeonPanel!=null?"dgn":session.mapPanel!=null?"map":"";
                     session.path = newPath + session.path.substring(oldPath.length());
-                    String nextType=session.path.endsWith(".dgn")?"dgn":session.path.endsWith(".map")?"map":"";
-                    if(!previousType.equals(nextType)){if(session.bridge!=null)session.bridge.close();session.bridge=null;session.mapPanel=null;session.dungeonPanel=null;configureVisualSession(session);
+                    String nextType=isGamePreviewEntry(session.path)?"game":session.path.endsWith(".dgn")?"dgn":session.path.endsWith(".map")?"map":"";
+                    if(!previousType.equals(nextType)){if(session.bridge!=null)session.bridge.close();session.bridge=null;session.mapPanel=null;session.dungeonPanel=null;session.gameHost=null;configureVisualSession(session);
                         if(session.surface!=null&&nextType.isEmpty()){session.surface.setVisual(new JLabel("当前扩展名使用代码编辑",SwingConstants.CENTER));session.surface.setMode(VisualEditorSurface.Mode.CODE);}
                         int oldIndex=tabs.indexOfComponent(previous);if(oldIndex>=0&&previous!=session.component())tabs.setComponentAt(oldIndex,session.component());
                         session.saveAction.registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_S,InputEvent.CTRL_DOWN_MASK)),session.component());
@@ -1012,10 +1014,19 @@ final class PvfStudioFrame extends JFrame {
         updateButtons();
     }
 
+    private static boolean isGameEntry(String path) { return path.endsWith(".equ") || path.endsWith(".skl") || path.endsWith(".stk"); }
+    private boolean isGamePreviewEntry(String path) { return isGameEntry(path)&&workspace!=null&&workspace.archive().format()==studio.pvf.core.PvfFormat.ACT1; }
     private void configureVisualSession(Session session) {
+        if(isGamePreviewEntry(session.path)&&!studio.pvf.workspace.BinaryView.isView(session.persistedText)) {
+            session.gameHost=new JPanel(new BorderLayout());
+            if(session.surface==null)session.surface=new VisualEditorSurface(session.editor.getComponent(),session.gameHost,()->{scheduleEditorStateSave();previewRefresh.restart();});
+            else session.surface.setVisual(session.gameHost);
+            session.surface.designTitle("效果预览");session.surface.setMode(VisualEditorSurface.Mode.DESIGN);return;
+        }
         if (!(session.path.endsWith(".map") || session.path.endsWith(".dgn")) || studio.pvf.workspace.BinaryView.isView(session.persistedText)) return;
         JLabel visual = new JLabel("正在解析场景…", SwingConstants.CENTER);
         if(session.surface==null)session.surface = new VisualEditorSurface(session.editor.getComponent(), visual, () -> { scheduleEditorStateSave(); previewRefresh.restart(); });
+        session.surface.designTitle("设计");
         if(session.path.endsWith(".dgn")) {
             session.dungeonPanel = new DungeonEditorPanel((stamp,edit) -> session.bridge.apply(stamp,edit),
                     map -> openRoomMap(session,map), () -> { scheduleEditorStateSave();if(selectedSession()==session)previewRefresh.restart(); }, range -> revealSource(session,range));
@@ -1081,7 +1092,7 @@ final class PvfStudioFrame extends JFrame {
         if(session.surface!=null&&roomOrigins.containsKey(session.path)) session.surface.action("返回副本", "scene-return-dungeon", () -> openEntry(roomOrigins.get(session.path)));
     }
     private void loadSceneCatalog(Session session) {
-        if(workspace==null)return;
+        if(workspace==null||session.gameHost!=null)return;
         var current=workspace;var charset=session.charset; var paths=current.paths();String key=paths.hashCode()+"|"+charset.name()+"|"+sessions.values().stream().map(s -> s.path+":"+s.editor.getDocument().getModificationStamp()).sorted().toList();
         if(key.equals(session.catalogSignature))return;session.catalogSignature=key;var texts=new HashMap<String,String>();
         sessions.forEach((path,tab) -> texts.put(path,tab.editor.getDocument().getText()));
@@ -1433,8 +1444,24 @@ final class PvfStudioFrame extends JFrame {
     private void updatePreview() {
         previewRefresh.stop(); Session selected = selectedSession();
         if(previewOwner!=null&&previewOwner.mapPanel!=null)previewOwner.mapPanel.captureLayout();
-        if (selected == null || workspace == null) { preview.setSource(null); previewOwner=null; return; }
+        if (selected == null || workspace == null) { preview.setSource(null); gamePreview.setSource(null,Set.of(),false); previewOwner=null; return; }
         if (studio.pvf.workspace.BinaryView.isView(selected.persistedText)) { preview.setSource(null); return; }
+        if(selected.gameHost!=null) {
+            var snapshot=sceneSource(selected);boolean visual=selected.surface.mode()!=VisualEditorSurface.Mode.CODE;
+            String signature="game|"+selected.path+"|"+visual+"|"+sessions.values().stream().map(s->s.path+":"+s.editor.getDocument().getModificationStamp()).sorted().toList()+"|"+workspace.paths().hashCode();
+            if(previewOwner==selected&&signature.equals(previewSignature))return;
+            previewSignature=signature;
+            previewDock.setVisible(!visual&&showResourcePreview);editorSplit.setDividerSize(previewDock.isVisible()?UIManager.getInt("SplitPane.dividerSize"):0);
+            if(visual) {
+                if(gamePreview.getParent()!=selected.gameHost){if(gamePreview.getParent()!=null)gamePreview.getParent().remove(gamePreview);selected.gameHost.add(gamePreview);selected.gameHost.revalidate();}
+                preview.setSource(null);gamePreview.setSource(snapshot,workspace.paths(),workspace.archive().format()==studio.pvf.core.PvfFormat.ACT1);
+            }else {
+                gamePreview.deactivate();if(preview.getParent()!=previewDock){if(preview.getParent()!=null)preview.getParent().remove(preview);previewDock.add(preview);previewDock.revalidate();}
+                editorSplit.setDividerLocation(previewDivider);preview.setSource(snapshot);
+            }
+            previewOwner=selected;return;
+        }
+        gamePreview.deactivate();
         if(selected.surface!=null)loadSceneCatalog(selected);
         var source=sceneSource(selected);
         boolean design=selected.surface!=null&&selected.surface.mode()!=VisualEditorSurface.Mode.CODE;
@@ -1542,11 +1569,13 @@ final class PvfStudioFrame extends JFrame {
     private void finishClose() {
         if (contentSearch != null) contentSearch.dispose();
         preview.close();
+        gamePreview.close();
         releaseEditors();
         try { if (workspace != null) workspace.close(); } catch (IOException e) { showError(e); }
         io.shutdown(); sceneWorker.shutdownNow(); dispose(); if (exitOnClose) ApplicationManager.getApplication().exit();
     }
     @Override public void dispose() {
+        gamePreview.close();
         taskProgress.clear();
         KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(tabKeyDispatcher);
         tabShortcuts.keySet().forEach(action -> action.unregisterCustomShortcutSet(getRootPane())); super.dispose();
@@ -1556,6 +1585,7 @@ final class PvfStudioFrame extends JFrame {
         previewOwner=null;
         sessionSave.stop();
         previewRefresh.stop(); preview.setSource(null);
+        gamePreview.setSource(null,Set.of(),false);
         for (JDialog dialog : List.copyOf(diffDialogs.keySet())) { dialog.dispose(); disposeDiff(dialog); }
         for (Session session : sessions.values()) releaseSession(session);
         sessions.clear(); tabs.removeAll(); closedTabs.clear();retainedSceneDocuments.clear();hellMapSelections.clear();roomOrigins.clear();
@@ -1643,6 +1673,7 @@ final class PvfStudioFrame extends JFrame {
         SceneDocumentBridge<Object> bridge;
         DungeonEditorPanel dungeonPanel;
         MapEditorPanel mapPanel;
+        JPanel gameHost;
         studio.pvf.sceneedit.SceneCatalog catalog;
         String catalogSignature="";
         JComponent component() { return surface == null ? editor.getComponent() : surface; }

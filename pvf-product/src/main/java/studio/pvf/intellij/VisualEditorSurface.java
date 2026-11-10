@@ -35,6 +35,7 @@ final class VisualEditorSurface extends JPanel {
         add(toolbar, BorderLayout.NORTH); add(body); setMode(Mode.CODE);
     }
     JComponent code() { return code; }
+    void designTitle(String title) { buttons.get(Mode.DESIGN).setText(title); }
     JComponent visual() { return visual; }
     Mode mode() { return mode; }
     double ratio() { return ratio; }
