@@ -29,7 +29,8 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
     private final JCheckBox loop=new JCheckBox("循环",true);
     private final JSlider timeline=new JSlider(0,1000,0);
     private final JLabel time=new JLabel("0 ms");
-    private final JEditorPane info=new JEditorPane("text/html",""),details=new JEditorPane("text/html","");
+    private final GameTooltipPanel info=new GameTooltipPanel();
+    private final JEditorPane details=new JEditorPane("text/html","");
     private final JLabel itemIcon=new JLabel();
     private final DefaultListModel<Wear> wearing=new DefaultListModel<>();
     private final JList<Wear> outfit=new JList<>(wearing);
@@ -45,7 +46,7 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
     private Set<String> paths=Set.of();
     private GamePreview model;
     private volatile long generation;
-    private boolean changing,closed,act1,mirrored,renderPending,renderAgain,playing;
+    private boolean changing,closed,act1,mirrored,renderPending,renderAgain,playing,autoPlayPending;
     private String selectedJob="gunner",selectedAction="waiting motion",selectedEffect="";
     private Path settings;
     private long settingsGeneration,choiceRevision;
@@ -65,7 +66,7 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         effect.setMaximumRowCount(12);effect.setToolTipText("配置明确引用的动画、对象初始视觉或已验证的技能配方");header.add(effect);effect.setVisible(false);
         message.setBorder(BorderFactory.createEmptyBorder(2,8,3,8));message.setPreferredSize(new Dimension(250,22));header.add(message);add(header,BorderLayout.NORTH);
         canvas.setMinimumSize(new Dimension(180,180));
-        info.setName("game-item-info");info.setEditable(false);details.setName("game-resource-details");details.setEditable(false);
+        details.setName("game-resource-details");details.setEditable(false);
         JPanel information=new JPanel(new BorderLayout());itemIcon.setName("game-item-icon");itemIcon.setBorder(BorderFactory.createEmptyBorder(6,10,2,10));information.add(itemIcon,BorderLayout.NORTH);information.add(scroll(info));inspector.addTab("游戏说明",information);
         JPanel outfitPage=new JPanel(new BorderLayout(0,4));outfit.setName("game-outfit");outfitPage.add(new JScrollPane(outfit));
         JPanel outfitTools=new JPanel(new Wrap(3,3));JButton add=new JButton("选择穿戴…"),remove=new JButton("隐藏部位"),reset=new JButton("重置");
@@ -77,10 +78,19 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         transport.add(previous);transport.add(play);transport.add(next);transport.add(speed);transport.add(loop);transport.add(zoom);transport.add(time);speed.setSelectedIndex(2);footer.add(transport);footer.add(timeline);add(footer,BorderLayout.SOUTH);
         job.addActionListener(e->{if(!changing){selectedJob=((Choice)job.getSelectedItem()).key();selectedAction="waiting motion";reload();saveSettings();}});
         action.addActionListener(e->{if(!changing&&action.getSelectedItem() instanceof Choice choice){selectedAction=choice.key();if(source!=null&&source.path().endsWith(".skl"))selectedEffect="actor";reload();saveSettings();}});
-        effect.addActionListener(e->{if(!changing){selectedEffect=effect.getSelectedItem() instanceof GameEffectRecipes.Effect item?item.key():"";if(source!=null)rememberedEffects.put(source.path(),selectedEffect);reload();saveSettings();}});
+        effect.addActionListener(e->{
+            if(changing)return;
+            selectedEffect=effect.getSelectedItem() instanceof GameEffectRecipes.Effect item?item.key():"";
+            if(source!=null){
+                rememberedEffects.put(source.path(),selectedEffect);
+                autoPlayPending=source.path().endsWith(".skl")&&!selectedEffect.equals("actor");
+            }
+            reload();
+            saveSettings();
+        });
         level.addChangeListener(e->{if(!changing){if(source!=null)levels.put(source.path(),((Number)level.getValue()).intValue());reload();saveSettings();}});choose.addActionListener(e->this.chooseResources.run());
         facing.addActionListener(e->{mirrored=!mirrored;facing.setText(mirrored?"朝左":"朝右");requestFrame();});
-        play.addActionListener(e->{if(playing)pause();else if(model!=null){if(!loop.isSelected()&&clock.milliseconds()>=model.duration())clock.seek(0);clock.play();playing=true;play.setText("暂停");timer.start();requestFrame();}});
+        play.addActionListener(e->{if(playing)pause();else startPlayback();});
         previous.addActionListener(e->{pause();clock.seek(Math.max(0,clock.milliseconds()-16));requestFrame();});next.addActionListener(e->{pause();clock.seek(loop.isSelected()?clock.milliseconds()+16:Math.min(model==null?60000:model.duration(),clock.milliseconds()+16));requestFrame();});
         speed.addActionListener(e->clock.speed(switch(speed.getSelectedIndex()){case 0->.25;case 1->.5;case 3->2;case 4->4;default->1;}));
         timeline.addChangeListener(e->{if(!changing){pause();clock.seek(timeline.getValue());requestFrame();}});
@@ -91,7 +101,7 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         addHierarchyListener(e->{if((e.getChangeFlags()&HierarchyEvent.SHOWING_CHANGED)!=0&&!isShowing())pause();});
         select(job,selectedJob);level.setVisible(false);levelLabel.setVisible(false);timer.setRepeats(true);
     }
-    private static JScrollPane scroll(JEditorPane pane){var result=new JScrollPane(pane);result.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);result.setBorder(null);return result;}
+    private static JScrollPane scroll(JComponent pane){var result=new JScrollPane(pane);result.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);result.setBorder(null);return result;}
     private void responsive(){int orientation=getWidth()<610?JSplitPane.VERTICAL_SPLIT:JSplitPane.HORIZONTAL_SPLIT;if(split.getOrientation()!=orientation){split.setOrientation(orientation);split.setResizeWeight(.7);dividerPlaced=false;}if(!dividerPlaced&&getWidth()>0&&getHeight()>0){dividerPlaced=true;SwingUtilities.invokeLater(()->{if(!closed)split.setDividerLocation(.7);});}revalidate();}
     void mount(Path directory) {
         ++generation;pause();settings=directory.resolve("game-preview.properties");outfits.clear();rememberedEffects.clear();levels.clear();
@@ -102,12 +112,20 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
     private void saveSettings(){++choiceRevision;if(settings==null)return;Path config=settings;var p=new Properties();p.setProperty("job",selectedJob);p.setProperty("action",selectedAction);outfits.forEach((j,slots)->slots.forEach((s,path)->p.setProperty("outfit."+j+"."+s,path)));levels.forEach((path,value)->p.setProperty("level."+path,value.toString()));rememberedEffects.forEach((path,value)->p.setProperty("effect."+path,value));worker.execute(()->{try{Path tmp=Files.createTempFile(config.getParent(),"game-preview-",".tmp");try{try(var stream=Files.newOutputStream(tmp)){p.store(stream,"PVF Studio preview choices; does not modify scripts");}Files.move(tmp,config,StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(tmp);}}catch(IOException ignored){}});}
     void setSource(ResourcePreviewPanel.Source value,Set<String> available,boolean legacy){
         boolean changed=source==null||value==null||!source.path().equals(value.path());source=value;paths=Set.copyOf(available);act1=legacy;
-        if(changed){selectedEffect=value==null?"":rememberedEffects.getOrDefault(value.path(),"");canvas.panX=canvas.panY=canvas.freeZoom=0;resetSelectedSlot=true;}
+        if(changed){
+            selectedEffect=value==null?"":rememberedEffects.getOrDefault(value.path(),"");
+            canvas.panX=canvas.panY=canvas.freeZoom=0;
+            resetSelectedSlot=true;
+            autoPlayPending=value!=null&&value.path().endsWith(".skl")&&!selectedEffect.equals("actor");
+        }
         reload();
     }
     void resourcesChanged(){reload();}
     private void reload() {
-        if(closed)return;long ticket=++generation;pause();renderPending=false;renderAgain=false;model=null;
+        if(closed)return;
+        long ticket=++generation;
+        if(playing&&model!=null&&model.usingSequence())autoPlayPending=true;
+        pause();renderPending=false;renderAgain=false;model=null;
         if(source==null){canvas.frame=null;canvas.error="选择装备、装扮或技能";canvas.repaint();return;}
         ResourcePreviewPanel.Source snapshot=source;Set<String> files=paths;NpkResources indexed=resources.get();
         String requested=selectedJob,motion=selectedAction,selectedVisual=selectedEffect;int requestedLevel=levels.getOrDefault(snapshot.path(),1);boolean legacy=act1,reset=resetSelectedSlot,mirror=mirrored;
@@ -126,47 +144,95 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
             if(indexed!=null)try{var ref=ResourceScript.references(snapshot.text()).stream().filter(r->r.tag().equals("icon")&&!r.animation()&&!r.particle()).findFirst();if(ref.isPresent())icon=indexed.sprite(ref.get().path(),ref.get().index()).image();}catch(IOException failure){iconWarning="图标："+failure.getMessage();}
             var loaded=new Loaded(metadata,preview,preview==null?null:preview.render(0,mirror),selected,slot,maximum,chosen,icon,iconWarning);
             SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;accept(loaded);});
-        }catch(Exception failure){SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;canvas.frame=null;canvas.error="预览失败："+failure.getMessage();message.setText("配置无法预览 · 查看代码或重新选择资源");info.setText("<html>"+html(snapshot.path())+"<br>"+html(canvas.error)+"</html>");facing.setEnabled(true);canvas.repaint();});}});
+        }catch(Exception failure){SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;canvas.frame=null;canvas.error="预览失败："+failure.getMessage();message.setText("配置无法预览 · 查看代码或重新选择资源");info.showStatus(snapshot.path()+"\n"+canvas.error);facing.setEnabled(true);canvas.repaint();});}});
     }
     private void accept(Loaded loaded) {
-        model=loaded.preview();canvas.frame=loaded.frame();canvas.error=model==null?"请选择配套的资源目录":"";info.setText(infoHtml(loaded.info()));info.setCaretPosition(0);
+        model=loaded.preview();
+        boolean skill=source.path().endsWith(".skl");
+        boolean playable=model!=null&&model.unavailableReason().isEmpty();
+        canvas.frame=playable?loaded.frame():null;
+        canvas.error=model==null?"请选择配套的资源目录":model.unavailableReason();
+        info.showItem(loaded.info());
+        if(info.getParent() instanceof JViewport viewport)viewport.setViewPosition(new Point());
         itemIcon.setIcon(loaded.icon()==null?null:new ImageIcon(loaded.icon()));itemIcon.setVisible(loaded.icon()!=null);itemIcon.setToolTipText(loaded.iconWarning().isEmpty()?"当前配置图标":loaded.iconWarning());
         changing=true;selectedJob=loaded.job();select(job,selectedJob);job.setEnabled(!source.path().contains("/character/"+selectedJob+"/")&&!source.path().startsWith("skill/"+selectedJob+"/"));
         if(resetSelectedSlot){var slots=outfits.get(selectedJob);if(slots!=null)slots.remove(loaded.slot());resetSelectedSlot=false;}
         level.setModel(new SpinnerNumberModel(loaded.level(),1,loaded.maximum(),1));if(source.path().endsWith(".skl"))levels.put(source.path(),loaded.level());level.setVisible(source.path().endsWith(".skl"));levelLabel.setVisible(level.isVisible());
-        action.removeAllItems();effect.removeAllItems();effect.addItem("默认效果 / 穿戴外观");wearing.clear();
-        if(model!=null){model.appearance().actions().forEach((key,value)->{String label=model.usingSequence()&&key.equals(model.appearance().action())?"技能施放":CharacterAppearance.actionLabel(key);action.addItem(new Choice(key,label.equals(key)&&key.startsWith("etc motion")?"扩展动作 · "+value.substring(value.lastIndexOf('/')+1):label));});
-            select(action,model.usingSequence()?model.appearance().action():selectedAction);action.setEnabled(!model.usingSequence());if(!model.usingSequence()&&action.getSelectedItem() instanceof Choice selected)selectedAction=selected.key();
+        action.removeAllItems();effect.removeAllItems();effect.addItem(skill?"自动技能动画":"默认效果 / 穿戴外观");wearing.clear();
+        if(model!=null){
+            if(!playable)action.addItem(new Choice("none","未关联技能动作"));
+            model.appearance().actions().forEach((key,value)->{
+                String label=model.usingSequence()&&key.equals(model.appearance().action())?"技能预览":CharacterAppearance.actionLabel(key);
+                action.addItem(new Choice(key,label.equals(key)&&key.startsWith("etc motion")?"扩展动作 · "+value.substring(value.lastIndexOf('/')+1):label));
+            });
+            select(action,!playable?"none":model.usingSequence()?model.appearance().action():selectedAction);
+            action.setEnabled(playable&&!model.usingSequence());
+            if(playable&&!model.usingSequence()&&action.getSelectedItem() instanceof Choice selected)selectedAction=selected.key();
             for(var item:model.effects()){effect.addItem(item);if(item.key().equals(selectedEffect))effect.setSelectedItem(item);}
+            if(skill&&model.effects().stream().noneMatch(item->item.key().equals("actor"))){
+                var manual=new GameEffectRecipes.Effect("actor","仅角色动作","","","手动查看职业动作");
+                effect.addItem(manual);
+                if(selectedEffect.equals("actor"))effect.setSelectedItem(manual);
+            }
             model.appearance().wearing().forEach((slot,path)->wearing.addElement(new Wear(slot,path.isEmpty()?"（隐藏）":path)));
             canvas.actorView=model.actorBounds();
             timeline.setMaximum((int)Math.min(60000,model.duration()));timeline.setValue(0);
-            details.setText(resourceHtml(model).replace("</body>",loaded.iconWarning().isEmpty()?"</body>":"<p>"+html(loaded.iconWarning())+"</p></body>"));message.setText(summary(model.warnings()));
+            details.setText(resourceHtml(model).replace("</body>",loaded.iconWarning().isEmpty()?"</body>":"<p>"+html(loaded.iconWarning())+"</p></body>"));
+            message.setText(playable?summary(model.warnings()):model.unavailableReason());
         }else{details.setText("请选择当前 PVF 对应的客户端或 ImagePacks2 目录。");message.setText("属性说明已加载 · 请选择资源目录查看动画");}
-        effect.setVisible(effect.getItemCount()>1);changing=false;clock.seek(0);time.setText("0 ms");play.setEnabled(model!=null);facing.setEnabled(true);canvas.repaint();responsive();
+        effect.setVisible(effect.getItemCount()>1);
+        changing=false;
+        clock.seek(0);
+        time.setText("0 ms");
+        play.setEnabled(playable);
+        timeline.setEnabled(playable);
+        facing.setEnabled(playable);
+        if(model!=null){
+            if(autoPlayPending&&model.usingSequence()&&isShowing()){
+                zoom.setSelectedIndex(1);
+                startPlayback();
+            }
+            autoPlayPending=false;
+        }
+        canvas.repaint();
+        responsive();
     }
     private void requestFrame() {
-        if(model==null||closed)return;
+        if(model==null||closed||!model.unavailableReason().isEmpty())return;
         if(renderPending){renderAgain=true;return;}
         if(playing&&!loop.isSelected()&&clock.milliseconds()>=model.duration()){pause();clock.seek(model.duration());}
         GamePreview snapshot=model;long ticket=generation,time=clock.milliseconds();boolean mirror=mirrored,repeat=loop.isSelected();renderPending=true;
         worker.execute(()->{try{var frame=snapshot.render(time,mirror,repeat);SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;boolean again=renderAgain;renderAgain=false;canvas.frame=frame;canvas.error="";canvas.repaint();if(!again){changing=true;timeline.setValue((int)(time>snapshot.duration()?time%snapshot.duration():time));changing=false;this.time.setText(time+" ms");message.setText(summary(frame.warnings()));canvas.repaint();}if(again)requestFrame();});}catch(Exception failure){SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;renderAgain=false;pause();message.setText("渲染失败："+failure.getMessage());});}});
     }
     private void pause(){timer.stop();clock.pause();playing=false;play.setText("播放");}
+    private void startPlayback(){
+        if(model==null||!model.unavailableReason().isEmpty())return;
+        if(!loop.isSelected()&&clock.milliseconds()>=model.duration())clock.seek(0);
+        clock.play();
+        playing=true;
+        play.setText("暂停");
+        timer.start();
+        requestFrame();
+    }
     void deactivate(){++generation;pause();renderPending=false;renderAgain=false;}
     @Override public void close(){if(closed)return;closed=true;++generation;pause();worker.shutdown();}
     private static void select(JComboBox<Choice> box,String key){for(int i=0;i<box.getItemCount();i++)if(box.getItemAt(i).key().equals(key)){box.setSelectedIndex(i);return;}if(box.getItemCount()>0)box.setSelectedIndex(0);}
     private static String jobLabel(String key){return switch(key){case "swordman"->"鬼剑士";case "fighter"->"格斗家";case "mage"->"魔法师";case "priest"->"圣职者";default->"神枪手";};}
     private static String html(String value){return value.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");}
     private static String summary(List<String> warnings){return warnings.isEmpty()?"角色与动作已组合 · 配置预览":warnings.size()+" 条预览提示 · 在“资源”页查看支持范围";}
-    private static String infoHtml(GameItemInfo item){
-        Color bg=UIManager.getColor("Panel.background"),fg=UIManager.getColor("Label.foreground");String color=switch(item.rarity()){case 1->"#4899cf";case 2->"#b77bdb";case 3->"#d85d9e";case 4->"#d6a428";default->hex(fg);};
-        var b=new StringBuilder("<html><body style='font-family:Microsoft YaHei;font-size:11px;background-color:"+hex(bg)+";color:"+hex(fg)+";margin:10px'><b style='color:"+color+"'>"+html(item.name())+"</b><br><small>"+html(item.english())+"</small><p>"+html(item.type())+"</p><table width='100%'>");
-        for(var row:item.rows())b.append("<tr><td>").append(html(row.label())).append("</td><td align='right'>").append(html(row.value())).append("</td></tr>");
-        return b.append("</table><hr><p>").append(html(item.explanation()).replace("\n","<br>")).append("</p><p><small>基础配置值；不含强化、随机品级和角色最终加成。</small></p></body></html>").toString();
+    private static String resourceHtml(GamePreview preview){
+        var b=new StringBuilder("<html><body><b>组合资源</b>");
+        for(var p:preview.appearance().parts()){
+            b.append("<p>").append(html(p.slot())).append(" · layer ").append(p.layer()).append("<br>")
+                    .append(html(p.animation()).replace("/","/&#8203;")).append("<br>variation ").append(p.variation()).append("</p>");
+        }
+        b.append("<hr><p>属性显示 PVF 配置值。强化、随机品级和角色加成由游戏计算。</p>");
+        String explanation=preview.info().explanation();
+        int conditions=explanation.indexOf("配置触发条件\n");
+        if(conditions>=0)b.append("<p>").append(html(explanation.substring(conditions)).replace("\n","<br>")).append("</p>");
+        for(String warning:preview.warnings())b.append("<p>").append(html(warning)).append("</p>");
+        return b.append("</body></html>").toString();
     }
-    private static String hex(Color color){return color==null?"#808080":String.format("#%02x%02x%02x",color.getRed(),color.getGreen(),color.getBlue());}
-    private static String resourceHtml(GamePreview preview){var b=new StringBuilder("<html><body><b>组合资源</b>");for(var p:preview.appearance().parts())b.append("<p>").append(html(p.slot())).append(" · layer ").append(p.layer()).append("<br>").append(html(p.animation()).replace("/","/&#8203;")).append("<br>variation ").append(p.variation()).append("</p>");b.append("<hr>");for(String warning:preview.warnings())b.append("<p>").append(html(warning)).append("</p>");return b.append("</body></html>").toString();}
     private void chooseOutfit() {
         if(source==null)return;String j=selectedJob;List<String> candidates=paths.stream().filter(p->p.endsWith(".equ")&&(p.startsWith("equipment/character/"+j+"/")||p.startsWith("equipment/character/common/title/"))).sorted().toList();
         var list=new JList<String>();var filter=new JTextField();Runnable apply=()->{String term=filter.getText().toLowerCase(Locale.ROOT);list.setListData(candidates.stream().filter(p->p.contains(term)).toArray(String[]::new));};
@@ -196,7 +262,7 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         @Override protected void paintComponent(Graphics graphics){super.paintComponent(graphics);var g=(Graphics2D)graphics.create();try{
             Color base=getBackground();g.setColor(new Color(Math.max(0,base.getRed()-8),Math.max(0,base.getGreen()-8),Math.max(0,base.getBlue()-8)));for(int y=0;y<getHeight();y+=16)for(int x=0;x<getWidth();x+=16)if((x/16+y/16)%2==0)g.fillRect(x,y,16,16);
             if(frame!=null){Rectangle2D bounds=zoom.getSelectedIndex()==0?actorView:frame.bounds();if(zoom.getSelectedIndex()==0&&mirrored)bounds=new Rectangle2D.Double(-bounds.getMaxX(),bounds.getY(),bounds.getWidth(),bounds.getHeight());double s=scale(),x=getWidth()/2.0-bounds.getCenterX()*s+panX,y=getHeight()/2.0-bounds.getCenterY()*s+panY;
-                for(var draw:frame.draws())draw.prepared().paint(g,x+draw.x()*s,y+draw.y()*s,s,draw.mirrored());
+                for(var draw:frame.draws())draw.prepared().paint(g,x+draw.x()*s,y+draw.y()*s,s,draw.mirrored(),draw.opacity());
                 g.setColor(UIManager.getColor("Label.disabledForeground"));g.drawLine((int)x-7,(int)y,(int)x+7,(int)y);g.drawLine((int)x,(int)y-4,(int)x,(int)y+4);
             }
             if(!error.isEmpty()){g.setColor(getForeground());FontMetrics fm=g.getFontMetrics();String label=error.length()>70?error.substring(0,70)+"…":error;g.drawString(label,Math.max(8,(getWidth()-fm.stringWidth(label))/2),frame==null?getHeight()/2:22);}

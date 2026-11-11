@@ -36,7 +36,7 @@ public final class GameEffectRecipes {
     }
     public static List<Effect> effects(String path,String text,GameScript.Lookup lookup,boolean act1) throws IOException {
         var effects=new LinkedHashMap<String,Effect>();
-        for(var reference:ResourceScript.references(text))if(reference.animation()||reference.particle()){
+        for(var reference:ResourceScript.references(text))if(!reference.tag().contains("preload")&&(reference.animation()||reference.particle())){
             String target=GameScript.resolve(path,reference.path(),lookup);
             if(target!=null)effects.putIfAbsent(target,new Effect(target,"["+reference.tag()+"] "+reference.path(),target,path,"配置显式引用"));
         }
@@ -61,5 +61,21 @@ public final class GameEffectRecipes {
             if(effects.values().stream().noneMatch(e->e.key().startsWith("passive:"+id)))effects.put("missing:"+id,new Effect("missing:"+id,"被动对象 #"+id+"（未找到初始视觉）","",object,"该对象依赖尚未解析的客户端逻辑"));
         }
         return List.copyOf(effects.values());
+    }
+
+    static String motionFor(Map<String,String> actions,String stem) {
+        String matched="";
+        for(var entry:actions.entrySet()){
+            String value=GameScript.normalize(entry.getValue());
+            if(!value.substring(value.lastIndexOf('/')+1).equals(stem+".ani"))continue;
+            if(!matched.isEmpty())return "";
+            matched=entry.getKey();
+        }
+        return matched;
+    }
+
+    static String passiveObject(GameScript.Lookup lookup,int id) throws IOException {
+        String reference=GameScript.catalog(lookup.read("passiveobject/passiveobject.lst")).get(id);
+        return reference==null?null:GameScript.resolve("passiveobject/catalog.lst",reference,lookup);
     }
 }

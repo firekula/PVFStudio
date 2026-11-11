@@ -16,6 +16,13 @@ public record ParticleScript(Vec position, List<Axis> axes, double term, String 
     public record Axis(String type, double start, double end, double periodStart, double periodEnd) {}
     public record ObjectRef(String path, int index) {}
 
+    ParticleScript previewEmission(long milliseconds,double rate) {
+        long time=createTime==0||rate>0?milliseconds:Math.min(createTime,milliseconds);
+        return new ParticleScript(position,axes,term,changing,gravity,angles,life,landing,alphaStart,alphaEnd,
+                rate>0?rate:frequency,rate>0?0:maximum,time,area,areaAngles,rangeType,horizontalRange,verticalRange,
+                random,inOrder,passive,layer,objects,warnings);
+    }
+
     public static ParticleScript parse(String text) throws IOException {
         Vec position = new Vec(0, 0, 0), area = position, angles = position, areaAngles = position;
         String[] types = {"stop", "stop", "stop"}; double[][] values = new double[3][4]; int axis = 0;

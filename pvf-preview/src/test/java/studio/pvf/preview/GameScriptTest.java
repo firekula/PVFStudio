@@ -5,6 +5,26 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GameScriptTest {
+    @Test void gameTooltipPairsCastWithMpAndUsesSecondsAndOneDescription() throws Exception {
+        var info=GameItemInfo.read("skill/gunner/test.skl","""
+                [name] `激光炮`
+                [name2] `Laser Rifle`
+                [type] `[active]`
+                [maximum level] 30
+                [cool time] 4500 4500
+                [consume mp] 40 40
+                [explain] `向敌人发射激光。`
+                [basic explain] `向敌人发射激光。`
+                [command key explain] `→→ + Z`
+                """,p->null,14);
+        assertEquals("激光炮 Lv14",info.tooltip().heading());
+        var lines=info.tooltip().lines();
+        assertEquals("施放时间：瞬发",lines.get(0).left());
+        assertEquals("MP 40",lines.get(0).right());
+        assertEquals("冷却时间：4.5秒",lines.get(1).left());
+        assertEquals("操作指令：→→ + Z",lines.get(2).left());
+        assertEquals(1,lines.stream().filter(line->line.left().equals("向敌人发射激光。")).count());
+    }
     @Test void acyclicLocalizedFanoutCannotExpandIntoUnboundedHtml() throws Exception {
         var table=new StringBuilder("k6>abcdefghij\n");for(int i=5;i>=0;i--)table.append("k").append(i).append('>').append(("<0::k"+(i+1)+">").repeat(10)).append('\n');var warnings=new java.util.ArrayList<String>();
         var strings=new GameScript.Strings(p->p.equals("string.lst")?"0 `a.str`":table.toString(),warnings);var output=strings.resolve("<0::k0>");assertTrue(output.length()<=65536,"Expanded "+output.length()+" chars");assertTrue(warnings.stream().anyMatch(w->w.contains("超限")));

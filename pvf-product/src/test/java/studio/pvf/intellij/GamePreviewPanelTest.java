@@ -13,7 +13,7 @@ class GamePreviewPanelTest {
     @Test void pausedSeekStepAndFacingKeepTheLatestRequestDuringBackgroundRendering() throws Exception {
         var data=Map.of("character/gunner/gunner.chr","[waiting motion] `body.ani`","character/gunner/body.ani","[FRAME000] [IMAGE] `a.img` 0 [DELAY] 100 [FRAME001] [IMAGE] `b.img` 0 [DELAY] 100");
         var sprite=new studio.pvf.preview.ScenePreview.SpriteLookup(){public studio.pvf.preview.NpkResources.Info info(String p,int i){return new studio.pvf.preview.NpkResources.Info(1,1,0,0,1,1);}public studio.pvf.preview.NpkResources.Sprite sprite(String p,int i){var image=new java.awt.image.BufferedImage(1,1,2);image.setRGB(0,0,-1);return new studio.pvf.preview.NpkResources.Sprite(image,0,0,1,1,Path.of("fixture.npk"),p,i,i);}};
-        var model=studio.pvf.preview.GamePreview.load("skill/gunner/fixture.skl","",data::get,data.keySet(),sprite,studio.pvf.preview.GamePreview.Options.defaults());var holder=new GamePreviewPanel[1];SwingUtilities.invokeAndWait(()->holder[0]=new GamePreviewPanel(()->null,()->{}));var p=holder[0];var entered=new CountDownLatch(1);var release=new CountDownLatch(1);
+        var model=studio.pvf.preview.GamePreview.load("skill/gunner/fixture.skl","",data::get,data.keySet(),sprite,studio.pvf.preview.GamePreview.Options.defaults().withEffect("actor"));var holder=new GamePreviewPanel[1];SwingUtilities.invokeAndWait(()->holder[0]=new GamePreviewPanel(()->null,()->{}));var p=holder[0];var entered=new CountDownLatch(1);var release=new CountDownLatch(1);
         try{var modelField=GamePreviewPanel.class.getDeclaredField("model");modelField.setAccessible(true);SwingUtilities.invokeAndWait(()->{try{modelField.set(p,model);}catch(IllegalAccessException e){throw new AssertionError(e);}});var workerField=GamePreviewPanel.class.getDeclaredField("worker");workerField.setAccessible(true);((ExecutorService)workerField.get(p)).submit(()->{entered.countDown();try{release.await(4,TimeUnit.SECONDS);}catch(InterruptedException e){throw new AssertionError(e);}});assertTrue(entered.await(2,TimeUnit.SECONDS));
             SwingUtilities.invokeAndWait(()->{var slider=find(p,"game-timeline",JSlider.class);slider.setValue(50);slider.setValue(150);find(p,"game-next",JButton.class).doClick();for(Component c:all(p))if(c instanceof JButton b&&b.getText().equals("朝右"))b.doClick();});release.countDown();
             long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(4);boolean[] ready={false};do{SwingUtilities.invokeAndWait(()->{try{var canvas=find(p,"game-canvas",JPanel.class);var field=canvas.getClass().getDeclaredField("frame");field.setAccessible(true);var frame=(studio.pvf.preview.GamePreview.Rendered)field.get(canvas);ready[0]=frame!=null&&frame.milliseconds()==166&&frame.draws().getFirst().mirrored();}catch(ReflectiveOperationException e){throw new AssertionError(e);}});if(ready[0])break;Thread.sleep(20);}while(System.nanoTime()<end);assertTrue(ready[0],"Final paused seek/step/facing was lost");
@@ -48,7 +48,7 @@ class GamePreviewPanelTest {
             assertTrue(entered.await(3,TimeUnit.SECONDS));
             SwingUtilities.invokeAndWait(()->panel.setSource(new ResourcePreviewPanel.Source("equipment/two.equ","[name] `Second`",path->null),Set.of(),true));release.countDown();
             long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);String[] html={""};
-            do{SwingUtilities.invokeAndWait(()->html[0]=find(panel,"game-item-info",JEditorPane.class).getText());if(html[0].contains("Second"))break;Thread.sleep(20);}while(System.nanoTime()<end);
+            do{SwingUtilities.invokeAndWait(()->html[0]=infoText(panel));if(html[0].contains("Second"))break;Thread.sleep(20);}while(System.nanoTime()<end);
             assertTrue(html[0].contains("Second"));assertFalse(interrupted.get());
         }finally{release.countDown();SwingUtilities.invokeAndWait(panel::close);}
     }
@@ -59,5 +59,9 @@ class GamePreviewPanelTest {
         });
     }
     private static <T extends Component>T find(Container root,String name,Class<T> type){for(Component c:root.getComponents()){if(name.equals(c.getName())&&type.isInstance(c))return type.cast(c);if(c instanceof Container nested)try{return find(nested,name,type);}catch(NoSuchElementException ignored){}}throw new NoSuchElementException(name);}
-    private static void waitInfo(GamePreviewPanel panel,String value)throws Exception{long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(4);boolean[] found={false};do{SwingUtilities.invokeAndWait(()->found[0]=find(panel,"game-item-info",JEditorPane.class).getText().contains(value));if(found[0])return;Thread.sleep(20);}while(System.nanoTime()<end);fail("Missing info: "+value);}
+    private static String infoText(GamePreviewPanel panel){
+        var item=find(panel,"game-item-info",GameTooltipPanel.class).item();
+        return item==null?"":item.tooltip().heading()+item.rows();
+    }
+    private static void waitInfo(GamePreviewPanel panel,String value)throws Exception{long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(4);boolean[] found={false};do{SwingUtilities.invokeAndWait(()->found[0]=infoText(panel).contains(value));if(found[0])return;Thread.sleep(20);}while(System.nanoTime()<end);fail("Missing info: "+value);}
 }

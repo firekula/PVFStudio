@@ -8,6 +8,46 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GamePreviewTest {
+    @Test void skillDefaultsToItsExactCharacterMotionAndLeavesUnresolvedSkillsBlank() throws Exception {
+        var data=data();
+        data.put("character/gunner/gunner.chr","[waiting motion] `body.ani` [etc motion] `FastKnee.ani`");
+        data.put("character/gunner/fastknee.ani","[FRAME000] [IMAGE] `blue.img` 0 [DELAY] 150");
+        var fastKnee=GamePreview.load("skill/gunner/fastknee.skl","[type] `[active]`",data::get,data.keySet(),new Pixels(),GamePreview.Options.defaults());
+        assertEquals("etc motion",fastKnee.appearance().action());
+        assertEquals("blue.img",fastKnee.render(0,false).draws().get(0).prepared().source().img());
+        var unknown=GamePreview.load("skill/gunner/unlinked.skl","[type] `[active]`",data::get,data.keySet(),new Pixels(),GamePreview.Options.defaults());
+        assertTrue(unknown.render(0,false).draws().isEmpty());
+        assertFalse(unknown.unavailableReason().isBlank());
+    }
+
+    @Test void explicitSkillAnimationPlaysWithoutSelectingTheResourceManually() throws Exception {
+        var data=data();
+        data.put("skill/gunner/cast.ani","[FRAME000] [IMAGE] `blue.img` 0 [DELAY] 100");
+        var skill=GamePreview.load("skill/gunner/example.skl","[animation] `cast.ani`",data::get,data.keySet(),new Pixels(),GamePreview.Options.defaults());
+        assertEquals(java.util.List.of("blue.img"),skill.render(0,false).draws().stream().map(draw->draw.prepared().source().img()).toList());
+    }
+
+    @Test void explicitSkillParticleCanBeSoughtAndMirrored() throws Exception {
+        var data=data();
+        data.put("skill/gunner/cast.ptl","""
+                [x axis]
+                [move type] `[straight line]`
+                [move variable 1] 400 400
+                [life time] 600
+                [creation frequency] -1
+                [maximum create number] 1
+                [object type] `[animation]`
+                [object] `cast.ani` -1
+                [/object]
+                """);
+        data.put("skill/gunner/cast.ani","[FRAME000] [IMAGE] `blue.img` 0 [DELAY] 100");
+        var skill=GamePreview.load("skill/gunner/example.skl","[particle] `cast.ptl`",data::get,data.keySet(),new Pixels(),GamePreview.Options.defaults());
+        var start=skill.render(0,false).draws().get(0);
+        var next=skill.render(150,false).draws().get(0);
+        assertTrue(next.x()>start.x());
+        assertEquals(-next.x(),skill.render(150,true).draws().get(0).x(),.01);
+        assertEquals("blue.img",next.prepared().source().img());
+    }
     private static Map<String,String> data(){var d=new HashMap<String,String>();d.put("character/gunner/gunner.chr","[waiting motion] `body.ani`");d.put("character/gunner/body.ani","[LOOP] 1 [FRAME000] [IMAGE] `red.img` 0 [DELAY] 100 [FRAME001] [IMAGE] `green.img` 0 [DELAY] 100");return d;}
     @Test void loopRepeatsNonLoopingTracksOnTheirOwnClocks() throws Exception {
         var d=data();d.put("character/gunner/body.ani",d.get("character/gunner/body.ani").replace("[LOOP] 1", "[LOOP] 0"));d.put("equipment/title.ani","[FRAME000] [IMAGE] `blue.img` 0 [DELAY] 150 [FRAME001] [IMAGE] `green.img` 0 [DELAY] 150");

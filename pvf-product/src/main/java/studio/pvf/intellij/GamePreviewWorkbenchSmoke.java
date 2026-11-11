@@ -45,14 +45,48 @@ final class GamePreviewWorkbenchSmoke {
             edt(()->{named(game,"game-timeline",JSlider.class).setValue(450);return null;});await(()->renderedTime(game)==450);
             edt(()->{screenshot(frame,output.resolve("game-skill.png"));frame.openEntry("skill/mage/launchjol.skl");return null;});await(()->ready(frame)&&current(game)!=null&&current(game).appearance().job().equals("mage"));
             edt(()->{check(current(game).effects().stream().anyMatch(e->e.key().equals("passive:23008")),"Mage native object binding missing");screenshot(frame,output.resolve("game-mage-jol.png"));return null;});
+            checkAutomaticSkill(frame,game,output,"gaebolgpunch",1800,"盖波加拳击");
+            checkAutomaticSkill(frame,game,output,"gatling",1400,"格林机枪弹道");
+            checkAutomaticSkill(frame,game,output,"flamethrower",1400,"火焰喷射器火焰");
+            checkAutomaticSkill(frame,game,output,"flamethrowerboost",1400,"烈焰强击火焰");
+            checkAutomaticSkill(frame,game,output,"fastknee",240,"body");
+            edt(()->{frame.openEntry("skill/gunner/armormasteryleather.skl");return null;});
+            await(()->ready(frame)&&current(game)!=null&&!current(game).unavailableReason().isEmpty());
+            edt(()->{
+                check(rendered(game)==null,"Unbound skill displayed a waiting pose");
+                check(!named(game,"game-play",JButton.class).isEnabled(),"Unbound skill offers empty playback");
+                var choices=named(game,"game-effect",JComboBox.class);
+                for(int i=0;i<choices.getItemCount();i++){
+                    if(choices.getItemAt(i) instanceof GameEffectRecipes.Effect choice&&choice.key().equals("actor")){
+                        choices.setSelectedIndex(i);
+                        return null;
+                    }
+                }
+                throw new AssertionError("Unbound skill missing manual action choice");
+            });
+            await(()->current(game)!=null&&rendered(game)!=null&&!rendered(game).draws().isEmpty());
             String stackable=workspace.paths().stream().filter(p->p.startsWith("stackable/")&&p.endsWith(".stk")).sorted().findFirst().orElseThrow();
             edt(()->{frame.openEntry(stackable);return null;});await(()->ready(frame)&&current(game)!=null&&current(game).info().type().equals("物品"));
             edt(()->{check(((VisualEditorSurface)tabs.getSelectedComponent()).mode()==VisualEditorSurface.Mode.DESIGN,"STK did not default to preview");frame.openEntry(title);frame.openEntry(weapon);frame.openEntry(avatar);return null;});await(()->loaded(game,"白色校服衬衫"));
             var oldResources=edt(preview::resources);edt(()->{preview.scan(Path.of(System.getProperty("pvf.preview.npk")));return null;});await(()->preview.resources()!=oldResources&&loaded(game,"白色校服衬衫"));
             edt(()->{check(workspace.dirtyPaths().isEmpty(),"Pure preview created script drafts");return null;});
-            workspace.archive().verifyUnchanged();Files.writeString(output.resolve("game-preview-result.txt"),"PASS: real EQU/SKL/STK, preview-first/split/code identity, seek/loop/facing, live top-level and LAY edit/undo, fast tab switches, resource reindex, Sun Eater refs, title, skill levels, 1264/1024 layouts, no preview draft changes\n");
+            workspace.archive().verifyUnchanged();Files.writeString(output.resolve("game-preview-result.txt"),"PASS: ACT1 SimSun tooltip, automatic Gaebolg/Gatling/FlameThrower/FlameThrowerBoost/FastKnee, unbound skill and manual action, real EQU/SKL/STK, preview/code/split, seek/loop/facing, live top-level and LAY edit/undo, resource reindex, 1264/1024 layouts, no preview draft changes\n");
         }catch(Exception|AssertionError failure){edt(()->{screenshot(frame,output.resolve("game-preview-failure.png"));return null;});throw failure;}
         finally{edt(()->{respond("放弃未保存编辑");frame.dispatchEvent(new WindowEvent(frame,WindowEvent.WINDOW_CLOSING));return null;});await(()->!frame.isDisplayable());}
+    }
+    private static void checkAutomaticSkill(PvfStudioFrame frame,GamePreviewPanel game,Path output,String file,int at,String track)throws Exception {
+        GamePreview previous=edt(()->current(game));
+        edt(()->{frame.openEntry("skill/gunner/"+file+".skl");return null;});
+        await(()->ready(frame)&&current(game)!=null&&current(game)!=previous&&current(game).usingSequence()&&renderedTime(game)>0);
+        edt(()->{
+            var info=named(game,"game-item-info",GameTooltipPanel.class);
+            check(info.getFont().getFamily(Locale.ENGLISH).equals("SimSun")&&info.getFont().getSize()==16,"ACT1 tooltip font or screenshot scale differs");
+            check(info.item().tooltip().heading().contains(" Lv"),"Skill level is missing from tooltip heading");
+            named(game,"game-timeline",JSlider.class).setValue(at);
+            return null;
+        });
+        await(()->renderedTime(game)==at&&rendered(game).draws().stream().anyMatch(draw->draw.label().equals(track)));
+        edt(()->{screenshot(frame,output.resolve("game-"+file+".png"));return null;});
     }
     private static Object field(Object owner,String name){try{var f=owner.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(owner);}catch(Exception e){throw new IllegalStateException(e);}}
     private static GamePreview current(GamePreviewPanel panel){return (GamePreview)field(panel,"model");}
