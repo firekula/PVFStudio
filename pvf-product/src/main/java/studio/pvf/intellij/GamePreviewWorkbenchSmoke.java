@@ -87,6 +87,14 @@ final class GamePreviewWorkbenchSmoke {
         });
         await(()->renderedTime(game)==at&&rendered(game).draws().stream().anyMatch(draw->draw.label().equals(track)));
         edt(()->{screenshot(frame,output.resolve("game-"+file+".png"));return null;});
+        if(file.equals("gaebolgpunch")){
+            var surface=edt(()->(VisualEditorSurface)components(frame,EditorTabs.class).getFirst().getSelectedComponent());
+            var before=edt(()->current(game));
+            edt(()->{surface.setMode(VisualEditorSurface.Mode.CODE);return null;});
+            await(()->String.valueOf(field(frame,"previewSignature")).startsWith("game|skill/gunner/"+file+".skl|false|"));
+            edt(()->{surface.setMode(VisualEditorSurface.Mode.DESIGN);return null;});
+            await(()->current(game)!=null&&current(game)!=before&&renderedTime(game)>0);
+        }
     }
     private static Object field(Object owner,String name){try{var f=owner.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(owner);}catch(Exception e){throw new IllegalStateException(e);}}
     private static GamePreview current(GamePreviewPanel panel){return (GamePreview)field(panel,"model");}

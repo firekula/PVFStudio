@@ -25,6 +25,15 @@ class GameScriptTest {
         assertEquals("操作指令：→→ + Z",lines.get(2).left());
         assertEquals(1,lines.stream().filter(line->line.left().equals("向敌人发射激光。")).count());
     }
+
+    @Test void skillTooltipUsesTheConfiguredCastTimeAtSelectedLevel() throws Exception {
+        var info=GameItemInfo.read("skill/mage/wallofice.skl","""
+                [type] `[active]`
+                [maximum level] 5
+                [casting time] 1000 400
+                """,path->null,3);
+        assertEquals("施放时间：0.7秒",info.tooltip().lines().get(0).left());
+    }
     @Test void acyclicLocalizedFanoutCannotExpandIntoUnboundedHtml() throws Exception {
         var table=new StringBuilder("k6>abcdefghij\n");for(int i=5;i>=0;i--)table.append("k").append(i).append('>').append(("<0::k"+(i+1)+">").repeat(10)).append('\n');var warnings=new java.util.ArrayList<String>();
         var strings=new GameScript.Strings(p->p.equals("string.lst")?"0 `a.str`":table.toString(),warnings);var output=strings.resolve("<0::k0>");assertTrue(output.length()<=65536,"Expanded "+output.length()+" chars");assertTrue(warnings.stream().anyMatch(w->w.contains("超限")));

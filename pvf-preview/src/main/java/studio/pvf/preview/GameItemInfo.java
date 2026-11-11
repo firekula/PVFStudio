@@ -19,10 +19,15 @@ public record GameItemInfo(String name,String english,String type,int rarity,Lis
         Map.entry("attack speed","攻击速度（原始值）"),Map.entry("move speed","移动速度（原始值）"),Map.entry("cast speed","施放速度（原始值）"),
         Map.entry("hit recovery","硬直（原始值）"),Map.entry("jump power","跳跃力"),Map.entry("inventory limit","负重上限（g）"),
         Map.entry("MP regen speed","MP 恢复（原始值）"),Map.entry("mp regen speed","MP 恢复（原始值）"),Map.entry("cool time","冷却（ms）"),
+        Map.entry("casting time","施放时间（ms）"),Map.entry("cast time","施放时间（ms）"),
         Map.entry("consume MP","消耗 MP"),Map.entry("consume mp","消耗 MP"),Map.entry("usable job","适用职业"),Map.entry("durability","基础耐久"),
         Map.entry("physical critical hit","物理暴击率"),Map.entry("magical critical hit","魔法暴击率"),Map.entry("elemental property","攻击属性"),
         Map.entry("fire resistance","火属性抗性"),Map.entry("water resistance","冰属性抗性"),
         Map.entry("light resistance","光属性抗性"),Map.entry("dark resistance","暗属性抗性"));
+    private static final List<String> STAT_ORDER=List.of(
+            "equipment physical attack","equipment magical attack","equipment physical defense","equipment magical defense",
+            "physical attack","magical attack","physical defense","magical defense","mp regen speed","attack speed","move speed",
+            "cast speed","hit recovery","jump power","fire resistance","water resistance","light resistance","dark resistance");
     public static GameItemInfo read(String path,String text,GameScript.Lookup lookup,int level) throws IOException {
         var fields=GameScript.fields(text);var warnings=new ArrayList<String>();var strings=new GameScript.Strings(lookup,warnings);var rows=new ArrayList<Row>();
         String name=strings.resolve(GameScript.value(fields,"name"));if(name.isBlank())name=path.substring(path.lastIndexOf('/')+1);
@@ -40,7 +45,10 @@ public record GameItemInfo(String name,String english,String type,int rarity,Lis
             String value=strings.resolve(f.text());
             if(f.tag().equals("usable job"))value=value.replace("[all]","全职业").replace("[swordman]","鬼剑士").replace("[fighter]","格斗家").replace("[gunner]","神枪手").replace("[mage]","魔法师").replace("[priest]","圣职者");
             if(f.values().size()==2&&f.values().stream().allMatch(v->v.matches("[+-]?\\d+(\\.\\d+)?"))) {
-                if(path.endsWith(".skl")&&(f.tag().equals("cool time")||f.tag().equals("consume mp"))) {
+                if(skill&&switch(f.tag()){
+                    case "cool time","consume mp","casting time","cast time" -> true;
+                    default -> false;
+                }) {
                     double a=Double.parseDouble(f.values().get(0)),b=Double.parseDouble(f.values().get(1));
                     value=String.format(Locale.ROOT,"%.0f",maximum==1?a:a+(b-a)*(chosen-1)/(maximum-1));
                 }else if(!f.values().get(0).equals(f.values().get(1)))value+="（配置范围）";
@@ -66,8 +74,7 @@ public record GameItemInfo(String name,String english,String type,int rarity,Lis
     private static Tooltip skillTooltip(String name,int level,List<GameScript.Field> fields,Map<String,String> values,Map<String,String> descriptions) {
         var lines=new ArrayList<TooltipLine>();
         String type=GameScript.flag(GameScript.value(fields,"type"));
-        String cast=GameScript.value(fields,"casting time");
-        if(cast.isEmpty())cast=GameScript.value(fields,"cast time");
+        String cast=values.getOrDefault("casting time",values.getOrDefault("cast time",""));
         String castLabel="";
         if(type.equals("passive"))castLabel="被动技能";
         else if(!type.isEmpty()||!cast.isEmpty())castLabel="施放时间："+(cast.isEmpty()||cast.equals("0")?"瞬发":seconds(cast));
@@ -104,10 +111,15 @@ public record GameItemInfo(String name,String english,String type,int rarity,Lis
 
         var stats=new ArrayList<TooltipLine>();
         var bonuses=new ArrayList<TooltipLine>();
-        for(var entry:values.entrySet()){
+        var ordered=new ArrayList<>(values.entrySet());
+        ordered.sort(Comparator.comparingInt(entry->{
+            int rank=STAT_ORDER.indexOf(entry.getKey());
+            return rank<0?STAT_ORDER.size():rank;
+        }));
+        for(var entry:ordered){
             String tag=entry.getKey(),value=entry.getValue();
             switch(tag){
-                case "weight","price","durability","minimum level","required level","usable job","cool time","consume mp" -> { }
+                case "weight","price","durability","minimum level","required level","usable job","cool time","consume mp","casting time","cast time" -> { }
                 case "attack speed","move speed","cast speed" -> bonuses.add(new TooltipLine(
                         LABELS.get(tag).replace("（原始值）","")+" "+signed(scaled(value,1,"%")),"",Ink.BONUS));
                 case "hit recovery","jump power","fire resistance","water resistance","light resistance","dark resistance" -> bonuses.add(new TooltipLine(

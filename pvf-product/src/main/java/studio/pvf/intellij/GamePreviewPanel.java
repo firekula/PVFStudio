@@ -98,7 +98,16 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         add.addActionListener(e->chooseOutfit());remove.addActionListener(e->{if(outfit.getSelectedValue() instanceof Wear selected){outfits.computeIfAbsent(selectedJob,k->new HashMap<>()).put(selected.slot(),"");reload();saveSettings();}});
         reset.addActionListener(e->{outfits.remove(selectedJob);reload();saveSettings();});
         addComponentListener(new ComponentAdapter(){@Override public void componentResized(ComponentEvent e){responsive();}});
-        addHierarchyListener(e->{if((e.getChangeFlags()&HierarchyEvent.SHOWING_CHANGED)!=0&&!isShowing())pause();});
+        addHierarchyListener(e->{
+            if((e.getChangeFlags()&HierarchyEvent.SHOWING_CHANGED)==0)return;
+            if(!isShowing()){
+                if(model!=null&&model.usingSequence())autoPlayPending=true;
+                pause();
+            }else{
+                long ticket=generation;
+                SwingUtilities.invokeLater(()->{if(!closed&&ticket==generation)startPendingPlayback();});
+            }
+        });
         select(job,selectedJob);level.setVisible(false);levelLabel.setVisible(false);timer.setRepeats(true);
     }
     private static JScrollPane scroll(JComponent pane){var result=new JScrollPane(pane);result.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);result.setBorder(null);return result;}
@@ -187,13 +196,7 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         play.setEnabled(playable);
         timeline.setEnabled(playable);
         facing.setEnabled(playable);
-        if(model!=null){
-            if(autoPlayPending&&model.usingSequence()&&isShowing()){
-                zoom.setSelectedIndex(1);
-                startPlayback();
-            }
-            autoPlayPending=false;
-        }
+        startPendingPlayback();
         canvas.repaint();
         responsive();
     }
@@ -205,6 +208,16 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         worker.execute(()->{try{var frame=snapshot.render(time,mirror,repeat);SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;boolean again=renderAgain;renderAgain=false;canvas.frame=frame;canvas.error="";canvas.repaint();if(!again){changing=true;timeline.setValue((int)(time>snapshot.duration()?time%snapshot.duration():time));changing=false;this.time.setText(time+" ms");message.setText(summary(frame.warnings()));canvas.repaint();}if(again)requestFrame();});}catch(Exception failure){SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;renderAgain=false;pause();message.setText("渲染失败："+failure.getMessage());});}});
     }
     private void pause(){timer.stop();clock.pause();playing=false;play.setText("播放");}
+    private void startPendingPlayback(){
+        if(model==null||!isShowing())return;
+        boolean restart=autoPlayPending&&model.usingSequence();
+        autoPlayPending=false;
+        if(restart){
+            zoom.setSelectedIndex(1);
+            clock.seek(0);
+            startPlayback();
+        }
+    }
     private void startPlayback(){
         if(model==null||!model.unavailableReason().isEmpty())return;
         if(!loop.isSelected()&&clock.milliseconds()>=model.duration())clock.seek(0);
@@ -214,7 +227,13 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         timer.start();
         requestFrame();
     }
-    void deactivate(){++generation;pause();renderPending=false;renderAgain=false;}
+    void deactivate(){
+        if(model!=null&&model.usingSequence())autoPlayPending=true;
+        ++generation;
+        pause();
+        renderPending=false;
+        renderAgain=false;
+    }
     @Override public void close(){if(closed)return;closed=true;++generation;pause();worker.shutdown();}
     private static void select(JComboBox<Choice> box,String key){for(int i=0;i<box.getItemCount();i++)if(box.getItemAt(i).key().equals(key)){box.setSelectedIndex(i);return;}if(box.getItemCount()>0)box.setSelectedIndex(0);}
     private static String jobLabel(String key){return switch(key){case "swordman"->"鬼剑士";case "fighter"->"格斗家";case "mage"->"魔法师";case "priest"->"圣职者";default->"神枪手";};}
@@ -228,8 +247,10 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         }
         b.append("<hr><p>属性显示 PVF 配置值。强化、随机品级和角色加成由游戏计算。</p>");
         String explanation=preview.info().explanation();
-        int conditions=explanation.indexOf("配置触发条件\n");
-        if(conditions>=0)b.append("<p>").append(html(explanation.substring(conditions)).replace("\n","<br>")).append("</p>");
+        int descriptionStart=preview.info().tooltip().skill()?0:explanation.indexOf("配置触发条件\n");
+        if(descriptionStart>=0&&!explanation.isBlank()){
+            b.append("<p><b>详细说明</b><br>").append(html(explanation.substring(descriptionStart)).replace("\n","<br>")).append("</p>");
+        }
         for(String warning:preview.warnings())b.append("<p>").append(html(warning)).append("</p>");
         return b.append("</body></html>").toString();
     }
