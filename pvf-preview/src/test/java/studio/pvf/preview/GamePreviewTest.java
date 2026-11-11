@@ -5,9 +5,78 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GamePreviewTest {
+    @Test void clothingFollowsTheBodyFrameDelays() throws Exception {
+        var files=data();
+        files.put("character/gunner/body.ani","""
+                [FRAME000] [IMAGE] `body.img` 0 [DELAY] 125
+                [FRAME001] [IMAGE] `body.img` 1 [DELAY] 100
+                """);
+        files.put("equipment/coat.ani","""
+                [FRAME000] [IMAGE] `coat.img` 0 [DELAY] 250
+                [FRAME001] [IMAGE] `coat.img` 1 [DELAY] 100
+                """);
+        var preview=GamePreview.load("equipment/coat.equ","[equipment type] `[coat avatar]` [waiting motion] `coat.ani`",
+                files::get,files.keySet(),new Pixels(),GamePreview.Options.defaults());
+        for(long time:new long[]{150,375}){
+            var frames=preview.render(time,false,true).draws().stream()
+                    .map(d->d.prepared().source().requestedFrame()).toList();
+            assertEquals(List.of(1,1),frames,"Clothing and body diverged at "+time+" ms");
+        }
+    }
+
+    @Test void crossShotTransitionsIntoTheFiringPoseAndEffectsAtItsConfiguredDelay() throws Exception {
+        var files=data();
+        files.put("skill/gunnerskill.lst","48 `Gunner/CrossShoot.skl`");
+        files.put("character/gunner/gunner.chr","[etc motion] `CrossShoot.ani`");
+        files.put("character/gunner/crossshoot.ani","""
+                [FRAME000] [IMAGE] `body.img` 0 [DELAY] 10000
+                [FRAME001] [IMAGE] `body.img` 1 [DELAY] 100
+                """);
+        files.put("character/gunner/effect/animation/shooteffect/crossshoot.ani","[FRAME000] [IMAGE] `flash.img` 0 [DELAY] 100");
+        files.put("character/gunner/effect/animation/bullet/crossshoot.ani","[FRAME000] [IMAGE] `shot.img` 0 [DELAY] 100");
+        var preview=GamePreview.load("skill/gunner/crossshoot.skl","[static data] 220 600 3",
+                files::get,files.keySet(),new Pixels(),GamePreview.Options.defaults());
+        assertEquals(List.of("body.img"),preview.render(219,false).draws().stream().map(d->d.prepared().source().img()).toList());
+        var shot=preview.render(220,false).draws();
+        assertEquals(List.of("body.img","flash.img","shot.img"),shot.stream().map(d->d.prepared().source().img()).toList());
+        assertEquals(1,shot.get(0).prepared().source().requestedFrame());
+        assertEquals(820,preview.duration());
+    }
+
+    @Test void ordinaryFlameUsesForwardStreaksAndVariesTheParticlePatternPerCast() throws Exception {
+        var files=data();
+        String particle="character/gunner/effect/particle/flamethrower.ptl";
+        files.put(particle,"""
+                [x axis] [move type] `[straight line]` [move variable 1] 400 0
+                [life time] 600
+                [creation frequency] 50
+                [rotation angle range type] `[rectangle]`
+                [rotation angle variable] 30 30
+                [object type] `[animation]`
+                [object] `../Animation/FlameThrower1.ani` -1
+                [/object]
+                """);
+        files.put("character/gunner/effect/animation/flamethrower1.ani","""
+                [FRAME000] [IMAGE] `jet.img` 0 [IMAGE RATE] 1 0.05 [IMAGE ROTATE] 0 [INTERPOLATION] 1 [DELAY] 500
+                [FRAME001] [IMAGE] `jet.img` 0 [IMAGE RATE] 1 1 [IMAGE ROTATE] 1.5 [DELAY] 0
+                """);
+        var preview=GamePreview.load("skill/gunner/test.skl","[particle] `"+particle+"`",
+                files::get,files.keySet(),new Pixels(),GamePreview.Options.defaults());
+        var first=preview.render(250,false,true).draws();
+        assertTrue(first.size()>3);
+        assertTrue(first.stream().allMatch(d->Math.abs(d.prepared().transform().getShearY())<.01));
+        var positions=first.stream().map(d->List.of(d.x(),d.y())).toList();
+        assertTrue(positions.stream().map(pos->pos.get(1)).distinct().count()>3);
+        long next=preview.duration()+250;
+        var nextPositions=preview.render(next,false,true).draws().stream().map(d->List.of(d.x(),d.y())).toList();
+        assertNotEquals(positions,nextPositions);
+        assertEquals(nextPositions,preview.render(next,false,true).draws().stream().map(d->List.of(d.x(),d.y())).toList());
+    }
+
     @Test void focusedFlameKeepsItsJetPointingOutOfTheMuzzle() throws Exception {
         var files=data();
         String particle="character/gunner/effect/particle/flamethrowerboost.ptl";

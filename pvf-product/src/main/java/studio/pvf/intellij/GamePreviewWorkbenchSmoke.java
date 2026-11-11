@@ -47,20 +47,24 @@ final class GamePreviewWorkbenchSmoke {
             edt(()->{check(current(game).effects().stream().anyMatch(e->e.key().equals("passive:23008")),"Mage native object binding missing");screenshot(frame,output.resolve("game-mage-jol.png"));return null;});
             checkAutomaticSkill(frame,game,output,"gaebolgpunch",1800,"盖波加拳击");
             checkAutomaticSkill(frame,game,output,"gatling",1400,"格林机枪弹道");
-            checkAutomaticSkill(frame,game,output,"flamethrower",1400,"火焰喷射器火焰");
+            checkAutomaticSkill(frame,game,output,"flamethrower",2876,"火焰喷射器火焰");
+            checkFlameJet(game,"火焰喷射器火焰");
             checkAutomaticSkill(frame,game,output,"flamethrowerboost",2876,"烈焰强击火焰");
+            checkFlameJet(game,"烈焰强击火焰");
+            checkAutomaticSkill(frame,game,output,"fastknee",220,"body");
             edt(()->{
-                var jet=rendered(game).draws().stream().filter(draw->draw.label().equals("烈焰强击火焰")
-                        &&draw.prepared().source().requestedFrame()==0).toList();
-                check(!jet.isEmpty(),"Focused flame has no visible jet at 2876 ms");
-                for(var draw:jet){
-                    var transform=draw.prepared().transform();
-                    double angle=Math.atan2(transform.getShearY(),transform.getScaleX());
-                    check(Math.abs(angle)<.01,"Focused flame jet rotates away from its muzzle");
-                }
+                var pose=rendered(game).draws();
+                int body=pose.stream().filter(d->d.label().equals("body")).findFirst().orElseThrow().prepared().source().requestedFrame();
+                var clothes=pose.stream().filter(d->d.label().endsWith(" avatar")).toList();
+                check(body==162&&!clothes.isEmpty(),"Fast Knee did not reach the kick frame");
+                check(clothes.stream().allMatch(d->d.prepared().source().requestedFrame()==body),"Fast Knee clothing and body frames differ");
                 return null;
             });
-            checkAutomaticSkill(frame,game,output,"fastknee",240,"body");
+            checkAutomaticSkill(frame,game,output,"crossshoot",220,"交叉射击弹道");
+            edt(()->{
+                check(rendered(game).draws().stream().anyMatch(d->d.label().equals("交叉射击枪口")),"Cross Shot muzzle effect missing");
+                return null;
+            });
             edt(()->{frame.openEntry("skill/gunner/armormasteryleather.skl");return null;});
             await(()->ready(frame)&&current(game)!=null&&!current(game).unavailableReason().isEmpty());
             edt(()->{
@@ -81,9 +85,22 @@ final class GamePreviewWorkbenchSmoke {
             edt(()->{check(((VisualEditorSurface)tabs.getSelectedComponent()).mode()==VisualEditorSurface.Mode.DESIGN,"STK did not default to preview");frame.openEntry(title);frame.openEntry(weapon);frame.openEntry(avatar);return null;});await(()->loaded(game,"白色校服衬衫"));
             var oldResources=edt(preview::resources);edt(()->{preview.scan(Path.of(System.getProperty("pvf.preview.npk")));return null;});await(()->preview.resources()!=oldResources&&loaded(game,"白色校服衬衫"));
             edt(()->{check(workspace.dirtyPaths().isEmpty(),"Pure preview created script drafts");return null;});
-            workspace.archive().verifyUnchanged();Files.writeString(output.resolve("game-preview-result.txt"),"PASS: ACT1 SimSun tooltip, automatic Gaebolg/Gatling/FlameThrower/FlameThrowerBoost/FastKnee, unbound skill and manual action, real EQU/SKL/STK, preview/code/split, seek/loop/facing, live top-level and LAY edit/undo, resource reindex, 1264/1024 layouts, no preview draft changes\n");
+            workspace.archive().verifyUnchanged();Files.writeString(output.resolve("game-preview-result.txt"),"PASS: Fast Knee clothing synchronization, Cross Shot muzzle and projectile, both flame jets at 2876 ms, automatic skills, ACT1 tooltip, real EQU/SKL/STK, preview/code/split, seek/loop/facing, live top-level and LAY edit/undo, resource reindex, 1264/1024 layouts, no preview draft changes\n");
         }catch(Exception|AssertionError failure){edt(()->{screenshot(frame,output.resolve("game-preview-failure.png"));return null;});throw failure;}
         finally{edt(()->{respond("放弃未保存编辑");frame.dispatchEvent(new WindowEvent(frame,WindowEvent.WINDOW_CLOSING));return null;});await(()->!frame.isDisplayable());}
+    }
+    private static void checkFlameJet(GamePreviewPanel game,String label)throws Exception{
+        edt(()->{
+            var jet=rendered(game).draws().stream().filter(draw->draw.label().equals(label)
+                    &&draw.prepared().source().requestedFrame()==0).toList();
+            check(!jet.isEmpty(),label+" has no visible jet at 2876 ms");
+            for(var draw:jet){
+                var transform=draw.prepared().transform();
+                double angle=Math.atan2(transform.getShearY(),transform.getScaleX());
+                check(Math.abs(angle)<.01,label+" rotates away from its muzzle");
+            }
+            return null;
+        });
     }
     private static void checkAutomaticSkill(PvfStudioFrame frame,GamePreviewPanel game,Path output,String file,int at,String track)throws Exception {
         GamePreview previous=edt(()->current(game));

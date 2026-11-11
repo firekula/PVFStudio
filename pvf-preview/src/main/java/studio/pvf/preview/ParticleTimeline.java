@@ -18,6 +18,11 @@ public final class ParticleTimeline {
     public record Sample(List<Particle> particles, boolean limited) {}
 
     public Sample sample(long milliseconds, double rootX, double rootY, double rootZ, boolean mirrored) {
+        return sample(milliseconds,rootX,rootY,rootZ,mirrored,0);
+    }
+
+    Sample sample(long milliseconds,double rootX,double rootY,double rootZ,boolean mirrored,long variation) {
+        long castSeed=variation==0?seed:mix(seed^mix(variation));
         double time = Math.max(0, milliseconds), clock = initialTime + time;
         long total = count(emissionEnd(clock));
         List<Particle> particles = new ArrayList<>();
@@ -28,7 +33,7 @@ public final class ParticleTimeline {
             double age = script.frequency() == -1 ? time + initialTime : i < firstCount ? time + (firstCount == 0 ? 0 : i * firstEnd / firstCount)
                     : clock - i * 1000.0 / script.frequency();
             if (age < 0) continue;
-            SplittableRandom rng = new SplittableRandom(mix(seed ^ mix(i)));
+            SplittableRandom rng = new SplittableRandom(mix(castSeed ^ mix(i)));
             double[] area = {spread(rng, script.area().x()), spread(rng, script.area().y()), spread(rng, script.area().z())};
             area = rotate(area, script.areaAngles());
             double horizontal = script.angles().x(), vertical = script.angles().y(), roll = script.angles().z();

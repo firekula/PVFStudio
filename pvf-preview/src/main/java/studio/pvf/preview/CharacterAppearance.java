@@ -8,7 +8,7 @@ public final class CharacterAppearance {
     private CharacterAppearance() {}
     public static final List<String> JOBS=List.of("swordman","fighter","gunner","mage","priest");
     public record Part(String animation,List<Integer> variation,int layer,String slot,String owner) {}
-    public record Model(String job,List<Part> parts,Map<String,String> actions,Map<String,String> wearing,List<String> warnings,String action) {}
+    public record Model(String job,List<Part> parts,Map<String,String> actions,Map<String,String> wearing,List<String> warnings,String action,String bodyAnimation) {}
     private static final Set<String> MOTIONS=Set.of("waiting motion","move motion","sit motion","damage motion 1","damage motion 2","down motion","overturn motion","jump motion","jumpattack motion","rest motion","dash motion","dashattack motion","buff motion","getitem motion","attack motion","etc motion","throw motion 1-1","throw motion 1-2");
     public static Map<String,String> motions(String text) {
         var actions=new LinkedHashMap<String,String>();
@@ -28,7 +28,7 @@ public final class CharacterAppearance {
     public static Model load(String path,String text,GameScript.Lookup rawLookup,Set<String> paths,String requested,String action,Map<String,String> outfit) throws IOException {
         GameScript.Lookup bounded=GameScript.boundedLookup(rawLookup,1024,16L*1024*1024);GameScript.Lookup lookup=p->p.equals(path)?text:bounded.read(p);String job=inferJob(path,text,requested);
         String chr="character/"+job+"/"+job+".chr",body=lookup.read(chr);var warnings=new ArrayList<String>();
-        if(body==null)return new Model(job,List.of(),Map.of(),Map.of(),List.of("找不到职业配置 "+chr),action);
+        if(body==null)return new Model(job,List.of(),Map.of(),Map.of(),List.of("找不到职业配置 "+chr),action,null);
         Map<String,String> actions=motions(body);String chosen=actions.containsKey(action)?action:"waiting motion";
         if(!actions.containsKey(chosen)&&!actions.isEmpty())chosen=actions.keySet().iterator().next();
         String reference=actions.get(chosen),bodyAnimation=reference==null?null:resolvedPath(chr,reference,lookup);
@@ -50,7 +50,7 @@ public final class CharacterAppearance {
         if(bodyAnimation!=null)parts.add(new Part(bodyAnimation,List.of(skin),1000,"body",chr));
         parts.removeIf(p->hidden.containsKey(p.layer())&&hidden.get(p.layer()).stream().anyMatch(owner->!owner.equals(p.owner())));
         parts.sort(Comparator.comparingInt(Part::layer));
-        return new Model(job,List.copyOf(parts),actions,Collections.unmodifiableMap(wearing),List.copyOf(warnings),chosen);
+        return new Model(job,List.copyOf(parts),actions,Collections.unmodifiableMap(wearing),List.copyOf(warnings),chosen,bodyAnimation);
     }
     private static List<Integer> variation(List<GameScript.Field> fields) throws IOException {
         var raw=GameScript.values(fields,"variation");if(raw.isEmpty())return List.of(0,0);if(raw.size()>2)throw new IOException("装备 variation 只能有一或两个参数");var result=new ArrayList<Integer>();

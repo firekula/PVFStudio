@@ -9,12 +9,14 @@ import java.util.Map;
 final class Act1GunnerCast {
     private static final String GUNNER = "character/gunner/";
     private static final String EFFECT = GUNNER + "effect/animation/";
+    static final String ORDINARY_FLAME = GUNNER + "effect/particle/flamethrower.ptl";
+    private static final String ORDINARY_JET = EFFECT + "flamethrower1.ani";
     private static final String FOCUSED_FLAME = GUNNER + "effect/particle/flamethrowerboost.ptl";
     private static final String FOCUSED_JET = EFFECT + "flamethrowerboost1.ani";
 
     record Clip(String path,String label,List<Integer> variations,int layer,long start,long end,double x,double y,int holdDelay) {}
     record Emitter(String path,String label,long start,long emitFor,double frequency,double x,double z) {}
-    record Cast(String action,String followAction,long changeAt,long end,List<Clip> clips,Emitter emitter,String note) {}
+    record Cast(String action,String followAction,long changeAt,long end,List<Clip> clips,Emitter emitter,String note,int firstFrameDelay) {}
 
     private Act1GunnerCast() {}
 
@@ -24,6 +26,7 @@ final class Act1GunnerCast {
             case "skill/gunner/gatling.skl" -> 12;
             case "skill/gunner/flamethrower.skl" -> 13;
             case "skill/gunner/flamethrowerboost.skl" -> 36;
+            case "skill/gunner/crossshoot.skl" -> 48;
             case "skill/gunner/gaebolgpunch.skl" -> 67;
             default -> -1;
         };
@@ -31,7 +34,23 @@ final class Act1GunnerCast {
         String entry=GameScript.catalog(lookup.read("skill/gunnerskill.lst")).get(id);
         if(entry==null||!path.equals("skill/"+entry))return null;
         if(id==67)return gaebolg(lookup,actions);
-        return rapid(id,GameScript.fields(text),lookup,actions,level);
+        var fields=GameScript.fields(text);
+        if(id==48)return crossShot(fields,actions);
+        return rapid(id,fields,lookup,actions,level);
+    }
+
+    /** State 27 fires from (77,0,112) after the configured draw delay. */
+    private static Cast crossShot(List<GameScript.Field> fields,Map<String,String> actions){
+        String action=GameEffectRecipes.motionFor(actions,"crossshoot");
+        var values=GameScript.values(fields,"static data");
+        if(action.isEmpty()||values.size()<2)return null;
+        int fire=number(values.get(0),0,30000),recovery=number(values.get(1),0,30000);
+        if(fire<0||recovery<0)return null;
+        long end=Math.max(1,(long)fire+recovery);
+        return new Cast(action,"",end,end,List.of(
+                clip(EFFECT+"shooteffect/crossshoot.ani","交叉射击枪口",2700,fire,-1,77,-112),
+                clip(EFFECT+"bullet/crossshoot.ani","交叉射击弹道",3000,fire,-1,77,-112)
+        ),null,"交叉射击按配置的开火延迟和收招时间预览。游戏内的拔枪、装弹速度另行计算",fire);
     }
 
     private static Cast rapid(int id,List<GameScript.Field> fields,GameScript.Lookup lookup,Map<String,String> actions,int level) throws IOException {
@@ -62,22 +81,28 @@ final class Act1GunnerCast {
             clips.add(clip(EFFECT+"gatlinggunoverheat.ani","格林机枪过热",2700,stop,end,0,0));
         }
         String emitter=gatling?GUNNER+"particle/subweapon/gatlingfront.ptl":
-                boost?FOCUSED_FLAME:GUNNER+"effect/particle/flamethrower.ptl";
+                boost?FOCUSED_FLAME:ORDINARY_FLAME;
         String label=gatling?"格林机枪弹道":boost?"烈焰强击火焰":"火焰喷射器火焰";
         return new Cast(ready,fire,startup,end,List.copyOf(clips),
                 new Emitter(emitter,label,startup,fireFor,rate,gatling?150:141,88),
-                "施放按当前等级最大持续时间预览；枪口粒子使用客户端 PTL，未执行命中和手动终止");
+                "施放按当前等级最大持续时间预览；枪口粒子使用客户端 PTL，未执行命中和手动终止",-1);
     }
 
-    /** Keep the focused jet aimed at the muzzle through the source's nearly equivalent 0/6.28 angles. */
+    /** Keep the thin jet around the muzzle axis. PTL still controls each particle's trajectory. */
     static ResourceScript.Animation particleVisual(String emitter,String path,ResourceScript.Animation animation) {
-        if(!emitter.equals(FOCUSED_FLAME)||!path.equals(FOCUSED_JET)||animation.frames().size()!=2)return animation;
+        boolean ordinary=emitter.equals(ORDINARY_FLAME)&&path.equals(ORDINARY_JET);
+        boolean focused=emitter.equals(FOCUSED_FLAME)&&path.equals(FOCUSED_JET);
+        if((!ordinary&&!focused)||animation.frames().size()!=2)return animation;
         var first=animation.frames().get(0);
         var last=animation.frames().get(1);
+        if(!first.interpolation())return animation;
         double turn=2*Math.PI;
         double change=last.rotation()-first.rotation();
-        if(!first.interpolation()||Math.abs(Math.abs(change)-turn)>.01)return animation;
-        var aligned=last.withRotation(last.rotation()-Math.copySign(turn,change));
+        double rotation;
+        if(ordinary&&Math.abs(change-1.5)<.01)rotation=first.rotation();
+        else if(focused&&Math.abs(Math.abs(change)-turn)<=.01)rotation=last.rotation()-Math.copySign(turn,change);
+        else return animation;
+        var aligned=last.withRotation(rotation);
         return new ResourceScript.Animation(animation.loop(),List.of(first,aligned),animation.warnings());
     }
 
@@ -109,7 +134,7 @@ final class Act1GunnerCast {
                 clip(paths.get(4),"裂口电光",3000,click,punch,gateX,0),
                 clip(paths.get(2),"盖波加拳击",3100,punch,punch+360,gateX,0),
                 clip(paths.get(5),"拳击光效",3200,punch,-1,gateX,0)
-        ),null,"使用技能状态 30、角色动作及对象 22228；裂口相对位置、停顿和拳击阶段为离线预览");
+        ),null,"使用技能状态 30、角色动作及对象 22228；裂口相对位置、停顿和拳击阶段为离线预览",-1);
     }
 
     private static Clip clip(String path,String label,int layer,long start,long end,double x,double y){

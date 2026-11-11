@@ -24,13 +24,23 @@ public final class GamePreview {
     private final CharacterAppearance.Model appearance;
     private final GameItemInfo info;
     private final List<GameEffectRecipes.Effect> effects;
+    private final boolean act1;
     private Rectangle2D bounds;
     private Rectangle2D actorBounds;
     private long cacheBytes,duration;
     private boolean wholeSequence;
     private String unavailableReason="";
     private static final long CACHE_LIMIT=32L*1024*1024;
-    private GamePreview(ScenePreview.SpriteLookup sprites,CharacterAppearance.Model appearance,GameItemInfo info,List<GameEffectRecipes.Effect> effects){this.sprites=sprites;this.appearance=appearance;this.info=info;this.effects=effects;warnings.addAll(appearance.warnings());warnings.addAll(info.warnings());}
+    private GamePreview(ScenePreview.SpriteLookup sprites,CharacterAppearance.Model appearance,GameItemInfo info,
+                        List<GameEffectRecipes.Effect> effects,boolean act1){
+        this.sprites=sprites;
+        this.appearance=appearance;
+        this.info=info;
+        this.effects=effects;
+        this.act1=act1;
+        warnings.addAll(appearance.warnings());
+        warnings.addAll(info.warnings());
+    }
     public static GamePreview load(String path,String text,GameScript.Lookup lookup,Set<String> paths,NpkResources resources,Options options) throws IOException {
         return load(path,text,lookup,paths,new ScenePreview.SpriteLookup(){public NpkResources.Info info(String p,int f)throws IOException{return resources.info(p,f);}public NpkResources.Sprite sprite(String p,int f)throws IOException{return resources.sprite(p,f);}},options);
     }
@@ -58,11 +68,11 @@ public final class GamePreview {
         var appearance=CharacterAppearance.load(path,text,lookup,paths,job,action,options.outfit());
         var choices=new ArrayList<>(GameEffectRecipes.effects(path,text,lookup,options.act1()));
         if(GameEffectRecipes.laser(path,text,options.act1(),false)!=null){choices.add(new GameEffectRecipes.Effect("actor","仅角色动作（不施放）","",path,"动作检查"));choices.add(new GameEffectRecipes.Effect("laser:normal","激光炮 · 普通施放组合","",path,"原生资源组合"));if(GameEffectRecipes.laser(path,text,options.act1(),true,passive)!=null)choices.add(new GameEffectRecipes.Effect("laser:charged","激光炮 · 满蓄力（被动 Lv.1）","",path,"蓄力参数来自同包被动技能 Lv.1"));}
-        var model=new GamePreview(sprites,appearance,GameItemInfo.read(path,text,lookup,options.level()),List.copyOf(choices));
+        var model=new GamePreview(sprites,appearance,GameItemInfo.read(path,text,lookup,options.level()),List.copyOf(choices),options.act1());
         boolean showActor=!skill||actorOnly||laser!=null||cast!=null||!matched.isEmpty();
         long transition=laser!=null?laser.fireAt():cast!=null?cast.changeAt():Long.MAX_VALUE;
         boolean motionOnly=skill&&!matched.isEmpty()&&laser==null&&cast==null;
-        if(showActor)model.addActor(appearance,lookup,0,transition,true,motionOnly?300:0);
+        if(showActor)model.addActor(appearance,lookup,0,transition,true,motionOnly?300:0,cast==null?-1:cast.firstFrameDelay());
         model.actorBounds=model.bounds==null?null:(Rectangle2D)model.bounds.clone();
         if(laser!=null)model.addLaser(path,text,lookup,paths,options,laser,available);
         if(cast!=null)model.addCast(path,text,lookup,paths,options,cast);
@@ -78,7 +88,7 @@ public final class GamePreview {
                     new Act1GunnerCast.Emitter(effect.path(),effect.label(),0,0,0,effect.x(),-effect.y()),lookup);
         }
         model.wholeSequence=skill&&!actorOnly&&(!model.tracks.isEmpty()||!model.particles.isEmpty());
-        if(motionOnly)model.warn("当前播放 CHR 中唯一同名动作，客户端等待切换的长帧缩短为预览停顿");
+        if(motionOnly)model.warn("当前播放 CHR 中唯一同名动作，尚未关联技能特效时序");
         if(skill&&!actorOnly&&model.tracks.isEmpty()&&model.particles.isEmpty()){
             String type=GameScript.flag(GameScript.value(GameScript.fields(text),"type"));
             model.unavailableReason=type.equals("passive")?"此被动技能没有可关联的独立动画":"未找到可播放的技能动画";
@@ -91,18 +101,41 @@ public final class GamePreview {
         return model;
     }
 
-    private void addActor(CharacterAppearance.Model actor,GameScript.Lookup lookup,long start,long end,boolean title,int holdDelay){
+    private void addActor(CharacterAppearance.Model actor,GameScript.Lookup lookup,long start,long end,boolean title,int holdDelay,int firstFrameDelay){
+        List<Integer> poseDelays=act1?actorDelays(actor.bodyAnimation(),lookup,holdDelay,firstFrameDelay):List.of();
         for(var part:actor.parts()){
             boolean isTitle=part.slot().equals("title name");
             if(isTitle&&!title)continue;
-            add(part.animation(),lookup,part.variation(),part.layer(),part.slot(),start,isTitle?Long.MAX_VALUE:end,0,0,false,isTitle?0:holdDelay);
+            add(part.animation(),lookup,part.variation(),part.layer(),part.slot(),start,isTitle?Long.MAX_VALUE:end,
+                    0,0,false,isTitle?0:holdDelay,isTitle?List.of():poseDelays);
+        }
+    }
+
+    /** ACT1 copies body frame delays into the overlapping frames of equipped layers (0x493B70). */
+    private List<Integer> actorDelays(String body,GameScript.Lookup lookup,int holdDelay,int firstFrameDelay){
+        if(body==null)return List.of();
+        try {
+            String text=lookup.read(body);
+            if(text==null)return List.of();
+            var frames=ResourceScript.animation(text).frames();
+            var delays=new ArrayList<Integer>(frames.size());
+            for(int i=0;i<frames.size();i++){
+                int delay=frames.get(i).delay();
+                if(i==0&&firstFrameDelay>=0)delay=firstFrameDelay;
+                else if(holdDelay>0&&delay>=10000)delay=holdDelay;
+                delays.add(delay);
+            }
+            return delays;
+        }catch(IOException|IllegalArgumentException failure){
+            warn("身体动作时钟："+failure.getMessage());
+            return List.of();
         }
     }
 
     private void addCast(String path,String text,GameScript.Lookup lookup,Set<String> paths,Options options,Act1GunnerCast.Cast cast) throws IOException {
         if(!cast.followAction().isEmpty()){
             var fire=CharacterAppearance.load(path,text,lookup,paths,"gunner",cast.followAction(),options.outfit());
-            addActor(fire,lookup,cast.changeAt(),cast.end(),false,0);
+            addActor(fire,lookup,cast.changeAt(),cast.end(),false,0,-1);
         }
         for(var clip:cast.clips())add(clip.path(),lookup,clip.variations(),clip.layer(),clip.label(),
                 clip.start(),clip.end(),clip.x(),clip.y(),false,clip.holdDelay());
@@ -112,7 +145,7 @@ public final class GamePreview {
     private void addLaser(String path,String text,GameScript.Lookup lookup,Set<String> paths,Options options,GameEffectRecipes.Laser laser,Map<String,String> actions) throws IOException {
         String firing=actions.entrySet().stream().filter(e->e.getValue().equalsIgnoreCase("Animation/SubWeaponFrontRapid2.ani")).map(Map.Entry::getKey).findFirst().orElse("waiting motion");
         var fire=CharacterAppearance.load(path,text,lookup,paths,"gunner",firing,options.outfit());
-        for(var part:fire.parts())if(!part.slot().equals("title name"))add(part.animation(),lookup,part.variation(),part.layer(),part.slot(),laser.fireAt(),Long.MAX_VALUE,0,0,false);
+        addActor(fire,lookup,laser.fireAt(),Long.MAX_VALUE,false,0,-1);
         String local="character/gunner/effect/animation/subweapon/laserrifleeffect/";
         String sub="character/gunner/effect/animation/subweapon/";
         for(String suffix:List.of("a","b")) {
@@ -136,6 +169,10 @@ public final class GamePreview {
     }
 
     private void add(String path,GameScript.Lookup lookup,List<Integer> variants,int layer,String label,long start,long end,double x,double y,boolean loop,int holdDelay) {
+        add(path,lookup,variants,layer,label,start,end,x,y,loop,holdDelay,List.of());
+    }
+
+    private void add(String path,GameScript.Lookup lookup,List<Integer> variants,int layer,String label,long start,long end,double x,double y,boolean loop,int holdDelay,List<Integer> poseDelays) {
         try {
             if(end>=0&&end<=start)return;
             if(tracks.size()>=256)throw new IOException("组合轨道超过 256 个");String text=lookup.read(path);if(text==null)throw new IOException("找不到 ANI："+path);
@@ -143,7 +180,8 @@ public final class GamePreview {
             int[] parameters=variants.stream().mapToInt(Integer::intValue).toArray();
             for(var frame:parsed.frames()){
                 if(!frame.image().isEmpty())frame=frame.withImage(NpkResources.substitute(frame.image(),parameters));
-                if(holdDelay>0&&frame.delay()>=10000)frame=frame.withDelay(holdDelay);
+                if(frames.size()<poseDelays.size())frame=frame.withDelay(poseDelays.get(frames.size()));
+                else if(holdDelay>0&&frame.delay()>=10000)frame=frame.withDelay(holdDelay);
                 frames.add(frame);
             }
             var animation=new ResourceScript.Animation(parsed.loop(),List.copyOf(frames),parsed.warnings());var timeline=new AnimationTimeline(animation);
@@ -224,7 +262,7 @@ public final class GamePreview {
         }catch(IOException|IllegalArgumentException failure){warn(emitter.label()+"："+failure.getMessage());}
     }
 
-    private static ResourceScript.Animation particleAnimation(String owner,ParticleScript.ObjectRef ref,boolean passive,GameScript.Lookup lookup) throws IOException {
+    private ResourceScript.Animation particleAnimation(String owner,ParticleScript.ObjectRef ref,boolean passive,GameScript.Lookup lookup) throws IOException {
         String reference=ref.path();
         if(passive){
             String object=GameEffectRecipes.passiveObject(lookup,ref.index());
@@ -236,7 +274,8 @@ public final class GamePreview {
             return new ResourceScript.Animation(false,List.of(ResourceScript.Frame.still(reference,ref.index())),List.of());
         String path=GameScript.resolve(owner,reference,lookup);
         if(path==null||!path.endsWith(".ani"))throw new IOException("找不到粒子动画："+reference);
-        return Act1GunnerCast.particleVisual(owner,path,ResourceScript.animation(lookup.read(path)));
+        var animation=ResourceScript.animation(lookup.read(path));
+        return act1?Act1GunnerCast.particleVisual(owner,path,animation):animation;
     }
 
     private PreviewRenderer.Prepared prepare(ResourceScript.Frame frame) throws IOException {
@@ -270,9 +309,14 @@ public final class GamePreview {
             long local=particleTime-track.start();
             long length=track.end()-track.start();
             if(local<0)continue;
-            if(repeatSequence&&!wholeSequence)local%=length;
+            long cycle=repeatSequence&&wholeSequence?time/duration:0;
+            if(repeatSequence&&!wholeSequence){
+                cycle=local/length;
+                local%=length;
+            }
             if(local>=length)continue;
-            var sample=track.timeline().sample(local,mirrored?-track.x():track.x(),track.y(),track.z(),mirrored);
+            long variation=act1&&track.path().equals(Act1GunnerCast.ORDINARY_FLAME)?cycle:0;
+            var sample=track.timeline().sample(local,mirrored?-track.x():track.x(),track.y(),track.z(),mirrored,variation);
             if(sample.limited())warn(track.path()+"：活动粒子超出预览上限");
             for(var particle:sample.particles()){
                 if(draws.size()>=512){warn("当前帧的粒子绘制超过 512 层");break;}
