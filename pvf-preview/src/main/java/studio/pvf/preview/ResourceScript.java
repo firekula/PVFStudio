@@ -201,6 +201,7 @@ public final class ResourceScript {
         public static Frame still(String path, int index) { return new Frame(path, index, 0, 0, 1, 1, 0, 255, 255, 255, 255, 100, 1); }
         public Frame withImage(String path) { return new Frame(path, index, x, y, scaleX, scaleY, rotation, r, g, b, a, delay, line, effect, interpolation); }
         Frame withDelay(int milliseconds) { return new Frame(image,index,x,y,scaleX,scaleY,rotation,r,g,b,a,milliseconds,line,effect,interpolation); }
+        Frame withRotation(double radians) { return new Frame(image,index,x,y,scaleX,scaleY,radians,r,g,b,a,delay,line,effect,interpolation); }
     }
     private static final class Builder {
         String image = ""; int index, r = 255, g = 255, b = 255, a = 255, delay = 100;

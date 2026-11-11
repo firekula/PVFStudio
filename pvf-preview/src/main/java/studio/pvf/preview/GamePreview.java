@@ -236,7 +236,7 @@ public final class GamePreview {
             return new ResourceScript.Animation(false,List.of(ResourceScript.Frame.still(reference,ref.index())),List.of());
         String path=GameScript.resolve(owner,reference,lookup);
         if(path==null||!path.endsWith(".ani"))throw new IOException("找不到粒子动画："+reference);
-        return ResourceScript.animation(lookup.read(path));
+        return Act1GunnerCast.particleVisual(owner,path,ResourceScript.animation(lookup.read(path)));
     }
 
     private PreviewRenderer.Prepared prepare(ResourceScript.Frame frame) throws IOException {

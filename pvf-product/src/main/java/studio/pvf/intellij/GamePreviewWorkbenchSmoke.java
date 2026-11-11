@@ -48,7 +48,18 @@ final class GamePreviewWorkbenchSmoke {
             checkAutomaticSkill(frame,game,output,"gaebolgpunch",1800,"盖波加拳击");
             checkAutomaticSkill(frame,game,output,"gatling",1400,"格林机枪弹道");
             checkAutomaticSkill(frame,game,output,"flamethrower",1400,"火焰喷射器火焰");
-            checkAutomaticSkill(frame,game,output,"flamethrowerboost",1400,"烈焰强击火焰");
+            checkAutomaticSkill(frame,game,output,"flamethrowerboost",2876,"烈焰强击火焰");
+            edt(()->{
+                var jet=rendered(game).draws().stream().filter(draw->draw.label().equals("烈焰强击火焰")
+                        &&draw.prepared().source().requestedFrame()==0).toList();
+                check(!jet.isEmpty(),"Focused flame has no visible jet at 2876 ms");
+                for(var draw:jet){
+                    var transform=draw.prepared().transform();
+                    double angle=Math.atan2(transform.getShearY(),transform.getScaleX());
+                    check(Math.abs(angle)<.01,"Focused flame jet rotates away from its muzzle");
+                }
+                return null;
+            });
             checkAutomaticSkill(frame,game,output,"fastknee",240,"body");
             edt(()->{frame.openEntry("skill/gunner/armormasteryleather.skl");return null;});
             await(()->ready(frame)&&current(game)!=null&&!current(game).unavailableReason().isEmpty());

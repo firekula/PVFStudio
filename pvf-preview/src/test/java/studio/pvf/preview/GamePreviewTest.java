@@ -8,6 +8,45 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GamePreviewTest {
+    @Test void focusedFlameKeepsItsJetPointingOutOfTheMuzzle() throws Exception {
+        var files=data();
+        String particle="character/gunner/effect/particle/flamethrowerboost.ptl";
+        String jet="character/gunner/effect/animation/flamethrowerboost1.ani";
+        files.put(particle,"""
+                [life time] 600
+                [creation frequency] -1
+                [maximum create number] 2
+                [how to create object] `[in order]`
+                [object type] `[animation]`
+                [object]
+                `../Animation/FlameThrowerBoost1.ani` -1
+                `../Animation/FlameThrowerBoost2.ani` -1
+                [/object]
+                """);
+        files.put(jet,"""
+                [FRAME000] [IMAGE] `jet.img` 0 [IMAGE RATE] 1 0.01 [IMAGE ROTATE] 0 [INTERPOLATION] 1 [DELAY] 500
+                [FRAME001] [IMAGE] `jet.img` 0 [IMAGE RATE] 2 0.3 [IMAGE ROTATE] 6.28 [DELAY] 0
+                """);
+        files.put("character/gunner/effect/animation/flamethrowerboost2.ani","""
+                [FRAME000] [IMAGE] `plume.img` 0 [IMAGE ROTATE] 0 [INTERPOLATION] 1 [DELAY] 500
+                [FRAME001] [IMAGE] `plume.img` 0 [IMAGE ROTATE] 1.5 [DELAY] 100
+                """);
+        var preview=GamePreview.load("skill/gunner/test.skl","[particle] `"+particle+"`",
+                files::get,files.keySet(),new Pixels(),GamePreview.Options.defaults());
+        for(long time:new long[]{125,250,375}){
+            var draw=preview.render(time,false).draws().stream()
+                    .filter(d->d.prepared().source().img().equals("jet.img")).findFirst().orElseThrow();
+            var transform=draw.prepared().transform();
+            assertTrue(transform.getScaleX()>0);
+            assertEquals(0,transform.getShearY(),.01,"Jet tilted at "+time+" ms");
+        }
+        var plume=preview.render(250,false).draws().stream()
+                .filter(d->d.prepared().source().img().equals("plume.img")).findFirst().orElseThrow();
+        assertEquals(Math.sin(.75),plume.prepared().transform().getShearY(),.001);
+        var original=new AnimationTimeline(ResourceScript.animation(files.get(jet)));
+        assertEquals(3.14,original.sample(250,false).rotation(),.001);
+    }
+
     @Test void skillDefaultsToItsExactCharacterMotionAndLeavesUnresolvedSkillsBlank() throws Exception {
         var data=data();
         data.put("character/gunner/gunner.chr","[waiting motion] `body.ani` [etc motion] `FastKnee.ani`");

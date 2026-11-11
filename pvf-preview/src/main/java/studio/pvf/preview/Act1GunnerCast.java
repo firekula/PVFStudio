@@ -9,6 +9,8 @@ import java.util.Map;
 final class Act1GunnerCast {
     private static final String GUNNER = "character/gunner/";
     private static final String EFFECT = GUNNER + "effect/animation/";
+    private static final String FOCUSED_FLAME = GUNNER + "effect/particle/flamethrowerboost.ptl";
+    private static final String FOCUSED_JET = EFFECT + "flamethrowerboost1.ani";
 
     record Clip(String path,String label,List<Integer> variations,int layer,long start,long end,double x,double y,int holdDelay) {}
     record Emitter(String path,String label,long start,long emitFor,double frequency,double x,double z) {}
@@ -60,11 +62,23 @@ final class Act1GunnerCast {
             clips.add(clip(EFFECT+"gatlinggunoverheat.ani","格林机枪过热",2700,stop,end,0,0));
         }
         String emitter=gatling?GUNNER+"particle/subweapon/gatlingfront.ptl":
-                GUNNER+"effect/particle/flamethrower"+(boost?"boost":"")+".ptl";
+                boost?FOCUSED_FLAME:GUNNER+"effect/particle/flamethrower.ptl";
         String label=gatling?"格林机枪弹道":boost?"烈焰强击火焰":"火焰喷射器火焰";
         return new Cast(ready,fire,startup,end,List.copyOf(clips),
                 new Emitter(emitter,label,startup,fireFor,rate,gatling?150:141,88),
                 "施放按当前等级最大持续时间预览；枪口粒子使用客户端 PTL，未执行命中和手动终止");
+    }
+
+    /** Keep the focused jet aimed at the muzzle through the source's nearly equivalent 0/6.28 angles. */
+    static ResourceScript.Animation particleVisual(String emitter,String path,ResourceScript.Animation animation) {
+        if(!emitter.equals(FOCUSED_FLAME)||!path.equals(FOCUSED_JET)||animation.frames().size()!=2)return animation;
+        var first=animation.frames().get(0);
+        var last=animation.frames().get(1);
+        double turn=2*Math.PI;
+        double change=last.rotation()-first.rotation();
+        if(!first.interpolation()||Math.abs(Math.abs(change)-turn)>.01)return animation;
+        var aligned=last.withRotation(last.rotation()-Math.copySign(turn,change));
+        return new ResourceScript.Animation(animation.loop(),List.of(first,aligned),animation.warnings());
     }
 
     private static Cast gaebolg(GameScript.Lookup lookup,Map<String,String> actions) throws IOException {

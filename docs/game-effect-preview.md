@@ -1,4 +1,4 @@
-# 装备、装扮和技能效果预览（0.15.1 本地开发版）
+# 装备、装扮和技能效果预览（0.15.2 本地开发版）
 
 ## 操作
 
@@ -34,6 +34,8 @@
 
 本版不执行游戏战斗系统。资源能够解析、离线图像能够绘制和完成原生动态对照属于不同证据，验收报告分别记录。
 
+聚焦喷火器的条状火焰在技能画布按近整圈端点的短弧过渡。独立 ANI 检查仍显示配置中记录的转角。
+
 ## 原生依据
 
 本地 ACT1 EXE SHA-256：`6b4850beaf67ec61adb04ae17f119f16278dd05e97b8ffca871a9bdb547de0d5`。在已有 IDB 的独立副本中检查，原 EXE、原 IDB、PVF 和 NPK 保持只读。原始反编译及截图只留在忽略的 build 目录，不随源码/便携包分发。
@@ -57,7 +59,7 @@
 $env:JAVA_HOME = 'C:\path\to\jdk-25'
 .\gradlew.bat check -PwithIntellij=true :pvf-product:test :pvf-product:assembleProduct
 python -B -m unittest discover -s validation -p 'test_*.py'
-python -B tools/check_product.py --product pvf-product/build/product/PVFStudio-0.15.1 --archive 'C:\Game\Script.pvf' --npk 'C:\Game\ImagePacks2' --game-preview
+python -B tools/check_product.py --product pvf-product/build/product/PVFStudio-0.15.2 --archive 'C:\Game\Script.pvf' --npk 'C:\Game\ImagePacks2' --game-preview
 ```
 
 `validation/GamePreviewAudit.java` 使用相同的解析和渲染器，生成实际资源的五职业及代表物品/技能帧；要求显式输入和新的输出目录。便携构建继续使用 `tools/build-release.ps1 -ZipOnly`，不包括游戏资源。
