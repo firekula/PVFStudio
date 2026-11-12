@@ -103,6 +103,22 @@ public final class ResourceScript {
                             if (frame.delay < 0) throw error(section, "DELAY 不能为负数");
                         }
                         case "interpolation" -> frame.interpolation = number(section, 0) != 0;
+                        case "damage type" -> {
+                            String type = value(section, 0).trim().toUpperCase(Locale.ROOT);
+                            if (type.startsWith("[") && type.endsWith("]")) type = type.substring(1, type.length() - 1).trim();
+                            frame.damageType = switch (type) {
+                                case "SUPERARMOR" -> CombatFrame.DamageType.SUPERARMOR;
+                                case "UNBREAKABLE" -> CombatFrame.DamageType.UNBREAKABLE;
+                                default -> CombatFrame.DamageType.NORMAL;
+                            };
+                        }
+                        case "damage box", "attack box" -> {
+                            try {
+                                frame.addBox(section.tag().equals("attack box"), combatBox(section));
+                            } catch (IOException malformed) {
+                                if (unsupported.add("invalid " + section.tag())) warnings.add(malformed.getMessage());
+                            }
+                        }
                         case "flip type" -> {
                             String type = value(section, 0).toUpperCase(Locale.ROOT);
                             if (!List.of("NONE", "HORIZON", "VERTICAL", "ALL").contains(type)) throw error(section, "未知翻转类型：" + type);
@@ -111,6 +127,7 @@ public final class ResourceScript {
                         }
                         case "graphic effect" -> {
                             frame.effect = value(section, 0).toUpperCase(Locale.ROOT);
+                            if (frame.effect.equals("NORMAL")) frame.effect = "NONE";
                             if (!frame.effect.equals("NONE") && !frame.effect.equals("LINEARDODGE"))
                                 warnings.add("第 " + section.line() + " 行：暂未模拟 GRAPHIC EFFECT " + value(section, 0));
                         }
@@ -166,6 +183,12 @@ public final class ResourceScript {
         if (value < 0 || value > 255) throw error(section, "RGBA 应为 0–255");
         return value;
     }
+    private static CombatFrame.Box combatBox(Section section) throws IOException {
+        int x = integer(section, 0), y = integer(section, 1), z = integer(section, 2);
+        int width = integer(section, 3), depth = integer(section, 4), height = integer(section, 5);
+        if (width < 0 || depth < 0 || height < 0) throw error(section, "判定框尺寸不能为负数");
+        return new CombatFrame.Box(x, y, z, width, depth, height);
+    }
     private static IOException error(Section section, String message) {
         return new IOException("第 " + section.line() + " 行 [" + section.tag() + "]：" + message);
     }
@@ -189,7 +212,12 @@ public final class ResourceScript {
     }
     public record Animation(boolean loop, List<Frame> frames, List<String> warnings) {}
     public record Frame(String image, int index, double x, double y, double scaleX, double scaleY,
-                        double rotation, int r, int g, int b, int a, int delay, int line, String effect, boolean interpolation) {
+                        double rotation, int r, int g, int b, int a, int delay, int line, String effect,
+                        boolean interpolation, CombatFrame combat) {
+        public Frame(String image, int index, double x, double y, double scaleX, double scaleY,
+                     double rotation, int r, int g, int b, int a, int delay, int line, String effect, boolean interpolation) {
+            this(image, index, x, y, scaleX, scaleY, rotation, r, g, b, a, delay, line, effect, interpolation, CombatFrame.NORMAL);
+        }
         public Frame(String image, int index, double x, double y, double scaleX, double scaleY,
                      double rotation, int r, int g, int b, int a, int delay, int line, String effect) {
             this(image, index, x, y, scaleX, scaleY, rotation, r, g, b, a, delay, line, effect, false);
@@ -199,15 +227,48 @@ public final class ResourceScript {
             this(image, index, x, y, scaleX, scaleY, rotation, r, g, b, a, delay, line, "NONE");
         }
         public static Frame still(String path, int index) { return new Frame(path, index, 0, 0, 1, 1, 0, 255, 255, 255, 255, 100, 1); }
-        public Frame withImage(String path) { return new Frame(path, index, x, y, scaleX, scaleY, rotation, r, g, b, a, delay, line, effect, interpolation); }
-        Frame withDelay(int milliseconds) { return new Frame(image,index,x,y,scaleX,scaleY,rotation,r,g,b,a,milliseconds,line,effect,interpolation); }
-        Frame withRotation(double radians) { return new Frame(image,index,x,y,scaleX,scaleY,radians,r,g,b,a,delay,line,effect,interpolation); }
+        public Frame withImage(String path) { return new Frame(path, index, x, y, scaleX, scaleY, rotation, r, g, b, a, delay, line, effect, interpolation, combat); }
+        Frame scaled(double rate) { return scaled(rate,rate); }
+        Frame scaled(double horizontal,double vertical) {
+            return new Frame(image,index,x,y,scaleX*horizontal,scaleY*vertical,rotation,r,g,b,a,delay,line,effect,interpolation,combat);
+        }
+        Frame expanded(double delta) {
+            return delta == 0 ? this : new Frame(image,index,x,y,scaleX+delta,scaleY+delta,rotation,
+                    r,g,b,a,delay,line,effect,interpolation,combat);
+        }
+        Frame withIndex(int spriteIndex) { return new Frame(image,spriteIndex,x,y,scaleX,scaleY,rotation,r,g,b,a,delay,line,effect,interpolation,combat); }
+        Frame withDelay(int milliseconds) { return new Frame(image,index,x,y,scaleX,scaleY,rotation,r,g,b,a,milliseconds,line,effect,interpolation,combat); }
+        Frame translated(double dx,double dy) { return new Frame(image,index,x+dx,y+dy,scaleX,scaleY,rotation,r,g,b,a,delay,line,effect,interpolation,combat); }
+        Frame withRotation(double radians) { return new Frame(image,index,x,y,scaleX,scaleY,radians,r,g,b,a,delay,line,effect,interpolation,combat); }
+        Frame withoutAttack() {
+            return combat.attack().isEmpty() ? this : new Frame(image,index,x,y,scaleX,scaleY,rotation,r,g,b,a,delay,
+                    line,effect,interpolation,new CombatFrame(combat.damageType(),combat.hurt(),List.of()));
+        }
+        Frame withRgb(int red, int green, int blue) {
+            return new Frame(image,index,x,y,scaleX,scaleY,rotation,red,green,blue,a,delay,line,effect,interpolation,combat);
+        }
     }
     private static final class Builder {
         String image = ""; int index, r = 255, g = 255, b = 255, a = 255, delay = 100;
         String effect = "NONE"; boolean interpolation, flipX, flipY;
+        CombatFrame.DamageType damageType = CombatFrame.DamageType.NORMAL;
+        List<CombatFrame.Box> hurt, attack;
         double x, y, scaleX = 1, scaleY = 1, rotation; final int line;
         Builder(int line) { this.line = line; }
-        Frame build() { return new Frame(image, index, x, y, flipX ? -scaleX : scaleX, flipY ? -scaleY : scaleY, rotation, r, g, b, a, delay, line, effect, interpolation); }
+        void addBox(boolean attacking, CombatFrame.Box box) {
+            var boxes = attacking ? attack : hurt;
+            if (boxes == null) {
+                boxes = new ArrayList<>();
+                if (attacking) attack = boxes;
+                else hurt = boxes;
+            }
+            if (boxes.size() < 64) boxes.add(box);
+        }
+        Frame build() {
+            var combat = hurt == null && attack == null && damageType == CombatFrame.DamageType.NORMAL ? CombatFrame.NORMAL
+                    : new CombatFrame(damageType, hurt == null ? List.of() : hurt, attack == null ? List.of() : attack);
+            return new Frame(image, index, x, y, flipX ? -scaleX : scaleX, flipY ? -scaleY : scaleY,
+                    rotation, r, g, b, a, delay, line, effect, interpolation, combat);
+        }
     }
 }

@@ -21,10 +21,10 @@ class CharacterAppearanceTest {
     @Test void expandsBothIncludeLayersWithIndependentVariationAndNativeOwnerPaths() throws Exception {
         var data=fixture();var path="equipment/character/gunner/avatar/coat/test.equ";
         var model=CharacterAppearance.load(path,data.get(path),data::get,data.keySet(),"gunner","waiting motion",Map.of());
-        assertEquals(List.of(900,1000,1800),model.parts().stream().map(CharacterAppearance.Part::layer).toList());
-        assertEquals("equipment/character/gunner/avatar/coat/coat_b/stay.ani",model.parts().get(0).animation());
+        assertEquals(List.of(0,900,1800),model.parts().stream().map(CharacterAppearance.Part::layer).toList());
+        assertEquals("equipment/character/gunner/avatar/coat/coat_b/stay.ani",model.parts().get(1).animation());
         assertEquals(List.of(41,2),model.parts().get(2).variation());
-        assertEquals("character/gunner/animation/stay.ani",model.parts().get(1).animation());
+        assertEquals("character/gunner/animation/stay.ani",model.parts().get(0).animation());
         assertTrue(model.actions().containsKey("move motion"));assertTrue(model.warnings().isEmpty());
     }
     @Test void selectedSlotReplacesDefaultAndSkinColorChangesBodyParameter() throws Exception {
@@ -52,10 +52,21 @@ class CharacterAppearanceTest {
         var model=CharacterAppearance.load(path,data.get(path),data::get,data.keySet(),"gunner","waiting motion",Map.of());
         assertTrue(model.parts().stream().anyMatch(p->p.layer()==1800&&p.animation().endsWith("coat_a/stay.ani")));assertFalse(model.warnings().isEmpty());
     }
-    @Test void hideLayerAffectsOtherSlotsButNotItsOwnAttachment() throws Exception {
+    @Test void hideLayerAffectsOtherAttachmentsButKeepsItsOwnLayersAndBaseBody() throws Exception {
         var data=fixture();var path="equipment/character/gunner/avatar/coat/test.equ";
-        data.put(path,data.get(path)+" [hide layer] 1000");
+        data.put("equipment/character/gunner/avatar/hair/ahair_default.equ",
+                "[equipment type] `[hair avatar]` [layer] 1800 [waiting motion] `hair.ani`");
+        data.put(path,data.get(path)+" [hide layer] 1800 0");
         var model=CharacterAppearance.load(path,data.get(path),data::get,data.keySet(),"gunner","waiting motion",Map.of());
-        assertEquals(2,model.parts().size());assertFalse(model.parts().stream().anyMatch(p->p.slot().equals("body")));
+        assertEquals(List.of("body","coat avatar","coat avatar"),model.parts().stream().map(CharacterAppearance.Part::slot).toList());
+    }
+    @Test void keepsSignedEquipmentLayersAndEveryLayerSectionForTheCurrentPose() throws Exception {
+        var data=fixture();var path="equipment/character/gunner/avatar/coat/test.equ";
+        String equip="[equipment type] `[coat avatar]` [layer] -400 [waiting motion] `back.ani` "
+                +"[layer] 500 [waiting motion] `front.ani` [layer] 700 [move motion] `move.ani`";
+        var model=CharacterAppearance.load(path,equip,data::get,data.keySet(),"gunner","waiting motion",Map.of());
+        assertEquals(List.of(-400,0,500),model.parts().stream().map(CharacterAppearance.Part::layer).toList());
+        assertTrue(model.parts().get(0).animation().endsWith("/back.ani"));
+        assertTrue(model.parts().get(2).animation().endsWith("/front.ani"));
     }
 }

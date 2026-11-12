@@ -83,4 +83,30 @@ class ResourceScriptTest {
         assertEquals(1, animation.warnings().size()); assertTrue(animation.frames().get(0).interpolation());
         assertTrue(animation.frames().get(1).image().isEmpty());
     }
+
+    @Test void normalGraphicEffectUsesTheDefaultBlend() throws Exception {
+        var animation=ResourceScript.animation("[FRAME000] [IMAGE] `ice.img` 0 [GRAPHIC EFFECT] `NORMAL` [DELAY] 80");
+        assertEquals("NONE",animation.frames().get(0).effect());
+        assertTrue(animation.warnings().isEmpty());
+    }
+
+    @Test void combatBoxesAndDamageTypeAreDiscreteEvenWhenTheImageInterpolates() throws Exception {
+        var animation = ResourceScript.animation("""
+                [FRAME000] [IMAGE] `a.img` 0 [INTERPOLATION] 1 [DELAY] 40
+                [DAMAGE TYPE] `[SUPERARMOR]`
+                [DAMAGE BOX] -10 -5 0 25 10 100
+                [DAMAGE BOX] 8 -7 30 15 14 88
+                [ATTACK BOX] 6 -10 35 39 20 38
+                [FRAME001] [IMAGE] `a.img` 1 [DELAY] 60
+                [DAMAGE TYPE] `UNBREAKABLE`
+                """);
+        var timeline = new AnimationTimeline(animation);
+        var sampled = timeline.sample(39, false).withImage("other.img").withDelay(20).scaled(2);
+        assertEquals(CombatFrame.DamageType.SUPERARMOR, sampled.combat().damageType());
+        assertEquals(List.of(new CombatFrame.Box(-10, -5, 0, 25, 10, 100),
+                new CombatFrame.Box(8, -7, 30, 15, 14, 88)), sampled.combat().hurt());
+        assertEquals(List.of(new CombatFrame.Box(6, -10, 35, 39, 20, 38)), sampled.combat().attack());
+        assertEquals(CombatFrame.DamageType.UNBREAKABLE, timeline.sample(40, false).combat().damageType());
+        assertTrue(timeline.sample(40, false).combat().attack().isEmpty());
+    }
 }

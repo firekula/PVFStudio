@@ -97,7 +97,12 @@ final class PvfStudioFrame extends JFrame {
     private JSplitPane editorSplit;
     private int previewDivider = 540;
     private final JTextField pathSearch = new JTextField();
-    private final JTree tree = new JTree(new DefaultMutableTreeNode("请打开 Script.pvf"));
+    private final JTree tree = new JTree(new DefaultMutableTreeNode("请打开 Script.pvf")) {
+        @Override public String getToolTipText(MouseEvent event) {
+            var row=navigationTreeRow(event.getPoint());
+            return row!=null&&NavigationGameTooltip.supported(row.path())?null:super.getToolTipText(event);
+        }
+    };
     private final DefaultListModel<String> searchResults = new DefaultListModel<>();
     private final JList<String> resultList = new JList<>(searchResults);
     private final JPanel navigation = new JPanel(new CardLayout());
@@ -116,6 +121,7 @@ final class PvfStudioFrame extends JFrame {
         return false;
     };
     private final ResourcePreviewPanel preview = new ResourcePreviewPanel();
+    private final NavigationGameTooltip navigationHover = new NavigationGameTooltip(this::hoverSource);
     private final GamePreviewPanel gamePreview = new GamePreviewPanel(preview::resources,preview::chooseResources);
     private final JPanel previewDock = new JPanel(new BorderLayout());
     private Session previewOwner;
@@ -141,7 +147,7 @@ final class PvfStudioFrame extends JFrame {
     PvfStudioFrame(Path draftsRoot, boolean exitOnClose) {
         super("PVF Studio");
         preview.onViewChanged(this::scheduleEditorStateSave);
-        preview.onResourcesChanged(() -> { sessions.values().stream().filter(tab -> tab.mapPanel!=null).forEach(tab -> tab.mapPanel.browser().setThumbnailLoader((asset,result) -> preview.thumbnail(sceneSource(tab),asset,result))); if(gamePreview.isShowing())gamePreview.resourcesChanged(); });
+        preview.onResourcesChanged(() -> { sessions.values().stream().filter(tab -> tab.mapPanel!=null).forEach(tab -> tab.mapPanel.browser().setThumbnailLoader((asset,result) -> preview.thumbnail(sceneSource(tab),asset,result))); if(gamePreview.isShowing())gamePreview.resourcesChanged(); navigationHover.refresh(); });
         com.intellij.ui.AppUIUtilKt.updateAppWindowIcon(this);
         setGlassPane(new com.intellij.openapi.wm.impl.IdeGlassPaneImpl(getRootPane(), false));
         this.draftsRoot = draftsRoot; this.exitOnClose = exitOnClose;
@@ -163,6 +169,17 @@ final class PvfStudioFrame extends JFrame {
         JScrollPane resultScroll = new JScrollPane(resultList);
         resultScroll.getViewport().setBackground(tree.getBackground());
         navigation.add(resultScroll, "results");
+        navigationHover.install(tree,this::navigationTreeRow);
+        navigationHover.install(resultList,point -> {
+            int index=resultList.locationToIndex(point);
+            if(index<0)return null;
+            Rectangle bounds=resultList.getCellBounds(index,index);
+            return bounds!=null&&bounds.contains(point)
+                    ?new NavigationGameTooltip.Row(searchResults.get(index),bounds):null;
+        });
+        addWindowFocusListener(new WindowAdapter(){
+            @Override public void windowLostFocus(WindowEvent event){navigationHover.dismiss();}
+        });
         left.add(navigation);
         previewDock.add(preview);
         editorSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tabs, previewDock);
@@ -174,9 +191,10 @@ final class PvfStudioFrame extends JFrame {
         tree.setRootVisible(true);
         tree.addTreeWillExpandListener(new TreeWillExpandListener() {
             public void treeWillExpand(TreeExpansionEvent event) {
+                navigationHover.dismiss();
                 loadChildren((DefaultMutableTreeNode) event.getPath().getLastPathComponent());
             }
-            public void treeWillCollapse(TreeExpansionEvent event) {}
+            public void treeWillCollapse(TreeExpansionEvent event) {navigationHover.dismiss();}
         });
         tree.addMouseListener(new MouseAdapter() {
             public void mouseClicked(MouseEvent event) {
@@ -894,6 +912,7 @@ final class PvfStudioFrame extends JFrame {
     }
 
     private void updatePathSearch() {
+        navigationHover.dismiss();
         String query = pathSearch.getText().toLowerCase(Locale.ROOT).trim();
         long version = ++searchVersion;
         CardLayout layout = (CardLayout) navigation.getLayout();
@@ -906,6 +925,7 @@ final class PvfStudioFrame extends JFrame {
                     .filter(path -> path.contains(query)).sorted().toList();
             ApplicationManager.getApplication().invokeLater(() -> {
                 if (version != searchVersion || workspace != current) return;
+                navigationHover.dismiss();
                 searchResults.clear(); searchResults.addAll(matches);
                 layout.show(navigation, "results");
                 status.setText("路径搜索：" + matches.size() + " 个结果");
@@ -1431,6 +1451,28 @@ final class PvfStudioFrame extends JFrame {
         });
     }
 
+    private NavigationGameTooltip.Row navigationTreeRow(Point point) {
+        var path=tree.getClosestPathForLocation(point.x,point.y);
+        if(path==null||!(path.getLastPathComponent() instanceof DefaultMutableTreeNode node)
+                ||!(node.getUserObject() instanceof Item item)||item.directory())return null;
+        Rectangle bounds=tree.getPathBounds(path);
+        return bounds!=null&&point.y>=bounds.y&&point.y<bounds.y+bounds.height
+                ?new NavigationGameTooltip.Row(item.path(),bounds):null;
+    }
+
+    private NavigationGameTooltip.Source hoverSource(String entry) {
+        var current=workspace;
+        if(current==null||busy)return null;
+        var session=sessions.get(entry);
+        Charset charset=session==null?selectedCharset():session.charset;
+        Map<String,String> editors=new HashMap<>();
+        sessions.forEach((path,openTab) -> editors.put(path,openTab.editor.getDocument().getText()));
+        return new NavigationGameTooltip.Source(path -> {
+            String text=editors.get(path);
+            return text!=null?text:current.contains(path)?current.readText(path,charset):null;
+        },preview.resources());
+    }
+
     private ResourcePreviewPanel.Source sceneSource(Session selected) {
         if(workspace==null||selected.editor.isDisposed())return null;
         var current=workspace; Map<String,String> editors=new HashMap<>();
@@ -1575,6 +1617,7 @@ final class PvfStudioFrame extends JFrame {
         io.shutdown(); sceneWorker.shutdownNow(); dispose(); if (exitOnClose) ApplicationManager.getApplication().exit();
     }
     @Override public void dispose() {
+        navigationHover.close();
         gamePreview.close();
         taskProgress.clear();
         KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(tabKeyDispatcher);
@@ -1582,6 +1625,7 @@ final class PvfStudioFrame extends JFrame {
     }
 
     private void releaseEditors() {
+        navigationHover.dismiss();
         previewOwner=null;
         sessionSave.stop();
         previewRefresh.stop(); preview.setSource(null);
@@ -1622,7 +1666,7 @@ final class PvfStudioFrame extends JFrame {
     }
 
     private <T> void runTask(String label, ProgressTask<T> task, Consumer<T> success, Runnable onFailure) {
-        busy = true; status.setText(label); updateButtons();
+        busy = true; navigationHover.dismiss(); status.setText(label); updateButtons();
         TaskProgress.Ticket progress = taskProgress.start(label);
         io.execute(() -> {
             try {

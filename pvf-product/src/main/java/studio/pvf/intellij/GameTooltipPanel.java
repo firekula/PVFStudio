@@ -1,6 +1,8 @@
 package studio.pvf.intellij;
 
 import studio.pvf.preview.GameItemInfo;
+import studio.pvf.preview.NpkResources;
+import studio.pvf.preview.ResourceScript;
 
 import javax.swing.JPanel;
 import javax.swing.Scrollable;
@@ -12,6 +14,8 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,11 +28,13 @@ final class GameTooltipPanel extends JPanel implements Scrollable {
     private static final int PADDING=7;
     static final int DISPLAY_FONT_SIZE=16;
     private static final int LINE_HEIGHT=17;
+    private static final int ICON_SIZE=28;
     private static final Color NORMAL=new Color(250,250,250);
     private static final Color BONUS=new Color(106,221,249);
     private static final Color FLAVOR=new Color(177,177,177);
 
     private GameItemInfo item;
+    private BufferedImage icon;
     private String status="";
     private Card layout;
 
@@ -41,7 +47,12 @@ final class GameTooltipPanel extends JPanel implements Scrollable {
     }
 
     void showItem(GameItemInfo value) {
+        showItem(value,null);
+    }
+
+    void showItem(GameItemInfo value,BufferedImage image) {
         item=value;
+        icon=image;
         status="";
         getAccessibleContext().setAccessibleName(value.tooltip().heading());
         invalidateCard();
@@ -49,12 +60,21 @@ final class GameTooltipPanel extends JPanel implements Scrollable {
 
     void showStatus(String value) {
         item=null;
+        icon=null;
         status=value;
         getAccessibleContext().setAccessibleName(value);
         invalidateCard();
     }
 
     GameItemInfo item(){return item;}
+
+    static BufferedImage readIcon(String text,NpkResources resources) throws IOException {
+        if(resources==null)return null;
+        var ref=ResourceScript.references(text).stream()
+                .filter(r -> r.tag().equals("icon")&&!r.animation()&&!r.particle()).findFirst();
+        if(ref.isEmpty())return null;
+        return resources.sprite(ref.get().path(),ref.get().index()).image();
+    }
 
     private void invalidateCard(){
         layout=null;
@@ -72,7 +92,7 @@ final class GameTooltipPanel extends JPanel implements Scrollable {
         if(layout!=null&&layout.width()==width)return layout;
         FontMetrics font=getFontMetrics(getFont());
         var text=new ArrayList<Text>();
-        int y=PADDING+font.getAscent();
+        int y=PADDING+font.getAscent()+(icon==null?0:ICON_SIZE+4);
         int lineWidth=width-2*PADDING;
         if(item==null){
             y=block(text,font,status,PADDING,y,lineWidth,NORMAL);
@@ -164,6 +184,13 @@ final class GameTooltipPanel extends JPanel implements Scrollable {
             g.fillRect(0,0,card.width(),card.height());
             g.setColor(new Color(114,103,91));
             g.drawRect(0,0,card.width()-1,card.height()-1);
+            if(icon!=null){
+                double scale=Math.min(1,(double)ICON_SIZE/Math.max(icon.getWidth(),icon.getHeight()));
+                int width=Math.max(1,(int)Math.round(icon.getWidth()*scale));
+                int height=Math.max(1,(int)Math.round(icon.getHeight()*scale));
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                g.drawImage(icon,PADDING,PADDING,width,height,null);
+            }
             var clip=g.getClipBounds();
             for(var line:card.text()){
                 if(clip!=null&&(line.baseline()+3<clip.y||line.baseline()-LINE_HEIGHT>clip.y+clip.height))continue;

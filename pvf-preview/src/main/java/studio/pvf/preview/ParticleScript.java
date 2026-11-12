@@ -23,6 +23,15 @@ public record ParticleScript(Vec position, List<Axis> axes, double term, String 
                 random,inOrder,passive,layer,objects,warnings);
     }
 
+    ParticleScript scaleMovement(double rate) {
+        if(rate==1)return this;
+        var scaled=axes.stream().map(axis -> new Axis(axis.type(),axis.start()*rate,axis.end()*rate,
+                axis.periodStart()*rate,axis.periodEnd()*rate)).toList();
+        return new ParticleScript(position,scaled,term,changing,gravity,angles,life,landing,alphaStart,alphaEnd,
+                frequency,maximum,createTime,area,areaAngles,rangeType,horizontalRange,verticalRange,
+                random,inOrder,passive,layer,objects,warnings);
+    }
+
     public static ParticleScript parse(String text) throws IOException {
         Vec position = new Vec(0, 0, 0), area = position, angles = position, areaAngles = position;
         String[] types = {"stop", "stop", "stop"}; double[][] values = new double[3][4]; int axis = 0;
@@ -36,7 +45,12 @@ public record ParticleScript(Vec position, List<Axis> axes, double term, String 
                 case "x axis" -> axis = 0;
                 case "y axis" -> axis = 1;
                 case "z axis" -> axis = 2;
-                case "move type" -> types[axis] = flag(s, "stop", "straight line", "sin", "cos");
+                case "move type" -> {
+                    String movement=flag(s,"stop","straight line","sin","cos","keep changing");
+                    // ACT1 Wave Radiation PTLs also put the changing flag in a move-type section.
+                    if(movement.equals("keep changing"))changing=movement;
+                    else types[axis]=movement;
+                }
                 case "move variable 1" -> { values[axis][0] = number(s, 0); values[axis][1] = number(s, 1); }
                 case "move variable 2" -> { values[axis][2] = number(s, 0); values[axis][3] = number(s, 1); }
                 case "changing term" -> term = nonnegative(s);

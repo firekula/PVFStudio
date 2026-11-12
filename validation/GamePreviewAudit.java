@@ -22,7 +22,7 @@ public final class GamePreviewAudit {
    for(String effect:List.of("","passive:23008","passive:48030"))samples.put("suneater"+effect.replace(':','-'),new Sample("equipment/character/gunner/weapon/hcannon/n_cann_suneater.equ","gunner","waiting motion",effect));
    samples.put("armor",new Sample("equipment/character/common/jacket/harmor/amr_ha_northmyre1.equ","gunner","waiting motion",""));
    samples.put("joytron",new Sample("equipment/character/common/title/joytron_handlingfeeling.equ","gunner","waiting motion",""));
-   for(String effect:List.of("laser:normal","laser:charged"))samples.put(effect.replace(':','-'),new Sample("skill/gunner/laserrifle.skl","gunner","waiting motion",effect));
+   for(String effect:List.of("laser:unlearned","laser:normal","laser:charged"))samples.put(effect.replace(':','-'),new Sample("skill/gunner/laserrifle.skl","gunner","waiting motion",effect));
    samples.put("mage-jol",new Sample("skill/mage/launchjol.skl","mage","waiting motion",""));
    for(var sample:samples.entrySet()){
     var selected=sample.getValue();String path=selected.path(),text=lookup.read(path);if(text==null)text="";
@@ -31,7 +31,7 @@ public final class GamePreviewAudit {
     for(long time:new long[]{0,150,500,1050,1200}){
      var frame=preview.render(time,false);var image=new BufferedImage(520,420,BufferedImage.TYPE_INT_ARGB);var g=image.createGraphics();g.setColor(new Color(41,44,51));g.fillRect(0,0,520,420);
      double scale=Math.min(2,Math.min(460/Math.max(1,frame.bounds().getWidth()),330/Math.max(1,frame.bounds().getHeight())));double x=260-frame.bounds().getCenterX()*scale,y=48-frame.bounds().getMinY()*scale;
-     for(var draw:frame.draws())draw.prepared().paint(g,x+draw.x()*scale,y+draw.y()*scale,scale,draw.mirrored());g.setFont(new Font("Microsoft YaHei",Font.PLAIN,15));g.setColor(Color.WHITE);g.drawString(preview.info().name()+" @ "+time+"ms",12,24);g.dispose();
+     for(var draw:frame.draws())draw.paint(g,x,y,scale);g.setFont(new Font("Microsoft YaHei",Font.PLAIN,15));g.setColor(Color.WHITE);g.drawString(preview.info().name()+" @ "+time+"ms",12,24);g.dispose();
      ImageIO.write(image,"png",out.resolve(sample.getKey()+"-"+time+".png").toFile());
      if(frame.draws().isEmpty())throw new AssertionError("No draws: "+sample);
     }

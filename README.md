@@ -4,29 +4,30 @@
 
 # PVF Studio
 
-本地开发版 **0.15.3** 为 ACT1 预览提供游戏样式的宋体说明框和自动技能动画。可查看盖波加之拳、格林机枪、交叉射击、火焰喷射器、聚焦喷火器和普通／满蓄力激光。中央预览支持代码分屏、穿戴搭配和未保存依赖联动。[效果预览说明](docs/game-effect-preview.md)
+**0.15.26** 为 ACT1 提供游戏样式的宋体说明框和自动技能预览。左侧列表悬停可查看图标和说明。预览按原始优先级叠加角色穿戴层。技能预览会为五个职业选择默认武器，选择武器分支时会试用同类型最低装备等级的武器。中央预览支持代码分屏、穿戴搭配和未保存依赖联动。[效果预览说明](docs/game-effect-preview.md)
 
 **支持多种 DNF PVF 格式的脚本编辑与资源预览工具。**
 
-PVF Studio 将脚本编辑、全文搜索、游戏资源预览和副本布局检查集中在一个桌面应用中。它基于 IntelliJ Platform 的编辑器构建，提供独立的 Windows 程序、自带运行时和独立草稿工作区。**0.14.1 本地修复版** 增加 MAP / DGN 可视化编辑与代码 / 分屏切换，支持 ACT1 `DNF_SCRIPT_PACK`、DNF_Single 固定目录及 70S2 / DOF86 UUID 容器，并已验证 100 级 UUID 样本的读取和地图、副本预览。经典二进制 ANI 可直接编辑和预览，无需安装 IDEA 或运行服务端。具体边界见 [格式兼容](docs/pvf-compatibility.md)。
-本分支的 **0.14.1** 更新尚未发布：提供同一文档的代码 / 分屏 / 设计视图、MAP 对象拖动与资源添加、DGN 房间和连接编辑、独立深渊替换配置及 MAP 克隆注册。操作与兼容边界见 [可视化地图和副本编辑](docs/visual-map-editor.md)。
+PVF Studio 将脚本编辑、全文搜索、游戏资源预览和副本布局检查集中在一个桌面应用中。它基于 IntelliJ Platform 的编辑器构建，提供独立的 Windows 程序、自带运行时和独立草稿工作区。支持 ACT1 `DNF_SCRIPT_PACK`、DNF_Single 固定目录及 70S2 / DOF86 UUID 容器，并已验证 100 级 UUID 样本的读取和地图、副本预览。经典二进制 ANI 可直接编辑和预览，无需安装 IDEA 或运行服务端。具体边界见 [格式兼容](docs/pvf-compatibility.md)。
+
+MAP / DGN 可视化编辑支持在同一文档切换代码、分屏和设计视图，可拖动 MAP 对象、添加资源、编辑 DGN 房间和连接、配置独立深渊替换以及克隆并注册 MAP。[可视化地图和副本编辑](docs/visual-map-editor.md)
 
 
 [下载最新版](https://github.com/firekula/PVFStudio/releases/latest) · [使用方法](#使用方法) · [源码构建](#源码构建) · [文档](#文档) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/firekula/PVFStudio/issues)
 
 ## Release 下载
 
-公开发行版本：**[v0.13.5](https://github.com/firekula/PVFStudio/releases/tag/v0.13.5)**。桌面版支持 **Windows 10 / 11 x64**，已包含 JBR 运行时，无需另装 Java、IDEA 或 Visual C++ 运行库。
+当前发行版本为 **[v0.15.26](https://github.com/firekula/PVFStudio/releases/tag/v0.15.26)**。桌面版支持 **Windows 10 / 11 x64**，已包含 JBR 运行时，无需另装 Java、IDEA 或 Visual C++ 运行库。
 
 | 下载 | 适用方式 |
 | --- | --- |
-| [Windows 安装器](https://github.com/firekula/PVFStudio/releases/download/v0.13.5/PVFStudio-0.13.5-windows-x64-setup.exe) | 按向导安装到当前用户目录，提供开始菜单入口和可选桌面快捷方式 |
-| [Windows 便携 ZIP](https://github.com/firekula/PVFStudio/releases/download/v0.13.5/PVFStudio-0.13.5-windows-x64-portable.zip) | 解压后运行 `PVFStudio/PVFStudio.exe`，适合独立目录或多版本使用 |
-| [SHA-256 校验文件](https://github.com/firekula/PVFStudio/releases/download/v0.13.5/PVFStudio-0.13.5-SHA256SUMS.txt) | 核对安装器和便携包的文件完整性 |
+| [Windows 安装器](https://github.com/firekula/PVFStudio/releases/download/v0.15.26/PVFStudio-0.15.26-windows-x64-setup.exe) | 按向导安装到当前用户目录，提供开始菜单入口和可选桌面快捷方式 |
+| [Windows 便携 ZIP](https://github.com/firekula/PVFStudio/releases/download/v0.15.26/PVFStudio-0.15.26-windows-x64-portable.zip) | 解压后运行 `PVFStudio/PVFStudio.exe`，适合独立目录或多版本使用 |
+| [SHA-256 校验文件](https://github.com/firekula/PVFStudio/releases/download/v0.15.26/PVFStudio-0.15.26-SHA256SUMS.txt) | 核对安装器和便携包的文件完整性 |
 
 历史版本和完整发布说明见 [GitHub Releases](https://github.com/firekula/PVFStudio/releases)。发行包不包含游戏 PVF / NPK，打开与预览时选择自己的文件和资源目录。
 
-相较 v0.11.1，本版增加多种 PVF 容器和独立 IMG 支持、经典二进制 ANI 编辑、加载进度及文件树创建/重命名/删除，并修复新版地图的地面偏移、远景平铺、实体显示、DGN 房间关联和图层遮挡。小窗口默认折叠预览设置与详情，保留房间小地图和播放控制；完整变化见 [更新日志](CHANGELOG.md)。
+相较 v0.13.5，本版新增 MAP / DGN 可视化编辑、ACT1 装备与技能效果预览，以及三维攻击和受击判定调试。完整变化见 [更新日志](CHANGELOG.md)。
 
 便携版包含以下两项，请一起保留和移动：
 

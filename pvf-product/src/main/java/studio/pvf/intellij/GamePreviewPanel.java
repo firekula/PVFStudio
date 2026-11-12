@@ -27,6 +27,8 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
     private final JComboBox<String> speed=new JComboBox<>(new String[]{"0.25×","0.5×","1×","2×","4×"});
     private final JComboBox<String> zoom=new JComboBox<>(new String[]{"角色视角","全效果","100%","200%","400%"});
     private final JCheckBox loop=new JCheckBox("循环",true);
+    private final JCheckBox hitBoxes=new JCheckBox("判定框");
+    private final JCheckBox boxCoordinates=new JCheckBox("框坐标");
     private final JSlider timeline=new JSlider(0,1000,0);
     private final JLabel time=new JLabel("0 ms");
     private final GameTooltipPanel info=new GameTooltipPanel();
@@ -75,7 +77,12 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         split.setLeftComponent(canvas);split.setRightComponent(inspector);split.setResizeWeight(.7);split.setBorder(null);add(split);
         JPanel footer=new JPanel();footer.setLayout(new BoxLayout(footer,BoxLayout.Y_AXIS));
         JPanel transport=new JPanel(new Wrap(4,2));JButton previous=new JButton("◀"),next=new JButton("▶");previous.setName("game-previous");next.setName("game-next");play.setName("game-play");timeline.setName("game-timeline");
-        transport.add(previous);transport.add(play);transport.add(next);transport.add(speed);transport.add(loop);transport.add(zoom);transport.add(time);speed.setSelectedIndex(2);footer.add(transport);footer.add(timeline);add(footer,BorderLayout.SOUTH);
+        hitBoxes.setName("game-hit-boxes");boxCoordinates.setName("game-hit-box-coordinates");boxCoordinates.setVisible(false);
+        hitBoxes.setToolTipText("显示三维判定框。单击框查看坐标与尺寸，单击空白取消。");
+        boxCoordinates.setToolTipText("同时显示所有判定框的坐标与尺寸。");
+        transport.add(previous);transport.add(play);transport.add(next);transport.add(speed);transport.add(loop);transport.add(zoom);
+        transport.add(hitBoxes);transport.add(boxCoordinates);transport.add(time);
+        speed.setSelectedIndex(2);footer.add(transport);footer.add(timeline);add(footer,BorderLayout.SOUTH);
         job.addActionListener(e->{if(!changing){selectedJob=((Choice)job.getSelectedItem()).key();selectedAction="waiting motion";reload();saveSettings();}});
         action.addActionListener(e->{if(!changing&&action.getSelectedItem() instanceof Choice choice){selectedAction=choice.key();if(source!=null&&source.path().endsWith(".skl"))selectedEffect="actor";reload();saveSettings();}});
         effect.addActionListener(e->{
@@ -89,12 +96,21 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
             saveSettings();
         });
         level.addChangeListener(e->{if(!changing){if(source!=null)levels.put(source.path(),((Number)level.getValue()).intValue());reload();saveSettings();}});choose.addActionListener(e->this.chooseResources.run());
-        facing.addActionListener(e->{mirrored=!mirrored;facing.setText(mirrored?"朝左":"朝右");requestFrame();});
+        facing.addActionListener(e->{canvas.clearSelection();mirrored=!mirrored;facing.setText(mirrored?"朝左":"朝右");requestFrame();});
         play.addActionListener(e->{if(playing)pause();else startPlayback();});
-        previous.addActionListener(e->{pause();clock.seek(Math.max(0,clock.milliseconds()-16));requestFrame();});next.addActionListener(e->{pause();clock.seek(loop.isSelected()?clock.milliseconds()+16:Math.min(model==null?60000:model.duration(),clock.milliseconds()+16));requestFrame();});
+        previous.addActionListener(e->seek(Math.max(0,clock.milliseconds()-16)));next.addActionListener(e->seek(loop.isSelected()?clock.milliseconds()+16:Math.min(model==null?60000:model.duration(),clock.milliseconds()+16)));
         speed.addActionListener(e->clock.speed(switch(speed.getSelectedIndex()){case 0->.25;case 1->.5;case 3->2;case 4->4;default->1;}));
-        timeline.addChangeListener(e->{if(!changing){pause();clock.seek(timeline.getValue());requestFrame();}});
+        timeline.addChangeListener(e->{if(!changing)seek(timeline.getValue());});
         zoom.addActionListener(e->{canvas.freeZoom=0;canvas.panX=0;canvas.panY=0;canvas.repaint();});
+        hitBoxes.addActionListener(e->{
+            boolean enabled=hitBoxes.isSelected();
+            boxCoordinates.setVisible(enabled);
+            if(!enabled)canvas.clearSelection();
+            transport.revalidate();
+            requestFrame();
+            canvas.repaint();
+        });
+        boxCoordinates.addActionListener(e->canvas.repaint());
         add.addActionListener(e->chooseOutfit());remove.addActionListener(e->{if(outfit.getSelectedValue() instanceof Wear selected){outfits.computeIfAbsent(selectedJob,k->new HashMap<>()).put(selected.slot(),"");reload();saveSettings();}});
         reset.addActionListener(e->{outfits.remove(selectedJob);reload();saveSettings();});
         addComponentListener(new ComponentAdapter(){@Override public void componentResized(ComponentEvent e){responsive();}});
@@ -134,10 +150,10 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         if(closed)return;
         long ticket=++generation;
         if(playing&&model!=null&&model.usingSequence())autoPlayPending=true;
-        pause();renderPending=false;renderAgain=false;model=null;
+        pause();canvas.clearSelection();renderPending=false;renderAgain=false;model=null;
         if(source==null){canvas.frame=null;canvas.error="选择装备、装扮或技能";canvas.repaint();return;}
         ResourcePreviewPanel.Source snapshot=source;Set<String> files=paths;NpkResources indexed=resources.get();
-        String requested=selectedJob,motion=selectedAction,selectedVisual=selectedEffect;int requestedLevel=levels.getOrDefault(snapshot.path(),1);boolean legacy=act1,reset=resetSelectedSlot,mirror=mirrored;
+        String requested=selectedJob,motion=selectedAction,selectedVisual=selectedEffect;int requestedLevel=levels.getOrDefault(snapshot.path(),1);boolean legacy=act1,reset=resetSelectedSlot,mirror=mirrored,debug=hitBoxes.isSelected();
         Map<String,Map<String,String>> wardrobe=new HashMap<>();outfits.forEach((j,slots)->wardrobe.put(j,Map.copyOf(slots)));
         facing.setEnabled(false);
         message.setText("正在组合角色与资源…");canvas.error="正在载入…";canvas.repaint();
@@ -150,8 +166,8 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
             GamePreview preview=indexed==null?null:GamePreview.load(snapshot.path(),snapshot.text(),lookup,files,indexed,options);
             var metadata=preview==null?GameItemInfo.read(snapshot.path(),snapshot.text(),lookup,options.level()):preview.info();
             java.awt.image.BufferedImage icon=null;String iconWarning="";
-            if(indexed!=null)try{var ref=ResourceScript.references(snapshot.text()).stream().filter(r->r.tag().equals("icon")&&!r.animation()&&!r.particle()).findFirst();if(ref.isPresent())icon=indexed.sprite(ref.get().path(),ref.get().index()).image();}catch(IOException failure){iconWarning="图标："+failure.getMessage();}
-            var loaded=new Loaded(metadata,preview,preview==null?null:preview.render(0,mirror),selected,slot,maximum,chosen,icon,iconWarning);
+            try{icon=GameTooltipPanel.readIcon(snapshot.text(),indexed);}catch(IOException failure){iconWarning="图标："+failure.getMessage();}
+            var loaded=new Loaded(metadata,preview,preview==null?null:preview.render(0,mirror,false,debug),selected,slot,maximum,chosen,icon,iconWarning);
             SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;accept(loaded);});
         }catch(Exception failure){SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;canvas.frame=null;canvas.error="预览失败："+failure.getMessage();message.setText("配置无法预览 · 查看代码或重新选择资源");info.showStatus(snapshot.path()+"\n"+canvas.error);facing.setEnabled(true);canvas.repaint();});}});
     }
@@ -197,16 +213,35 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         timeline.setEnabled(playable);
         facing.setEnabled(playable);
         startPendingPlayback();
+        if(playable&&hitBoxes.isSelected())requestFrame();
         canvas.repaint();
         responsive();
     }
     private void requestFrame() {
-        if(model==null||closed||!model.unavailableReason().isEmpty())return;
+        if(model==null||closed||canvas.selectedVolume>=0||!model.unavailableReason().isEmpty())return;
         if(renderPending){renderAgain=true;return;}
         if(playing&&!loop.isSelected()&&clock.milliseconds()>=model.duration()){pause();clock.seek(model.duration());}
-        GamePreview snapshot=model;long ticket=generation,time=clock.milliseconds();boolean mirror=mirrored,repeat=loop.isSelected();renderPending=true;
-        worker.execute(()->{try{var frame=snapshot.render(time,mirror,repeat);SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;boolean again=renderAgain;renderAgain=false;canvas.frame=frame;canvas.error="";canvas.repaint();if(!again){changing=true;timeline.setValue((int)(time>snapshot.duration()?time%snapshot.duration():time));changing=false;this.time.setText(time+" ms");message.setText(summary(frame.warnings()));canvas.repaint();}if(again)requestFrame();});}catch(Exception failure){SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;renderAgain=false;pause();message.setText("渲染失败："+failure.getMessage());});}});
+        GamePreview snapshot=model;long ticket=generation,time=clock.milliseconds();boolean mirror=mirrored,repeat=loop.isSelected(),debug=hitBoxes.isSelected();renderPending=true;
+        worker.execute(()->{try{var frame=snapshot.render(time,mirror,repeat,debug);SwingUtilities.invokeLater(()->{
+            if(closed||ticket!=generation)return;
+            renderPending=false;boolean again=renderAgain;renderAgain=false;
+            // A click pins the frame the user actually saw, even if a later one was being rendered.
+            if(canvas.selectedVolume>=0)return;
+            canvas.frame=frame;canvas.error="";
+            if(!again)showFrameTime(frame);
+            canvas.repaint();
+            if(again)requestFrame();
+        });}catch(Exception failure){SwingUtilities.invokeLater(()->{if(closed||ticket!=generation)return;renderPending=false;renderAgain=false;if(canvas.selectedVolume>=0)return;pause();message.setText("渲染失败："+failure.getMessage());});}});
     }
+    private void showFrameTime(GamePreview.Rendered frame){
+        long displayed=frame.milliseconds(),duration=model.duration();
+        changing=true;
+        timeline.setValue((int)(displayed>duration?displayed%duration:displayed));
+        changing=false;
+        time.setText(displayed+" ms");
+        message.setText(summary(frame.warnings()));
+    }
+    private void seek(long time){pause();canvas.clearSelection();clock.seek(time);requestFrame();}
     private void pause(){timer.stop();clock.pause();playing=false;play.setText("播放");}
     private void startPendingPlayback(){
         if(model==null||!isShowing())return;
@@ -220,6 +255,7 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
     }
     private void startPlayback(){
         if(model==null||!model.unavailableReason().isEmpty())return;
+        canvas.clearSelection();
         if(!loop.isSelected()&&clock.milliseconds()>=model.duration())clock.seek(0);
         clock.play();
         playing=true;
@@ -230,7 +266,7 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
     void deactivate(){
         if(model!=null&&model.usingSequence())autoPlayPending=true;
         ++generation;
-        pause();
+        pause();canvas.clearSelection();
         renderPending=false;
         renderAgain=false;
     }
@@ -277,15 +313,59 @@ final class GamePreviewPanel extends JPanel implements AutoCloseable {
         }
     }
     private final class Canvas extends JPanel {
+        private final GamePreviewPainter painter = new GamePreviewPainter();
+        private record View(double x,double y,double scale) {}
         GamePreview.Rendered frame;Rectangle2D actorView=new Rectangle2D.Double(-40,-140,80,150);String error="选择装备、装扮或技能";double panX,panY,freeZoom;Point dragging;
-        Canvas(){setName("game-canvas");var mouse=new MouseAdapter(){public void mousePressed(MouseEvent e){dragging=e.getPoint();}public void mouseDragged(MouseEvent e){if(dragging!=null){panX+=e.getX()-dragging.x;panY+=e.getY()-dragging.y;dragging=e.getPoint();repaint();}}public void mouseReleased(MouseEvent e){dragging=null;}public void mouseWheelMoved(MouseWheelEvent e){freeZoom=Math.clamp((freeZoom>0?freeZoom:scale())*Math.pow(1.12,-e.getPreciseWheelRotation()),.1,8);repaint();}};addMouseListener(mouse);addMouseMotionListener(mouse);addMouseWheelListener(mouse);}
+        private int selectedVolume=-1;
+        private boolean panned;
+        Canvas(){
+            setName("game-canvas");
+            var mouse=new MouseAdapter(){
+                @Override public void mousePressed(MouseEvent e){dragging=e.getPoint();panned=false;}
+                @Override public void mouseDragged(MouseEvent e){
+                    if(dragging==null||!panned&&dragging.distanceSq(e.getPoint())<16)return;
+                    panned=true;panX+=e.getX()-dragging.x;panY+=e.getY()-dragging.y;dragging=e.getPoint();repaint();
+                }
+                @Override public void mouseReleased(MouseEvent e){
+                    boolean click=dragging!=null&&!panned&&dragging.distanceSq(e.getPoint())<16&&SwingUtilities.isLeftMouseButton(e);
+                    dragging=null;
+                    if(click)pickVolume(e);
+                }
+                @Override public void mouseWheelMoved(MouseWheelEvent e){freeZoom=Math.clamp((freeZoom>0?freeZoom:scale())*Math.pow(1.12,-e.getPreciseWheelRotation()),.1,8);repaint();}
+            };
+            addMouseListener(mouse);addMouseMotionListener(mouse);addMouseWheelListener(mouse);
+        }
         double scale(){if(frame==null)return 1;if(freeZoom>0)return freeZoom;return switch(zoom.getSelectedIndex()){case 0->Math.min(2,Math.max(.25,(getHeight()-48)/Math.max(1,actorView.getHeight())));case 2->1;case 3->2;case 4->4;default->Math.max(.1,Math.min(4,Math.min((getWidth()-36)/Math.max(1,frame.bounds().getWidth()),(getHeight()-48)/Math.max(1,frame.bounds().getHeight()))));};}
+        private View view(){
+            boolean actor=zoom.getSelectedIndex()==0;
+            var bounds=actor?actorView:frame.bounds();
+            if(actor&&mirrored)bounds=new Rectangle2D.Double(-bounds.getMaxX(),bounds.getY(),bounds.getWidth(),bounds.getHeight());
+            double scale=scale();
+            return new View(getWidth()/2.0-bounds.getCenterX()*scale+panX,
+                    getHeight()/2.0-bounds.getCenterY()*scale+panY,scale);
+        }
+        private void clearSelection(){
+            if(selectedVolume<0)return;
+            selectedVolume=-1;
+            repaint();
+        }
+        private void pickVolume(MouseEvent event){
+            if(frame==null||model==null||!error.isEmpty()||!hitBoxes.isSelected())return;
+            var view=view();
+            int picked=CombatDebug.pick(frame.combatVolumes(),view.x(),view.y(),view.scale(),event.getX(),event.getY(),selectedVolume);
+            if(picked<0){clearSelection();return;}
+            selectedVolume=picked;
+            pause();
+            clock.seek(frame.milliseconds());
+            showFrameTime(frame);
+            repaint();
+        }
         @Override protected void paintComponent(Graphics graphics){super.paintComponent(graphics);var g=(Graphics2D)graphics.create();try{
-            Color base=getBackground();g.setColor(new Color(Math.max(0,base.getRed()-8),Math.max(0,base.getGreen()-8),Math.max(0,base.getBlue()-8)));for(int y=0;y<getHeight();y+=16)for(int x=0;x<getWidth();x+=16)if((x/16+y/16)%2==0)g.fillRect(x,y,16,16);
-            if(frame!=null){Rectangle2D bounds=zoom.getSelectedIndex()==0?actorView:frame.bounds();if(zoom.getSelectedIndex()==0&&mirrored)bounds=new Rectangle2D.Double(-bounds.getMaxX(),bounds.getY(),bounds.getWidth(),bounds.getHeight());double s=scale(),x=getWidth()/2.0-bounds.getCenterX()*s+panX,y=getHeight()/2.0-bounds.getCenterY()*s+panY;
-                for(var draw:frame.draws())draw.prepared().paint(g,x+draw.x()*s,y+draw.y()*s,s,draw.mirrored(),draw.opacity());
+            if(frame!=null){var view=view();double x=view.x(),y=view.y();
+                painter.paint(g,frame,getWidth(),getHeight(),x,y,view.scale(),getBackground());
                 g.setColor(UIManager.getColor("Label.disabledForeground"));g.drawLine((int)x-7,(int)y,(int)x+7,(int)y);g.drawLine((int)x,(int)y-4,(int)x,(int)y+4);
-            }
+                if(hitBoxes.isSelected())CombatDebug.paint(g,frame.combatVolumes(),x,y,view.scale(),boxCoordinates.isSelected(),selectedVolume);
+            }else painter.paint(g,null,getWidth(),getHeight(),0,0,1,getBackground());
             if(!error.isEmpty()){g.setColor(getForeground());FontMetrics fm=g.getFontMetrics();String label=error.length()>70?error.substring(0,70)+"…":error;g.drawString(label,Math.max(8,(getWidth()-fm.stringWidth(label))/2),frame==null?getHeight()/2:22);}
         }finally{g.dispose();}}
     }
