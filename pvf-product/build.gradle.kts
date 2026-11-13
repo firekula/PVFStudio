@@ -29,7 +29,7 @@ tasks.withType<JavaCompile>().configureEach { options.release.set(21) }
 tasks.jar {
     archiveFileName.set("pvf-studio.jar")
     manifest { attributes("Main-Class" to "studio.pvf.product.PvfStudioMain", "Implementation-Version" to project.version) }
-    for (module in listOf(":pvf-core", ":pvf-workspace", ":pvf-preview", ":pvf-scene-edit")) {
+    for (module in listOf(":pvf-core", ":pvf-workspace", ":pvf-preview", ":pvf-scene-edit", ":pvf-cli")) {
         from(project(module).extensions.getByType<SourceSetContainer>().named("main").map { it.output })
     }
 }
@@ -65,6 +65,7 @@ val nativeLauncher = tasks.register<Exec>("buildWindowsLauncher") {
     inputs.file(rootProject.file("tools/build-launcher.ps1"))
     inputs.property("version", project.version.toString())
     outputs.file(nativeDirectory.map { it.file("PVFStudio.exe") })
+    outputs.file(nativeDirectory.map { it.file("PVFStudioCLI.exe") })
     commandLine("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
         rootProject.file("tools/build-launcher.ps1").absolutePath,
         "-OutputDirectory", nativeDirectory.get().asFile.absolutePath, "-Version", project.version.toString())
@@ -80,6 +81,9 @@ val assembleProduct = tasks.register<JavaExec>("assembleProduct") {
     inputs.file("platform.lock.json")
     inputs.file(tasks.jar.flatMap { it.archiveFile })
     inputs.file(rootProject.file("LICENSE"))
+    inputs.file(rootProject.file("docs/cli.md"))
+    inputs.file(nativeDirectory.map { it.file("PVFStudio.exe") })
+    inputs.file(nativeDirectory.map { it.file("PVFStudioCLI.exe") })
     inputs.dir(jbrDirectory)
     inputs.file(sdkDirectory.map { "$it/product-info.json" })
     inputs.file(sdkDirectory.map { "$it/modules/module-descriptors.dat" })
@@ -89,7 +93,8 @@ val assembleProduct = tasks.register<JavaExec>("assembleProduct") {
     outputs.file(layout.buildDirectory.file("product-location.txt"))
     args(sdkDirectory.get(), jbrDirectory.get(), tasks.jar.get().archiveFile.get().asFile.absolutePath,
         productDirectory.get().asFile.absolutePath, project.version.toString(), file("platform-roots.txt").absolutePath,
-        nativeDirectory.get().file("PVFStudio.exe").asFile.absolutePath, rootProject.file("LICENSE").absolutePath)
+        nativeDirectory.get().file("PVFStudio.exe").asFile.absolutePath, rootProject.file("LICENSE").absolutePath,
+        nativeDirectory.get().file("PVFStudioCLI.exe").asFile.absolutePath, rootProject.file("docs/cli.md").absolutePath)
 }
 val verifyProduct = tasks.register<Exec>("verifyProduct") {
     group = "verification"
@@ -110,6 +115,12 @@ val verifyProduct = tasks.register<Exec>("verifyProduct") {
         "-cp", "${app.resolve("lib/platform-loader.jar").absolutePath};${app.resolve("lib/pvf-studio.jar").absolutePath}",
         "studio.pvf.product.PvfStudioMain", "--check", validation.resolve("result.properties").absolutePath)
 }
+val verifyCli = tasks.register<Exec>("verifyCli") {
+    group = "verification"
+    description = "Check the packaged native CLI with its bundled runtime."
+    dependsOn(assembleProduct)
+    commandLine(productDirectory.get().file("PVFStudioCLI.exe").asFile.absolutePath, "schema", "preview")
+}
 tasks.register<Exec>("runProduct") {
     group = "application"
     description = "Run the independent PVF Studio product, without an IDEA host or plugin sandbox."
@@ -119,7 +130,7 @@ tasks.register<Exec>("runProduct") {
 }
 tasks.register<Zip>("productZip") {
     group = "distribution"
-    dependsOn(verifyProduct)
+    dependsOn(verifyProduct, verifyCli)
     archiveFileName.set("PVFStudio-${project.version}-windows-x64-portable.zip")
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))
     from(productDirectory) { into("PVFStudio") }

@@ -2,6 +2,13 @@
 
 本文件记录 PVF Studio 的版本变化。使用方式见 [README](README.md)，格式规则见 [格式说明](docs/pvf-format.md)，实机证据见 [客户端验证记录](docs/client-validation-2026-10-24.md)。
 
+## 0.15.27 — 2026-11-13
+
+Windows x64 安装版和便携版均附有 `PVFStudioCLI.exe` 和 `CLI.md`。[GitHub Release](https://github.com/firekula/PVFStudio/releases/tag/v0.15.27) · [CLI 使用指南](docs/cli.md)
+
+- 安装版和便携版增加 `PVFStudioCLI.exe`。命令可返回 UTF-8 JSON，并提供参数说明、分页和错误恢复提示。
+- CLI 支持按路径、脚本内容和游戏名称查询，读取和修改草稿，导出新 PVF，并输出 ACT1 预览帧及判定框。
+
 ## 0.15.26 — 2026-11-12
 
 本次发行汇总 v0.13.5 之后的地图与副本编辑、ACT1 效果预览及判定调试更新，提供 Windows x64 安装器、便携 ZIP 和 SHA-256 校验文件。[GitHub Release](https://github.com/firekula/PVFStudio/releases/tag/v0.15.26)

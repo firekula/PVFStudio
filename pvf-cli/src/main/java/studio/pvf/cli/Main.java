@@ -27,6 +27,7 @@ public final class Main {
     }
 
     public static int run(String[] args, PrintStream out, PrintStream err) {
+        if (AutomationCli.handles(args)) return AutomationCli.run(args, out);
         try {
             if (args.length == 0 || args[0].equals("help") || args[0].equals("--help")) {
                 help(out);
@@ -152,8 +153,9 @@ public final class Main {
     private static IllegalArgumentException usage(String text) { return new IllegalArgumentException(text); }
 
     private static void help(PrintStream out) {
-        String version = Main.class.getPackage().getImplementationVersion();
-        out.println("PVF Studio " + (version == null ? "development" : version) + " — ACT1 / UUID / legacy PVF reader and lossless exporter");
+        out.println("PVF Studio " + version() + " — ACT1 / UUID / legacy PVF reader and lossless exporter");
+        out.println("AI quick start: PVFStudioCLI.exe schema  |  PVFStudioCLI.exe --json info <archive>");
+        out.println("schema [command] lists JSON commands, parameters and examples. See CLI.md for workflows.");
         out.println("info <archive>");
         out.println("list <archive> [path-filter]");
         out.println("extract <archive> <virtual-path> <new-file>");
@@ -165,5 +167,10 @@ public final class Main {
         out.println("revert <archive> <workspace-dir> <virtual-path>");
         out.println("workspace-export <archive> <workspace-dir> <new.pvf>");
         out.println("All outputs must be new files. Offset-seeded client CRCs are verified and rebuilt; validate edited scripts in a test client.");
+    }
+
+    static String version() {
+        String version = Main.class.getPackage().getImplementationVersion();
+        return version == null ? "development" : version;
     }
 }

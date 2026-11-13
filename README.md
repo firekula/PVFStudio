@@ -17,29 +17,33 @@ MAP / DGN 可视化编辑支持在同一文档切换代码、分屏和设计视�
 
 ## Release 下载
 
-当前发行版本为 **[v0.15.26](https://github.com/firekula/PVFStudio/releases/tag/v0.15.26)**。桌面版支持 **Windows 10 / 11 x64**，已包含 JBR 运行时，无需另装 Java、IDEA 或 Visual C++ 运行库。
+当前发行版本为 **[v0.15.27](https://github.com/firekula/PVFStudio/releases/tag/v0.15.27)**。桌面版支持 **Windows 10 / 11 x64**，已包含 JBR 运行时，无需另装 Java、IDEA 或 Visual C++ 运行库。
 
 | 下载 | 适用方式 |
 | --- | --- |
-| [Windows 安装器](https://github.com/firekula/PVFStudio/releases/download/v0.15.26/PVFStudio-0.15.26-windows-x64-setup.exe) | 按向导安装到当前用户目录，提供开始菜单入口和可选桌面快捷方式 |
-| [Windows 便携 ZIP](https://github.com/firekula/PVFStudio/releases/download/v0.15.26/PVFStudio-0.15.26-windows-x64-portable.zip) | 解压后运行 `PVFStudio/PVFStudio.exe`，适合独立目录或多版本使用 |
-| [SHA-256 校验文件](https://github.com/firekula/PVFStudio/releases/download/v0.15.26/PVFStudio-0.15.26-SHA256SUMS.txt) | 核对安装器和便携包的文件完整性 |
+| [Windows 安装器](https://github.com/firekula/PVFStudio/releases/download/v0.15.27/PVFStudio-0.15.27-windows-x64-setup.exe) | 按向导安装到当前用户目录，提供开始菜单入口和可选桌面快捷方式 |
+| [Windows 便携 ZIP](https://github.com/firekula/PVFStudio/releases/download/v0.15.27/PVFStudio-0.15.27-windows-x64-portable.zip) | 解压后运行 `PVFStudio/PVFStudio.exe`，适合独立目录或多版本使用 |
+| [SHA-256 校验文件](https://github.com/firekula/PVFStudio/releases/download/v0.15.27/PVFStudio-0.15.27-SHA256SUMS.txt) | 核对安装器和便携包的文件完整性 |
 
 历史版本和完整发布说明见 [GitHub Releases](https://github.com/firekula/PVFStudio/releases)。发行包不包含游戏 PVF / NPK，打开与预览时选择自己的文件和资源目录。
 
-相较 v0.13.5，本版新增 MAP / DGN 可视化编辑、ACT1 装备与技能效果预览，以及三维攻击和受击判定调试。完整变化见 [更新日志](CHANGELOG.md)。
+0.15.27 新增供 AI 和脚本调用的 CLI。安装目录和便携目录均附有使用指南 `CLI.md`。[更新日志](CHANGELOG.md) · [CLI 与 AI 使用指南](docs/cli.md)
 
-便携版包含以下两项，请一起保留和移动：
+便携目录包含桌面程序、CLI、说明和运行时，移动时请保留整个目录。
 
 ```text
 PVFStudio/
 ├─ PVFStudio.exe
+├─ PVFStudioCLI.exe
+├─ CLI.md
 └─ app/              产品模块、平台库、JBR、启动配置和许可证
 ```
 
 下载后可在 PowerShell 中执行 `Get-FileHash <文件路径> -Algorithm SHA256`，与校验文件中的对应条目比较。当前启动器和安装器未配置代码签名。
 
 ## 主要功能
+
+从 **0.15.27** 起，安装版和便携版提供 `PVFStudioCLI.exe`，可在终端查询 PVF、编辑草稿、导出新包并渲染 ACT1 效果。运行 `PVFStudioCLI.exe schema` 查看机器可读的参数与示例。[CLI 与 AI 使用指南](docs/cli.md)
 
 | 能力 | 内容 |
 | --- | --- |
@@ -177,7 +181,7 @@ $cli = '.\pvf-cli\build\install\pvf-studio\bin\pvf-studio.bat'
 & $cli info 'C:\Game\Script.pvf'
 ```
 
-核心与 CLI 运行要求 Java 17+，构建它们不会下载 IntelliJ SDK。CLI 支持目录查询、提取、字节替换、持久草稿和无修改重建；示例及验证方法见 [CLI 与开发验证](docs/development-validation.md)。
+源码构建的核心与 CLI 运行要求 Java 17+。CLI 支持机器可读的查询、草稿编辑与 ACT1 效果预览。[CLI 与 AI 使用指南](docs/cli.md) · [开发验证](docs/development-validation.md)
 
 应用图标和运行资源已经包含在源码中，正常构建无需生成图像。调整图标后，可在安装 Pillow 的 Python 环境执行 `python tools/build-app-icons.py`，从原图重新导出 ICO 与平台资源；设计及来源见 [图标说明](assets/branding/README.md)。
 
@@ -206,6 +210,7 @@ $cli = '.\pvf-cli\build\install\pvf-studio\bin\pvf-studio.bat'
 | [加载进度](docs/loading-progress.md) | 大 PVF、资源索引、搜索与预览进度及验证 |
 | [独立产品开发](docs/intellij-product.md) | 产品模块、平台基线、构建与二次开发 |
 | [CLI 与开发验证](docs/development-validation.md) | 命令行示例、真实 PVF 验证及历史结果 |
+| [CLI 与 AI 使用指南](docs/cli.md) | 查询、草稿、导出和预览的 JSON 命令 |
 | [客户端预览证据](docs/client-preview-evidence.md) | 原生函数对照和预览验收 |
 | [客户端验证记录](docs/client-validation-2026-10-24.md) | 导出包实际加载的样本与结果 |
 
@@ -215,7 +220,7 @@ $cli = '.\pvf-cli\build\install\pvf-studio\bin\pvf-studio.bat'
 | --- | --- |
 | `pvf-core` | 按需读取、保真重建和导出校验 |
 | `pvf-workspace` | 编码转换、草稿、工作区锁与导出快照 |
-| `pvf-cli` | 查询、提取、替换和草稿操作 |
+| `pvf-cli` | 查询、提取、草稿操作和无界面预览 |
 | `pvf-preview` | NPK / IMG、动画、粒子、地图与副本解析和渲染 |
 | `pvf-product` | IntelliJ 桌面产品、原生启动器装配和集成检查 |
 | `tools` / `validation` | 构建、发行与独立验证工具 |

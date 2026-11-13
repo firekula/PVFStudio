@@ -30,3 +30,9 @@ if ($LASTEXITCODE -ne 0) { throw "Launcher resource compilation failed ($LASTEXI
     $resourceObject '-o' $executable '-lshell32' '-lole32' '-luuid' '-luser32'
 if ($LASTEXITCODE -ne 0) { throw "Launcher compilation failed ($LASTEXITCODE)." }
 Write-Host "Native Windows launcher: $executable"
+$cliExecutable = Join-Path $OutputDirectory 'PVFStudioCLI.exe'
+& $compiler.Source '-std=c11' '-Os' '-s' '-Wall' '-Wextra' '-Werror' '-municode' '-mconsole' '-static' `
+    '-Wl,--nxcompat,--dynamicbase,--high-entropy-va' (Join-Path $sourceDirectory 'cli-launcher.c') `
+    '-o' $cliExecutable
+if ($LASTEXITCODE -ne 0) { throw "CLI launcher compilation failed ($LASTEXITCODE)." }
+Write-Host "Native Windows CLI launcher: $cliExecutable"

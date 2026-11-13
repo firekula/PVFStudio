@@ -2,6 +2,8 @@
 
 本页保留 CLI 操作、真实 PVF 验证方法及历史验证记录。软件安装和日常使用见 [README](../README.md)，逐版功能见 [Changelog](../CHANGELOG.md)。
 
+安装版和便携版的 `PVFStudioCLI.exe` 用法、JSON 参数和 AI 指令示例见 [CLI 使用指南](cli.md)。
+
 先在仓库根目录设置 JAVA_HOME 并执行 `.\gradlew.bat check :pvf-cli:installDist`，再将 `$cli` 设置为 `.\pvf-cli\build\install\pvf-studio\bin\pvf-studio.bat`。以下命令均在仓库根目录执行。
 
 ## 历史验证状态

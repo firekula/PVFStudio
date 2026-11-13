@@ -86,6 +86,8 @@ public final class ProductAssembler {
         copy(jar, app.resolve("lib/pvf-studio.jar"));
         copy(Path.of(args[6]), output.resolve("PVFStudio.exe"));
         copy(Path.of(args[7]), app.resolve("LICENSE"));
+        copy(Path.of(args[8]), output.resolve("PVFStudioCLI.exe"));
+        copy(Path.of(args[9]), output.resolve("CLI.md"));
         copy(sdk.resolve("LICENSE.txt"), app.resolve("licenses/INTELLIJ-LICENSE.txt"));
         copy(sdk.resolve("NOTICE.txt"), app.resolve("licenses/INTELLIJ-NOTICE.txt"));
         copyTree(sdk.resolve("license"), app.resolve("licenses/platform"));
